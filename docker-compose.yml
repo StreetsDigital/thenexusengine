@@ -1,0 +1,109 @@
+# The Nexus Engine - Docker Compose
+# Runs PBS Server, IDR Service, Redis, and TimescaleDB
+
+version: '3.8'
+
+services:
+  # ===========================================
+  # PBS Server (Go) - Main Prebid Server
+  # ===========================================
+  pbs:
+    build:
+      context: .
+      dockerfile: docker/pbs/Dockerfile
+    ports:
+      - "${PBS_PORT:-8000}:8000"
+    environment:
+      - PBS_PORT=8000
+      - IDR_URL=http://idr:5050
+      - IDR_ENABLED=${IDR_ENABLED:-true}
+      - IDR_TIMEOUT_MS=${IDR_TIMEOUT_MS:-50}
+      - EVENT_RECORD_ENABLED=${EVENT_RECORD_ENABLED:-true}
+      - EVENT_BUFFER_SIZE=${EVENT_BUFFER_SIZE:-100}
+    depends_on:
+      idr:
+        condition: service_healthy
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  # ===========================================
+  # IDR Service (Python) - Intelligent Demand Router
+  # ===========================================
+  idr:
+    build:
+      context: .
+      dockerfile: docker/idr/Dockerfile
+    ports:
+      - "${IDR_PORT:-5050}:5050"
+    environment:
+      - IDR_PORT=5050
+      - REDIS_URL=redis://redis:6379
+      - TIMESCALE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-nexusengine}@timescaledb:5432/idr
+      - USE_MOCK_DB=${USE_MOCK_DB:-false}
+    volumes:
+      - ./config:/app/config:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  # ===========================================
+  # Redis - Real-time metrics storage
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+  # ===========================================
+  # TimescaleDB - Historical data storage
+  # ===========================================
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    ports:
+      - "${TIMESCALE_PORT:-5432}:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexusengine}
+      - POSTGRES_DB=idr
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./docker/timescaledb/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d idr"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexus-net
+    restart: unless-stopped
+
+# ===========================================
+# Networks
+# ===========================================
+networks:
+  nexus-net:
+    driver: bridge
+
+# ===========================================
+# Volumes
+# ===========================================
+volumes:
+  redis-data:
+  timescale-data:

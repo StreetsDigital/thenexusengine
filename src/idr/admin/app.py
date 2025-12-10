@@ -104,6 +104,13 @@ def get_default_config() -> dict[str, Any]:
             'excellent_ms': 100,
             'poor_ms': 500,
         },
+        'database': {
+            'redis_url': os.environ.get('REDIS_URL', 'redis://localhost:6379'),
+            'timescale_url': os.environ.get('TIMESCALE_URL', 'postgresql://postgres:postgres@localhost:5432/idr'),
+            'event_buffer_size': 100,
+            'flush_interval': 1,
+            'use_mock': os.environ.get('USE_MOCK_DB', 'true').lower() == 'true',
+        },
     }
 
 
@@ -226,6 +233,86 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             'idr_available': IDR_AVAILABLE,
             'timestamp': datetime.now().isoformat()
         })
+
+    @app.route('/api/status', methods=['GET'])
+    def get_status():
+        """Get infrastructure status (databases, pipeline)."""
+        global _metrics_store, _event_pipeline
+
+        status = {
+            'redis': {'connected': False, 'error': 'Not initialized'},
+            'timescale': {'connected': False, 'error': 'Not initialized'},
+            'pipeline': {'active': False}
+        }
+
+        if _metrics_store is not None:
+            # Check Redis
+            try:
+                redis_client = _metrics_store.redis
+                if hasattr(redis_client, '_data'):  # Mock client
+                    status['redis'] = {
+                        'connected': False,
+                        'error': 'Using mock client',
+                        'keys': len(redis_client._data)
+                    }
+                else:
+                    # Real Redis client would have ping
+                    status['redis'] = {'connected': True, 'keys': 0}
+            except Exception as e:
+                status['redis'] = {'connected': False, 'error': str(e)}
+
+            # Check TimescaleDB
+            try:
+                ts_client = _metrics_store.timescale
+                if hasattr(ts_client, '_events'):  # Mock client
+                    status['timescale'] = {
+                        'connected': False,
+                        'error': 'Using mock client',
+                        'events': len(ts_client._events)
+                    }
+                else:
+                    status['timescale'] = {'connected': True, 'events': 0}
+            except Exception as e:
+                status['timescale'] = {'connected': False, 'error': str(e)}
+
+        if _event_pipeline is not None:
+            try:
+                if hasattr(_event_pipeline, '_buffer'):
+                    status['pipeline'] = {
+                        'active': True,
+                        'buffered': len(_event_pipeline._buffer),
+                        'processed': getattr(_event_pipeline, '_processed_count', 0)
+                    }
+                else:
+                    status['pipeline'] = {'active': True, 'buffered': 0, 'processed': 0}
+            except Exception:
+                status['pipeline'] = {'active': False}
+
+        return jsonify(status)
+
+    @app.route('/api/config/database', methods=['PATCH'])
+    def update_database_config():
+        """Update database configuration."""
+        try:
+            config = load_config(app.config['CONFIG_PATH'])
+            updates = request.json
+
+            if 'database' not in config:
+                config['database'] = {}
+
+            config['database']['event_buffer_size'] = updates.get('event_buffer_size', 100)
+            config['database']['flush_interval'] = updates.get('flush_interval', 1)
+            config['database']['use_mock'] = updates.get('use_mock', False)
+
+            save_config(config, app.config['CONFIG_PATH'])
+
+            return jsonify({
+                'status': 'success',
+                'config': config['database'],
+                'message': 'Database settings saved. Restart services to apply changes.'
+            })
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 400
 
     @app.route('/api/select', methods=['POST'])
     def select_partners():

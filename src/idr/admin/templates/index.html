@@ -608,6 +608,67 @@
                 </div>
             </div>
 
+            <!-- Database & Infrastructure -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>Database & Infrastructure</h2>
+                    <button class="btn btn-secondary refresh-btn" onclick="loadDbStatus()">Refresh</button>
+                </div>
+                <div class="card-body">
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">
+                                <span id="redis-status" class="status-indicator inactive"></span>
+                                Redis (Real-time)
+                            </div>
+                            <div class="toggle-description" id="redis-info">Checking connection...</div>
+                        </div>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">
+                                <span id="timescale-status" class="status-indicator inactive"></span>
+                                TimescaleDB (Historical)
+                            </div>
+                            <div class="toggle-description" id="timescale-info">Checking connection...</div>
+                        </div>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">
+                                <span id="pipeline-status" class="status-indicator inactive"></span>
+                                Event Pipeline
+                            </div>
+                            <div class="toggle-description" id="pipeline-info">Not initialized</div>
+                        </div>
+                    </div>
+                    <hr style="margin: 1rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <div class="form-group">
+                        <label>Event Buffer Size</label>
+                        <input type="number" id="event_buffer_size" value="{{ config.database.event_buffer_size if config.database else 100 }}" min="10" max="1000">
+                        <span class="help-text">Events buffered before flush (default: 100)</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Flush Interval (seconds)</label>
+                        <input type="number" id="flush_interval" value="{{ config.database.flush_interval if config.database else 1 }}" min="1" max="60" step="1">
+                        <span class="help-text">Max time between flushes (default: 1s)</span>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Use Mock Databases</div>
+                            <div class="toggle-description">For development without Redis/TimescaleDB</div>
+                        </div>
+                        <label class="toggle warning">
+                            <input type="checkbox" id="use_mock_db" {% if config.database and config.database.use_mock %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="saveDatabase()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Scoring Weights -->
             <div class="card">
                 <div class="card-header">
@@ -691,10 +752,89 @@
 
             updateTotalWeight();
             loadMetrics();
+            loadDbStatus();
 
             // Auto-refresh metrics every 30 seconds
             setInterval(loadMetrics, 30000);
+            setInterval(loadDbStatus, 60000);
         });
+
+        async function loadDbStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+
+                // Redis status
+                const redisStatus = document.getElementById('redis-status');
+                const redisInfo = document.getElementById('redis-info');
+                if (data.redis && data.redis.connected) {
+                    redisStatus.classList.add('active');
+                    redisStatus.classList.remove('inactive');
+                    redisInfo.textContent = 'Connected - ' + (data.redis.keys || 0) + ' keys';
+                } else {
+                    redisStatus.classList.remove('active');
+                    redisStatus.classList.add('inactive');
+                    redisInfo.textContent = data.redis ? data.redis.error : 'Using mock client';
+                }
+
+                // TimescaleDB status
+                const tsStatus = document.getElementById('timescale-status');
+                const tsInfo = document.getElementById('timescale-info');
+                if (data.timescale && data.timescale.connected) {
+                    tsStatus.classList.add('active');
+                    tsStatus.classList.remove('inactive');
+                    tsInfo.textContent = 'Connected - ' + (data.timescale.events || 0) + ' events';
+                } else {
+                    tsStatus.classList.remove('active');
+                    tsStatus.classList.add('inactive');
+                    tsInfo.textContent = data.timescale ? data.timescale.error : 'Using mock client';
+                }
+
+                // Pipeline status
+                const pipeStatus = document.getElementById('pipeline-status');
+                const pipeInfo = document.getElementById('pipeline-info');
+                if (data.pipeline && data.pipeline.active) {
+                    pipeStatus.classList.add('active');
+                    pipeStatus.classList.remove('inactive');
+                    pipeInfo.textContent = 'Active - ' + (data.pipeline.buffered || 0) + ' buffered, ' + (data.pipeline.processed || 0) + ' processed';
+                } else {
+                    pipeStatus.classList.remove('active');
+                    pipeStatus.classList.add('inactive');
+                    pipeInfo.textContent = data.pipeline ? 'Inactive' : 'Not initialized';
+                }
+
+            } catch (e) {
+                document.getElementById('redis-info').textContent = 'Error checking status';
+                document.getElementById('timescale-info').textContent = 'Error checking status';
+                document.getElementById('pipeline-info').textContent = 'Error checking status';
+            }
+        }
+
+        async function saveDatabase() {
+            try {
+                const data = {
+                    event_buffer_size: parseInt(document.getElementById('event_buffer_size').value),
+                    flush_interval: parseInt(document.getElementById('flush_interval').value),
+                    use_mock: document.getElementById('use_mock_db').checked,
+                };
+
+                const response = await fetch('/api/config/database', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('Database settings saved!', 'success');
+                    loadDbStatus();
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error saving: ' + e.message, 'error');
+            }
+        }
 
         async function loadMetrics() {
             const container = document.getElementById('metrics-container');
