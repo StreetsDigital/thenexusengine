@@ -36,6 +36,10 @@ db = [
     "asyncpg>=0.27.0",
     "psycopg2-binary>=2.9.0",
 ]
+admin = [
+    "flask>=3.0.0",
+    "pyyaml>=6.0.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

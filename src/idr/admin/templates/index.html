@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDR Admin - The Nexus Engine</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--gray-100);
+            color: var(--gray-800);
+            line-height: 1.5;
+        }
+
+        .header {
+            background: var(--gray-900);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .header .subtitle {
+            color: var(--gray-300);
+            font-size: 0.875rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        .alert.success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #10b981;
+        }
+
+        .alert.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #ef4444;
+        }
+
+        .alert.show {
+            display: block;
+        }
+
+        .mode-banner {
+            padding: 1rem 2rem;
+            text-align: center;
+            font-weight: 600;
+            display: none;
+        }
+
+        .mode-banner.bypass {
+            background: var(--warning);
+            color: var(--gray-900);
+            display: block;
+        }
+
+        .mode-banner.shadow {
+            background: var(--primary);
+            color: white;
+            display: block;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .card {
+            background: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-header h2 {
+            font-size: 1.125rem;
+            font-weight: 600;
+        }
+
+        .card-body {
+            padding: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .form-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--gray-700);
+            margin-bottom: 0.5rem;
+        }
+
+        .form-group input[type="number"],
+        .form-group input[type="text"],
+        .form-group select {
+            width: 100%;
+            padding: 0.625rem 0.875rem;
+            border: 1px solid var(--gray-300);
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            transition: border-color 0.15s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .form-group .help-text {
+            font-size: 0.75rem;
+            color: var(--gray-600);
+            margin-top: 0.25rem;
+        }
+
+        .toggle-group {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .toggle-group:last-child {
+            border-bottom: none;
+        }
+
+        .toggle-label {
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .toggle-description {
+            font-size: 0.75rem;
+            color: var(--gray-600);
+        }
+
+        .toggle {
+            position: relative;
+            width: 48px;
+            height: 26px;
+            flex-shrink: 0;
+        }
+
+        .toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--gray-300);
+            transition: 0.2s;
+            border-radius: 26px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.2s;
+            border-radius: 50%;
+        }
+
+        .toggle input:checked + .toggle-slider {
+            background-color: var(--primary);
+        }
+
+        .toggle input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+        }
+
+        .toggle.warning input:checked + .toggle-slider {
+            background-color: var(--warning);
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.625rem 1.25rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            border-radius: 0.375rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-secondary {
+            background: var(--gray-200);
+            color: var(--gray-700);
+        }
+
+        .btn-secondary:hover {
+            background: var(--gray-300);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .weight-slider {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .weight-slider input[type="range"] {
+            flex: 1;
+            height: 6px;
+            -webkit-appearance: none;
+            background: var(--gray-200);
+            border-radius: 3px;
+        }
+
+        .weight-slider input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: var(--primary);
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .weight-value {
+            min-width: 50px;
+            text-align: right;
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+
+        .weight-total {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: space-between;
+            font-weight: 600;
+        }
+
+        .weight-total.error {
+            color: var(--danger);
+        }
+
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .quick-action {
+            padding: 1.5rem;
+            border: 2px solid var(--gray-200);
+            border-radius: 0.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .quick-action:hover {
+            border-color: var(--primary);
+            background: var(--gray-50);
+        }
+
+        .quick-action.active {
+            border-color: var(--primary);
+            background: rgba(37, 99, 235, 0.1);
+        }
+
+        .quick-action.bypass.active {
+            border-color: var(--warning);
+            background: rgba(245, 158, 11, 0.1);
+        }
+
+        .quick-action h3 {
+            font-size: 1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .quick-action p {
+            font-size: 0.75rem;
+            color: var(--gray-600);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+        }
+
+        .status-indicator.active {
+            background: var(--success);
+        }
+
+        .status-indicator.inactive {
+            background: var(--gray-300);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            .quick-actions {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div>
+            <h1>IDR Admin Dashboard</h1>
+            <span class="subtitle">The Nexus Engine - Intelligent Demand Router</span>
+        </div>
+        <div>
+            <button class="btn btn-secondary" onclick="resetConfig()">Reset to Defaults</button>
+        </div>
+    </header>
+
+    <div id="mode-banner" class="mode-banner"></div>
+
+    <div class="container">
+        <div id="alert" class="alert"></div>
+
+        <div class="grid">
+            <!-- Operating Mode -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>Operating Mode</h2>
+                </div>
+                <div class="card-body">
+                    <div class="quick-actions">
+                        <div id="mode-normal" class="quick-action active" onclick="setMode('normal')">
+                            <h3><span class="status-indicator active"></span>Normal</h3>
+                            <p>Full IDR filtering enabled</p>
+                        </div>
+                        <div id="mode-shadow" class="quick-action" onclick="setMode('shadow')">
+                            <h3><span class="status-indicator inactive"></span>Shadow</h3>
+                            <p>Log decisions, no filtering</p>
+                        </div>
+                        <div id="mode-bypass" class="quick-action bypass" onclick="setMode('bypass')">
+                            <h3><span class="status-indicator inactive"></span>Bypass</h3>
+                            <p>Select ALL bidders</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Partner Selection -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>Partner Selection</h2>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label>Max Bidders per Auction</label>
+                        <input type="number" id="max_bidders" value="{{ config.selector.max_bidders }}" min="1" max="50">
+                        <span class="help-text">Maximum partners to include (default: 15)</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Minimum Score Threshold</label>
+                        <input type="number" id="min_score_threshold" value="{{ config.selector.min_score_threshold }}" min="0" max="100">
+                        <span class="help-text">Bidders below this score are excluded (0-100)</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Anchor Bidder Count</label>
+                        <input type="number" id="anchor_bidder_count" value="{{ config.selector.anchor_bidder_count }}" min="0" max="10">
+                        <span class="help-text">Always-include top revenue performers</span>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="saveSelector()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Exploration Settings -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>Exploration Settings</h2>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label>Exploration Rate</label>
+                        <input type="number" id="exploration_rate" value="{{ config.selector.exploration_rate }}" min="0" max="1" step="0.05">
+                        <span class="help-text">Chance to include low-confidence bidders (0-1)</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Exploration Slots</label>
+                        <input type="number" id="exploration_slots" value="{{ config.selector.exploration_slots }}" min="0" max="10">
+                        <span class="help-text">Reserved slots for data gathering</span>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Diversity Enforcement</div>
+                            <div class="toggle-description">Include bidders from different categories</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="diversity_enabled" {% if config.selector.diversity_enabled %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="saveSelector()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scoring Weights -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>Scoring Weights</h2>
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label>Win Rate ({{ (config.scoring.weights.win_rate * 100)|int }}%)</label>
+                        <div class="weight-slider">
+                            <input type="range" id="weight_win_rate" min="0" max="50" value="{{ (config.scoring.weights.win_rate * 100)|int }}" oninput="updateWeight(this)">
+                            <span class="weight-value" id="val_win_rate">{{ (config.scoring.weights.win_rate * 100)|int }}%</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Bid Rate ({{ (config.scoring.weights.bid_rate * 100)|int }}%)</label>
+                        <div class="weight-slider">
+                            <input type="range" id="weight_bid_rate" min="0" max="50" value="{{ (config.scoring.weights.bid_rate * 100)|int }}" oninput="updateWeight(this)">
+                            <span class="weight-value" id="val_bid_rate">{{ (config.scoring.weights.bid_rate * 100)|int }}%</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>CPM ({{ (config.scoring.weights.cpm * 100)|int }}%)</label>
+                        <div class="weight-slider">
+                            <input type="range" id="weight_cpm" min="0" max="50" value="{{ (config.scoring.weights.cpm * 100)|int }}" oninput="updateWeight(this)">
+                            <span class="weight-value" id="val_cpm">{{ (config.scoring.weights.cpm * 100)|int }}%</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Floor Clearance ({{ (config.scoring.weights.floor_clearance * 100)|int }}%)</label>
+                        <div class="weight-slider">
+                            <input type="range" id="weight_floor_clearance" min="0" max="50" value="{{ (config.scoring.weights.floor_clearance * 100)|int }}" oninput="updateWeight(this)">
+                            <span class="weight-value" id="val_floor_clearance">{{ (config.scoring.weights.floor_clearance * 100)|int }}%</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Latency ({{ (config.scoring.weights.latency * 100)|int }}%)</label>
+                        <div class="weight-slider">
+                            <input type="range" id="weight_latency" min="0" max="50" value="{{ (config.scoring.weights.latency * 100)|int }}" oninput="updateWeight(this)">
+                            <span class="weight-value" id="val_latency">{{ (config.scoring.weights.latency * 100)|int }}%</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Recency ({{ (config.scoring.weights.recency * 100)|int }}%)</label>
+                        <div class="weight-slider">
+                            <input type="range" id="weight_recency" min="0" max="50" value="{{ (config.scoring.weights.recency * 100)|int }}" oninput="updateWeight(this)">
+                            <span class="weight-value" id="val_recency">{{ (config.scoring.weights.recency * 100)|int }}%</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>ID Match ({{ (config.scoring.weights.id_match * 100)|int }}%)</label>
+                        <div class="weight-slider">
+                            <input type="range" id="weight_id_match" min="0" max="50" value="{{ (config.scoring.weights.id_match * 100)|int }}" oninput="updateWeight(this)">
+                            <span class="weight-value" id="val_id_match">{{ (config.scoring.weights.id_match * 100)|int }}%</span>
+                        </div>
+                    </div>
+                    <div class="weight-total" id="weight-total">
+                        <span>Total:</span>
+                        <span id="total-weight">100%</span>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="saveWeights()">Save Weights</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize mode display
+        document.addEventListener('DOMContentLoaded', function() {
+            const bypassEnabled = {{ 'true' if config.selector.bypass_enabled else 'false' }};
+            const shadowMode = {{ 'true' if config.selector.shadow_mode else 'false' }};
+
+            if (bypassEnabled) {
+                setModeUI('bypass');
+            } else if (shadowMode) {
+                setModeUI('shadow');
+            } else {
+                setModeUI('normal');
+            }
+
+            updateTotalWeight();
+        });
+
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = 'alert ' + type + ' show';
+            setTimeout(() => alert.classList.remove('show'), 3000);
+        }
+
+        function setModeUI(mode) {
+            // Update quick action buttons
+            document.querySelectorAll('.quick-action').forEach(el => {
+                el.classList.remove('active');
+                el.querySelector('.status-indicator').classList.remove('active');
+                el.querySelector('.status-indicator').classList.add('inactive');
+            });
+
+            const activeBtn = document.getElementById('mode-' + mode);
+            activeBtn.classList.add('active');
+            activeBtn.querySelector('.status-indicator').classList.add('active');
+            activeBtn.querySelector('.status-indicator').classList.remove('inactive');
+
+            // Update banner
+            const banner = document.getElementById('mode-banner');
+            banner.className = 'mode-banner';
+            if (mode === 'bypass') {
+                banner.classList.add('bypass');
+                banner.textContent = 'BYPASS MODE ACTIVE - All bidders will be selected, no IDR filtering';
+            } else if (mode === 'shadow') {
+                banner.classList.add('shadow');
+                banner.textContent = 'SHADOW MODE ACTIVE - Logging decisions without actually filtering';
+            }
+        }
+
+        async function setMode(mode) {
+            try {
+                if (mode === 'normal') {
+                    await fetch('/api/mode/bypass', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({enabled: false})
+                    });
+                    await fetch('/api/mode/shadow', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({enabled: false})
+                    });
+                } else if (mode === 'bypass') {
+                    await fetch('/api/mode/bypass', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({enabled: true})
+                    });
+                } else if (mode === 'shadow') {
+                    await fetch('/api/mode/shadow', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({enabled: true})
+                    });
+                }
+
+                setModeUI(mode);
+                showAlert('Mode changed to ' + mode.toUpperCase(), 'success');
+            } catch (e) {
+                showAlert('Error changing mode: ' + e.message, 'error');
+            }
+        }
+
+        async function saveSelector() {
+            try {
+                const data = {
+                    max_bidders: parseInt(document.getElementById('max_bidders').value),
+                    min_score_threshold: parseFloat(document.getElementById('min_score_threshold').value),
+                    anchor_bidder_count: parseInt(document.getElementById('anchor_bidder_count').value),
+                    exploration_rate: parseFloat(document.getElementById('exploration_rate').value),
+                    exploration_slots: parseInt(document.getElementById('exploration_slots').value),
+                    diversity_enabled: document.getElementById('diversity_enabled').checked,
+                };
+
+                const response = await fetch('/api/config/selector', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('Selector settings saved!', 'success');
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error saving: ' + e.message, 'error');
+            }
+        }
+
+        function updateWeight(input) {
+            const name = input.id.replace('weight_', '');
+            const value = input.value;
+            document.getElementById('val_' + name).textContent = value + '%';
+            updateTotalWeight();
+        }
+
+        function updateTotalWeight() {
+            const weights = ['win_rate', 'bid_rate', 'cpm', 'floor_clearance', 'latency', 'recency', 'id_match'];
+            let total = 0;
+            weights.forEach(w => {
+                total += parseInt(document.getElementById('weight_' + w).value);
+            });
+
+            const totalEl = document.getElementById('total-weight');
+            const containerEl = document.getElementById('weight-total');
+
+            totalEl.textContent = total + '%';
+            if (total !== 100) {
+                containerEl.classList.add('error');
+            } else {
+                containerEl.classList.remove('error');
+            }
+        }
+
+        async function saveWeights() {
+            const weights = {
+                win_rate: parseInt(document.getElementById('weight_win_rate').value) / 100,
+                bid_rate: parseInt(document.getElementById('weight_bid_rate').value) / 100,
+                cpm: parseInt(document.getElementById('weight_cpm').value) / 100,
+                floor_clearance: parseInt(document.getElementById('weight_floor_clearance').value) / 100,
+                latency: parseInt(document.getElementById('weight_latency').value) / 100,
+                recency: parseInt(document.getElementById('weight_recency').value) / 100,
+                id_match: parseInt(document.getElementById('weight_id_match').value) / 100,
+            };
+
+            try {
+                const response = await fetch('/api/config/scoring', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({weights})
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('Scoring weights saved!', 'success');
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error saving weights: ' + e.message, 'error');
+            }
+        }
+
+        async function resetConfig() {
+            if (!confirm('Reset all settings to defaults?')) return;
+
+            try {
+                const response = await fetch('/api/reset', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('Configuration reset! Reloading...', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error resetting: ' + e.message, 'error');
+            }
+        }
+    </script>
+</body>
+</html>
