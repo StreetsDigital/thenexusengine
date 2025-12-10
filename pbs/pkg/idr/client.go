@@ -171,3 +171,72 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 
 	return nil
 }
+
+// FPDConfig represents First Party Data configuration from the IDR service
+type FPDConfig struct {
+	Enabled             bool     `json:"enabled"`
+	SiteEnabled         bool     `json:"site_enabled"`
+	UserEnabled         bool     `json:"user_enabled"`
+	ImpEnabled          bool     `json:"imp_enabled"`
+	GlobalEnabled       bool     `json:"global_enabled"`
+	BidderConfigEnabled bool     `json:"bidderconfig_enabled"`
+	ContentEnabled      bool     `json:"content_enabled"`
+	EIDsEnabled         bool     `json:"eids_enabled"`
+	EIDSources          string   `json:"eid_sources"` // Comma-separated list
+}
+
+// GetFPDConfig retrieves FPD configuration from the IDR service
+func (c *Client) GetFPDConfig(ctx context.Context) (*FPDConfig, error) {
+	config, err := c.GetConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract FPD section from config
+	fpdSection, ok := config["fpd"].(map[string]interface{})
+	if !ok {
+		// Return default config if no FPD section
+		return &FPDConfig{
+			Enabled:        true,
+			SiteEnabled:    true,
+			UserEnabled:    true,
+			ImpEnabled:     true,
+			ContentEnabled: true,
+			EIDsEnabled:    true,
+			EIDSources:     "liveramp.com,uidapi.com,id5-sync.com,criteo.com",
+		}, nil
+	}
+
+	// Parse FPD config
+	fpd := &FPDConfig{}
+
+	if v, ok := fpdSection["enabled"].(bool); ok {
+		fpd.Enabled = v
+	}
+	if v, ok := fpdSection["site_enabled"].(bool); ok {
+		fpd.SiteEnabled = v
+	}
+	if v, ok := fpdSection["user_enabled"].(bool); ok {
+		fpd.UserEnabled = v
+	}
+	if v, ok := fpdSection["imp_enabled"].(bool); ok {
+		fpd.ImpEnabled = v
+	}
+	if v, ok := fpdSection["global_enabled"].(bool); ok {
+		fpd.GlobalEnabled = v
+	}
+	if v, ok := fpdSection["bidderconfig_enabled"].(bool); ok {
+		fpd.BidderConfigEnabled = v
+	}
+	if v, ok := fpdSection["content_enabled"].(bool); ok {
+		fpd.ContentEnabled = v
+	}
+	if v, ok := fpdSection["eids_enabled"].(bool); ok {
+		fpd.EIDsEnabled = v
+	}
+	if v, ok := fpdSection["eid_sources"].(string); ok {
+		fpd.EIDSources = v
+	}
+
+	return fpd, nil
+}
