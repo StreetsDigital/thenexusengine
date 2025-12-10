@@ -4,6 +4,7 @@ package exchange
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -14,31 +15,36 @@ import (
 
 // Exchange orchestrates the auction process
 type Exchange struct {
-	registry   *adapters.Registry
-	httpClient adapters.HTTPClient
-	idrClient  *idr.Client
-	config     *Config
+	registry      *adapters.Registry
+	httpClient    adapters.HTTPClient
+	idrClient     *idr.Client
+	eventRecorder *idr.EventRecorder
+	config        *Config
 }
 
 // Config holds exchange configuration
 type Config struct {
-	DefaultTimeout    time.Duration
-	MaxBidders        int
-	IDREnabled        bool
-	IDRServiceURL     string
-	CurrencyConv      bool
-	DefaultCurrency   string
+	DefaultTimeout     time.Duration
+	MaxBidders         int
+	IDREnabled         bool
+	IDRServiceURL      string
+	EventRecordEnabled bool
+	EventBufferSize    int
+	CurrencyConv       bool
+	DefaultCurrency    string
 }
 
 // DefaultConfig returns default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		DefaultTimeout:  1000 * time.Millisecond,
-		MaxBidders:      50,
-		IDREnabled:      true,
-		IDRServiceURL:   "http://localhost:5050",
-		CurrencyConv:    false,
-		DefaultCurrency: "USD",
+		DefaultTimeout:     1000 * time.Millisecond,
+		MaxBidders:         50,
+		IDREnabled:         true,
+		IDRServiceURL:      "http://localhost:5050",
+		EventRecordEnabled: true,
+		EventBufferSize:    100,
+		CurrencyConv:       false,
+		DefaultCurrency:    "USD",
 	}
 }
 
@@ -56,6 +62,10 @@ func New(registry *adapters.Registry, config *Config) *Exchange {
 
 	if config.IDREnabled && config.IDRServiceURL != "" {
 		ex.idrClient = idr.NewClient(config.IDRServiceURL, 50*time.Millisecond)
+	}
+
+	if config.EventRecordEnabled && config.IDRServiceURL != "" {
+		ex.eventRecorder = idr.NewEventRecorder(config.IDRServiceURL, config.EventBufferSize)
 	}
 
 	return ex
@@ -160,6 +170,40 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	// Call bidders in parallel
 	results := e.callBidders(ctx, req.BidRequest, selectedBidders, timeout)
 
+	// Extract request context for event recording
+	var country, deviceType, mediaType, adSize, publisherID string
+	if req.BidRequest.Device != nil && req.BidRequest.Device.Geo != nil {
+		country = req.BidRequest.Device.Geo.Country
+	}
+	if req.BidRequest.Device != nil {
+		switch req.BidRequest.Device.DeviceType {
+		case 1:
+			deviceType = "mobile"
+		case 2:
+			deviceType = "desktop"
+		case 3:
+			deviceType = "ctv"
+		default:
+			deviceType = "unknown"
+		}
+	}
+	if len(req.BidRequest.Imp) > 0 {
+		imp := req.BidRequest.Imp[0]
+		if imp.Banner != nil {
+			mediaType = "banner"
+			if imp.Banner.W > 0 && imp.Banner.H > 0 {
+				adSize = fmt.Sprintf("%dx%d", imp.Banner.W, imp.Banner.H)
+			}
+		} else if imp.Video != nil {
+			mediaType = "video"
+		} else if imp.Native != nil {
+			mediaType = "native"
+		}
+	}
+	if req.BidRequest.Site != nil && req.BidRequest.Site.Publisher != nil {
+		publisherID = req.BidRequest.Site.Publisher.ID
+	}
+
 	// Collect results
 	allBids := make([]openrtb.SeatBid, 0)
 	for bidderCode, result := range results {
@@ -172,6 +216,38 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 				errStrs[i] = err.Error()
 			}
 			response.DebugInfo.Errors[bidderCode] = errStrs
+		}
+
+		// Record event to IDR
+		if e.eventRecorder != nil {
+			hadBid := len(result.Bids) > 0
+			var bidCPM *float64
+			if hadBid && len(result.Bids) > 0 {
+				cpm := result.Bids[0].Bid.Price
+				bidCPM = &cpm
+			}
+			hadError := len(result.Errors) > 0
+			var errorMsg string
+			if hadError {
+				errorMsg = result.Errors[0].Error()
+			}
+
+			e.eventRecorder.RecordBidResponse(
+				req.BidRequest.ID,
+				bidderCode,
+				float64(result.Latency.Milliseconds()),
+				hadBid,
+				bidCPM,
+				nil, // floor price
+				country,
+				deviceType,
+				mediaType,
+				adSize,
+				publisherID,
+				false, // timedOut - would need to check context
+				hadError,
+				errorMsg,
+			)
 		}
 
 		if len(result.Bids) > 0 {

@@ -28,6 +28,18 @@ try:
 except ImportError:
     IDR_AVAILABLE = False
 
+# Import database components
+try:
+    from src.idr.database.metrics_store import MetricsStore
+    from src.idr.database.event_pipeline import EventPipeline, SyncEventPipeline
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+
+# Global metrics store and event pipeline (initialized on first request)
+_metrics_store = None
+_event_pipeline = None
+
 
 # Default config path
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent.parent.parent / "config" / "idr_config.yaml"
@@ -330,6 +342,176 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'excluded_bidders': excluded,
                 'mode': mode,
                 'processing_time_ms': (time.time() - start_time) * 1000
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    @app.route('/api/events', methods=['POST'])
+    def record_events():
+        """
+        Record auction events from PBS for metrics tracking.
+
+        Request body:
+        {
+            "events": [
+                {
+                    "auction_id": "...",
+                    "bidder_code": "appnexus",
+                    "event_type": "bid_response",
+                    "latency_ms": 150,
+                    "had_bid": true,
+                    "bid_cpm": 2.50,
+                    "country": "US",
+                    "device_type": "mobile",
+                    "media_type": "banner",
+                    "ad_size": "300x250"
+                },
+                ...
+            ]
+        }
+        """
+        global _metrics_store, _event_pipeline
+
+        if not DB_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Database components not available'
+            }), 500
+
+        try:
+            # Initialize metrics store if needed
+            if _metrics_store is None:
+                _metrics_store = MetricsStore.create(use_mocks=True)
+
+            # Initialize event pipeline if needed
+            if _event_pipeline is None:
+                _event_pipeline = SyncEventPipeline(_metrics_store)
+
+            data = request.json
+            events = data.get('events', [])
+
+            if not events:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'No events provided'
+                }), 400
+
+            processed = 0
+            for event_data in events:
+                event_type = event_data.get('event_type', 'bid_response')
+
+                if event_type == 'win':
+                    _event_pipeline.submit_win(
+                        auction_id=event_data.get('auction_id', ''),
+                        bidder_code=event_data.get('bidder_code', ''),
+                        win_cpm=event_data.get('win_cpm', 0),
+                        country=event_data.get('country', ''),
+                        device_type=event_data.get('device_type', ''),
+                        media_type=event_data.get('media_type', ''),
+                        ad_size=event_data.get('ad_size', ''),
+                        publisher_id=event_data.get('publisher_id', ''),
+                    )
+                else:
+                    _event_pipeline.submit_bid_response(
+                        auction_id=event_data.get('auction_id', ''),
+                        bidder_code=event_data.get('bidder_code', ''),
+                        had_bid=event_data.get('had_bid', False),
+                        latency_ms=event_data.get('latency_ms', 0),
+                        bid_cpm=event_data.get('bid_cpm'),
+                        floor_price=event_data.get('floor_price'),
+                        country=event_data.get('country', ''),
+                        device_type=event_data.get('device_type', ''),
+                        media_type=event_data.get('media_type', ''),
+                        ad_size=event_data.get('ad_size', ''),
+                        publisher_id=event_data.get('publisher_id', ''),
+                        timed_out=event_data.get('timed_out', False),
+                        error_message=event_data.get('error_message'),
+                    )
+                processed += 1
+
+            return jsonify({
+                'status': 'success',
+                'processed': processed
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    @app.route('/api/metrics', methods=['GET'])
+    def get_metrics():
+        """Get current bidder metrics."""
+        global _metrics_store
+
+        if not DB_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Database components not available'
+            }), 500
+
+        try:
+            if _metrics_store is None:
+                _metrics_store = MetricsStore.create(use_mocks=True)
+
+            all_metrics = _metrics_store.get_all_metrics()
+
+            return jsonify({
+                'bidders': {
+                    code: {
+                        'win_rate': m.win_rate,
+                        'bid_rate': m.bid_rate,
+                        'avg_cpm': m.avg_cpm,
+                        'p95_latency_ms': m.p95_latency_ms,
+                        'total_requests': m.total_requests,
+                        'confidence': m.confidence,
+                    }
+                    for code, m in all_metrics.items()
+                }
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    @app.route('/api/metrics/<bidder_code>', methods=['GET'])
+    def get_bidder_metrics(bidder_code: str):
+        """Get metrics for a specific bidder."""
+        global _metrics_store
+
+        if not DB_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Database components not available'
+            }), 500
+
+        try:
+            if _metrics_store is None:
+                _metrics_store = MetricsStore.create(use_mocks=True)
+
+            m = _metrics_store.get_metrics(bidder_code)
+
+            return jsonify({
+                'bidder_code': bidder_code,
+                'win_rate': m.win_rate,
+                'bid_rate': m.bid_rate,
+                'avg_cpm': m.avg_cpm,
+                'floor_clearance_rate': m.floor_clearance_rate,
+                'avg_latency_ms': m.avg_latency_ms,
+                'p95_latency_ms': m.p95_latency_ms,
+                'total_requests': m.total_requests,
+                'realtime_requests': m.realtime_requests,
+                'historical_requests': m.historical_requests,
+                'timeout_rate': m.timeout_rate,
+                'error_rate': m.error_rate,
+                'confidence': m.confidence,
             })
 
         except Exception as e:

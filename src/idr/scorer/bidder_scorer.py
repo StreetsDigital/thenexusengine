@@ -5,7 +5,7 @@ Scores each potential bidder (0-100) based on likelihood of responding
 with a competitive bid for the given request.
 """
 
-from typing import Optional, Protocol
+from typing import TYPE_CHECKING, Optional, Protocol, Union
 
 from ..models.bidder_metrics import BidderMetrics
 from ..models.bidder_score import BidderScore, RecentMetrics, ScoreComponents
@@ -17,6 +17,9 @@ from ..utils.constants import (
     MIN_SAMPLE_SIZE,
     SCORING_WEIGHTS,
 )
+
+if TYPE_CHECKING:
+    from ..database.metrics_store import MetricsStore
 
 
 class PerformanceDB(Protocol):
@@ -58,15 +61,18 @@ class BidderScorer:
         self,
         performance_db: Optional[PerformanceDB] = None,
         weights: Optional[dict[str, float]] = None,
+        metrics_store: Optional["MetricsStore"] = None,
     ):
         """
         Initialize the bidder scorer.
 
         Args:
-            performance_db: Database interface for historical metrics
+            performance_db: Database interface for historical metrics (legacy)
             weights: Custom scoring weights (optional, uses defaults)
+            metrics_store: New unified metrics store (Redis + TimescaleDB)
         """
         self.db = performance_db
+        self.metrics_store = metrics_store
         self.weights = weights or SCORING_WEIGHTS
 
         # Validate weights sum to 1.0
@@ -99,7 +105,11 @@ class BidderScorer:
         lookup_key = self._build_lookup_key(request)
         fallback_level = 0
 
-        # Fetch metrics if not provided
+        # Try to use new metrics_store first, fall back to legacy db
+        if metrics is None and self.metrics_store:
+            return self._score_from_metrics_store(bidder_code, request, lookup_key)
+
+        # Fetch metrics if not provided (legacy path)
         if metrics is None:
             if self.db:
                 metrics, fallback_level = self._fetch_metrics_with_fallback(
@@ -191,6 +201,75 @@ class BidderScorer:
             ad_size=request.primary_ad_size,
             publisher_id=request.publisher_id,
         )
+
+    def _score_from_metrics_store(
+        self,
+        bidder_code: str,
+        request: ClassifiedRequest,
+        lookup_key: LookupKey,
+    ) -> BidderScore:
+        """
+        Score a bidder using the unified MetricsStore (Redis + TimescaleDB).
+
+        This is the new path that uses real-time and historical data.
+        """
+        # Get combined metrics from the store
+        snapshot = self.metrics_store.get_metrics(bidder_code, request)
+
+        # Calculate component scores using the snapshot data
+        components = ScoreComponents(
+            win_rate=self._score_win_rate(snapshot.win_rate),
+            bid_rate=self._score_bid_rate(snapshot.bid_rate),
+            cpm=self._score_avg_cpm(snapshot.avg_cpm, request.floor_price),
+            floor_clearance=self._score_floor_clearance(snapshot.floor_clearance_rate),
+            latency=self._score_latency(snapshot.p95_latency_ms),
+            recency=self._score_recency_from_snapshot(snapshot),
+            id_match=self._score_id_match(bidder_code, request.user_ids),
+        )
+
+        # Calculate weighted total score
+        total_score = (
+            components.win_rate * self.weights['win_rate'] +
+            components.bid_rate * self.weights['bid_rate'] +
+            components.cpm * self.weights['cpm'] +
+            components.floor_clearance * self.weights['floor_clearance'] +
+            components.latency * self.weights['latency'] +
+            components.recency * self.weights['recency'] +
+            components.id_match * self.weights['id_match']
+        )
+
+        return BidderScore(
+            bidder_code=bidder_code,
+            total_score=total_score,
+            components=components,
+            confidence=snapshot.confidence,
+            lookup_key_used=str(lookup_key),
+            fallback_level=0,
+        )
+
+    def _score_recency_from_snapshot(self, snapshot) -> float:
+        """
+        Score recency based on metrics snapshot.
+
+        Uses the ratio of real-time to historical data as a proxy for activity.
+        """
+        if snapshot.total_requests < MIN_SAMPLE_SIZE:
+            return 50.0  # Neutral for insufficient data
+
+        # If we have real-time data, the bidder is active
+        if snapshot.realtime_requests > 0:
+            # More real-time requests = more active = higher recency score
+            recency_ratio = snapshot.realtime_requests / max(1, snapshot.total_requests)
+            # Map to 50-100 range (active bidders get 50-100)
+            return 50.0 + (recency_ratio * 50.0)
+
+        # No real-time data - check hours since last bid
+        if snapshot.hours_since_last_bid > 0:
+            # Decay: 0 hours = 100, 24+ hours = 25
+            decay = max(0, min(24, snapshot.hours_since_last_bid)) / 24.0
+            return 100.0 - (decay * 75.0)
+
+        return 50.0  # Neutral default
 
     def _fetch_metrics_with_fallback(
         self,
