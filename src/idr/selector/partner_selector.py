@@ -3,16 +3,21 @@ Partner Selector for the Intelligent Demand Router (IDR).
 
 Selects which bidders to include in the auction based on scores,
 ensuring optimal partner selection with diversity and exploration.
+
+Includes privacy filtering to ensure compliance with GDPR, CCPA, etc.
 """
 
 import random
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Protocol
+from typing import TYPE_CHECKING, Optional, Protocol
 
 from ..models.bidder_score import BidderScore
 from ..models.classified_request import AdFormat, ClassifiedRequest
 from ..utils.constants import BIDDER_CATEGORIES
+
+if TYPE_CHECKING:
+    from ..privacy.privacy_filter import PrivacyFilter, PrivacyFilterResult
 
 
 class SelectionReason(str, Enum):
@@ -25,6 +30,19 @@ class SelectionReason(str, Enum):
     BYPASS = 'bypass'                    # Bypass mode - all bidders selected
 
 
+class ExclusionReason(str, Enum):
+    """Reason why a bidder was excluded."""
+    LOW_SCORE = 'low_score'
+    MAX_BIDDERS = 'max_bidders'
+    PRIVACY_NO_TCF = 'privacy_no_tcf'
+    PRIVACY_NO_VENDOR = 'privacy_no_vendor'
+    PRIVACY_NO_PURPOSE = 'privacy_no_purpose'
+    PRIVACY_CCPA_OPTOUT = 'privacy_ccpa_optout'
+    PRIVACY_COPPA = 'privacy_coppa'
+    PRIVACY_REGION = 'privacy_region'
+    PRIVACY_PERSONALIZATION = 'privacy_personalization'
+
+
 @dataclass
 class SelectorConfig:
     """Configuration for the Partner Selector."""
@@ -32,6 +50,10 @@ class SelectorConfig:
     # Bypass/Shadow modes
     bypass_enabled: bool = False         # If True, select ALL bidders (no filtering)
     shadow_mode: bool = False            # If True, log decisions but return all bidders
+
+    # Privacy settings
+    privacy_enabled: bool = True         # Enable privacy filtering
+    privacy_strict_mode: bool = False    # Strict mode: reject unknown GVL IDs
 
     # Selection limits
     max_bidders: int = 15                # Maximum partners per auction
@@ -58,6 +80,8 @@ class SelectorConfig:
         return cls(
             bypass_enabled=config.get('bypass_enabled', False),
             shadow_mode=config.get('shadow_mode', False),
+            privacy_enabled=config.get('privacy_enabled', True),
+            privacy_strict_mode=config.get('privacy_strict_mode', False),
             max_bidders=config.get('max_bidders', 15),
             min_score_threshold=config.get('min_score_threshold', 25.0),
             exploration_rate=config.get('exploration_rate', 0.1),
@@ -97,6 +121,14 @@ class SelectedBidder:
 
 
 @dataclass
+class ExcludedBidder:
+    """A bidder that was excluded with reason."""
+    bidder_code: str
+    reason: ExclusionReason
+    details: str = ""
+
+
+@dataclass
 class SelectionResult:
     """
     Result of partner selection process.
@@ -111,6 +143,10 @@ class SelectionResult:
     bypass_mode: bool = False            # True if bypass was active
     shadow_mode: bool = False            # True if shadow mode was active
     shadow_would_exclude: list[str] = field(default_factory=list)  # What would be excluded
+
+    # Privacy filtering results
+    privacy_filtered: list[ExcludedBidder] = field(default_factory=list)
+    privacy_summary: dict = field(default_factory=dict)
 
     @property
     def selected_bidder_codes(self) -> list[str]:
@@ -134,6 +170,11 @@ class SelectionResult:
     def diversity_count(self) -> int:
         """Count of diversity bidders selected."""
         return sum(1 for b in self.selected if b.reason == SelectionReason.DIVERSITY)
+
+    @property
+    def privacy_filtered_count(self) -> int:
+        """Count of bidders filtered for privacy reasons."""
+        return len(self.privacy_filtered)
 
     @property
     def is_filtered(self) -> bool:
@@ -163,6 +204,7 @@ class SelectionResult:
                 'anchor_count': self.anchor_count,
                 'exploration_count': self.exploration_count,
                 'diversity_count': self.diversity_count,
+                'privacy_filtered_count': self.privacy_filtered_count,
             },
         }
 
@@ -171,6 +213,20 @@ class SelectionResult:
             result['shadow_analysis'] = {
                 'would_exclude': self.shadow_would_exclude,
                 'would_exclude_count': len(self.shadow_would_exclude),
+            }
+
+        # Include privacy filtering details
+        if self.privacy_filtered:
+            result['privacy'] = {
+                'filtered': [
+                    {
+                        'bidder_code': b.bidder_code,
+                        'reason': b.reason.value,
+                        'details': b.details,
+                    }
+                    for b in self.privacy_filtered
+                ],
+                'summary': self.privacy_summary,
             }
 
         return result
@@ -193,6 +249,7 @@ class PartnerSelector:
     Selects which bidders to include in an auction.
 
     Selection strategy:
+    0. Filter bidders based on privacy consent (GDPR, CCPA, COPPA)
     1. Always include "anchor" bidders (top by historical revenue)
     2. Add high-confidence high-scorers above threshold
     3. Handle low-confidence bidders with exploration rate
@@ -204,6 +261,7 @@ class PartnerSelector:
         self,
         config: Optional[SelectorConfig] = None,
         anchor_provider: Optional[AnchorBidderProvider] = None,
+        privacy_filter: Optional["PrivacyFilter"] = None,
         random_seed: Optional[int] = None,
     ):
         """
@@ -212,10 +270,12 @@ class PartnerSelector:
         Args:
             config: Selector configuration
             anchor_provider: Provider for anchor bidder data
+            privacy_filter: Privacy filter for GDPR/CCPA compliance
             random_seed: Optional seed for reproducible selection
         """
         self.config = config or SelectorConfig()
         self.anchor_provider = anchor_provider
+        self.privacy_filter = privacy_filter
         self._rng = random.Random(random_seed)
 
     def select_partners(
@@ -240,7 +300,18 @@ class PartnerSelector:
         ranked = sorted(scores, key=lambda x: x.total_score, reverse=True)
         score_lookup = {s.bidder_code: s for s in ranked}
 
-        # BYPASS MODE: Select all bidders, no filtering
+        # Apply privacy filtering first
+        privacy_filtered: list[ExcludedBidder] = []
+        privacy_summary: dict = {}
+
+        if self.config.privacy_enabled and self.privacy_filter and request.consent_signals:
+            ranked, privacy_filtered, privacy_summary = self._apply_privacy_filter(
+                ranked, request
+            )
+            # Rebuild score lookup after filtering
+            score_lookup = {s.bidder_code: s for s in ranked}
+
+        # BYPASS MODE: Select all bidders, no filtering (except privacy)
         if self.config.bypass_enabled:
             selected = [
                 SelectedBidder(
@@ -260,6 +331,8 @@ class PartnerSelector:
                 total_candidates=len(scores),
                 selection_time_ms=selection_time,
                 bypass_mode=True,
+                privacy_filtered=privacy_filtered,
+                privacy_summary=privacy_summary,
             )
 
         # Normal selection process
@@ -328,6 +401,8 @@ class PartnerSelector:
                 selection_time_ms=selection_time,
                 shadow_mode=True,
                 shadow_would_exclude=excluded,  # What WOULD be excluded
+                privacy_filtered=privacy_filtered,
+                privacy_summary=privacy_summary,
             )
 
         return SelectionResult(
@@ -335,6 +410,8 @@ class PartnerSelector:
             excluded=excluded,
             total_candidates=len(scores),
             selection_time_ms=selection_time,
+            privacy_filtered=privacy_filtered,
+            privacy_summary=privacy_summary,
         )
 
     def _add_anchor_bidders(
@@ -511,6 +588,72 @@ class PartnerSelector:
 
         # Default anchor bidders when no provider
         return ['rubicon', 'appnexus', 'pubmatic'][:self.config.anchor_bidder_count]
+
+    def _apply_privacy_filter(
+        self,
+        ranked: list[BidderScore],
+        request: ClassifiedRequest,
+    ) -> tuple[list[BidderScore], list[ExcludedBidder], dict]:
+        """
+        Apply privacy filtering to bidders based on consent signals.
+
+        Args:
+            ranked: List of scored bidders
+            request: Classified request with consent signals
+
+        Returns:
+            Tuple of (filtered_bidders, excluded_bidders, summary)
+        """
+        from ..privacy.privacy_filter import FilterReason
+
+        if not self.privacy_filter or not request.consent_signals:
+            return ranked, [], {}
+
+        # Get bidder codes
+        bidder_codes = [s.bidder_code for s in ranked]
+
+        # Apply privacy filter
+        allowed_codes, filter_results = self.privacy_filter.filter_bidders(
+            bidder_codes, request.consent_signals
+        )
+
+        # Build excluded list with reasons
+        excluded: list[ExcludedBidder] = []
+        allowed_set = set(allowed_codes)
+
+        # Map FilterReason to ExclusionReason
+        reason_map = {
+            FilterReason.NO_TCF_CONSENT: ExclusionReason.PRIVACY_NO_TCF,
+            FilterReason.NO_VENDOR_CONSENT: ExclusionReason.PRIVACY_NO_VENDOR,
+            FilterReason.NO_PURPOSE_CONSENT: ExclusionReason.PRIVACY_NO_PURPOSE,
+            FilterReason.CCPA_OPT_OUT: ExclusionReason.PRIVACY_CCPA_OPTOUT,
+            FilterReason.COPPA_RESTRICTED: ExclusionReason.PRIVACY_COPPA,
+            FilterReason.REGION_BLOCKED: ExclusionReason.PRIVACY_REGION,
+            FilterReason.PERSONALIZATION_DENIED: ExclusionReason.PRIVACY_PERSONALIZATION,
+        }
+
+        for result in filter_results:
+            if not result.allowed:
+                exclusion_reason = reason_map.get(
+                    result.reason,
+                    ExclusionReason.PRIVACY_NO_TCF
+                )
+                excluded.append(ExcludedBidder(
+                    bidder_code=result.bidder_code,
+                    reason=exclusion_reason,
+                    details=result.details,
+                ))
+
+        # Filter the ranked list
+        filtered_ranked = [s for s in ranked if s.bidder_code in allowed_set]
+
+        # Get summary from privacy filter
+        summary = self.privacy_filter.get_privacy_summary(
+            request.consent_signals,
+            filter_results
+        )
+
+        return filtered_ranked, excluded, summary
 
 
 class MockAnchorProvider:

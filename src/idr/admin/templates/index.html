@@ -669,6 +669,70 @@
                 </div>
             </div>
 
+            <!-- Privacy Compliance -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>Privacy Compliance</h2>
+                </div>
+                <div class="card-body">
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Privacy Filtering Enabled</div>
+                            <div class="toggle-description">Filter bidders based on GDPR/CCPA consent signals</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="privacy_enabled" {% if config.privacy and config.privacy.enabled %}checked{% elif not config.privacy %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Strict Mode</div>
+                            <div class="toggle-description">Reject bidders without known GVL ID</div>
+                        </div>
+                        <label class="toggle warning">
+                            <input type="checkbox" id="privacy_strict" {% if config.privacy and config.privacy.strict_mode %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <hr style="margin: 1rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 0.75rem; color: var(--gray-700);">Regulation Support</h4>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">GDPR / TCF v2</div>
+                            <div class="toggle-description">EU General Data Protection Regulation</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="privacy_gdpr" {% if not config.privacy or config.privacy.gdpr_enabled != false %}checked{% endif %} disabled>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">CCPA / CPRA</div>
+                            <div class="toggle-description">California Consumer Privacy Act</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="privacy_ccpa" {% if not config.privacy or config.privacy.ccpa_enabled != false %}checked{% endif %} disabled>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">COPPA</div>
+                            <div class="toggle-description">Children's Online Privacy Protection Act</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="privacy_coppa" {% if not config.privacy or config.privacy.coppa_enabled != false %}checked{% endif %} disabled>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="savePrivacy()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Scoring Weights -->
             <div class="card">
                 <div class="card-header">
@@ -828,6 +892,30 @@
                 if (result.status === 'success') {
                     showAlert('Database settings saved!', 'success');
                     loadDbStatus();
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error saving: ' + e.message, 'error');
+            }
+        }
+
+        async function savePrivacy() {
+            try {
+                const data = {
+                    enabled: document.getElementById('privacy_enabled').checked,
+                    strict_mode: document.getElementById('privacy_strict').checked,
+                };
+
+                const response = await fetch('/api/config/privacy', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('Privacy settings saved!', 'success');
                 } else {
                     showAlert(result.message, 'error');
                 }

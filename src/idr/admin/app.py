@@ -111,6 +111,13 @@ def get_default_config() -> dict[str, Any]:
             'flush_interval': 1,
             'use_mock': os.environ.get('USE_MOCK_DB', 'true').lower() == 'true',
         },
+        'privacy': {
+            'enabled': True,
+            'strict_mode': False,
+            'gdpr_enabled': True,
+            'ccpa_enabled': True,
+            'coppa_enabled': True,
+        },
     }
 
 
@@ -310,6 +317,35 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'status': 'success',
                 'config': config['database'],
                 'message': 'Database settings saved. Restart services to apply changes.'
+            })
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 400
+
+    @app.route('/api/config/privacy', methods=['PATCH'])
+    def update_privacy_config():
+        """Update privacy compliance configuration."""
+        try:
+            config = load_config(app.config['CONFIG_PATH'])
+            updates = request.json
+
+            if 'privacy' not in config:
+                config['privacy'] = {}
+
+            config['privacy']['enabled'] = updates.get('enabled', True)
+            config['privacy']['strict_mode'] = updates.get('strict_mode', False)
+
+            # Also update selector config for consistency
+            if 'selector' not in config:
+                config['selector'] = {}
+            config['selector']['privacy_enabled'] = config['privacy']['enabled']
+            config['selector']['privacy_strict_mode'] = config['privacy']['strict_mode']
+
+            save_config(config, app.config['CONFIG_PATH'])
+
+            return jsonify({
+                'status': 'success',
+                'config': config['privacy'],
+                'message': 'Privacy settings saved.'
             })
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)}), 400
