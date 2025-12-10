@@ -15,12 +15,16 @@ from .models import (
     ScoreComponents,
 )
 from .scorer import BidderScorer
+from .selector import PartnerSelector, SelectorConfig, SelectionResult
 
 __version__ = '1.0.0'
 
 __all__ = [
     'RequestClassifier',
     'BidderScorer',
+    'PartnerSelector',
+    'SelectorConfig',
+    'SelectionResult',
     'ClassifiedRequest',
     'BidderScore',
     'ScoreComponents',

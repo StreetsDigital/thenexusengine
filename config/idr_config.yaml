@@ -14,11 +14,28 @@ scoring:
 
 # Partner selection settings
 selector:
+  # BYPASS/TESTING MODES
+  bypass_enabled: false        # If true, select ALL bidders (no IDR filtering)
+  shadow_mode: false           # If true, return all but track what WOULD be excluded
+
+  # Selection limits
   max_bidders: 15              # Maximum partners per auction
   min_score_threshold: 25      # Minimum score to be considered
+
+  # Exploration settings
   exploration_rate: 0.1        # 10% chance to include low-confidence bidders
   exploration_slots: 2         # Reserved slots for data gathering
+
+  # Anchor bidders
   anchor_bidder_count: 3       # Always-include top performers
+
+  # Diversity settings
+  diversity_enabled: true      # Enforce category diversity
+  diversity_categories:        # Categories to include for diversity
+    - premium
+    - mid_tier
+    - video_specialist
+    - native
 
 # Performance thresholds
 performance:
@@ -51,8 +68,8 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   routing_decisions: true      # Log every routing decision
 
-# Feature flags
+# Feature flags (deprecated - use selector settings above)
+# These are kept for backward compatibility
 features:
-  shadow_mode: false           # Log decisions without actually filtering
-  exploration_enabled: true    # Enable exploration slots
-  diversity_enforcement: true  # Ensure bidder category diversity
+  exploration_enabled: true    # Enable exploration slots (maps to selector.exploration_slots > 0)
+  diversity_enforcement: true  # Ensure bidder category diversity (maps to selector.diversity_enabled)
