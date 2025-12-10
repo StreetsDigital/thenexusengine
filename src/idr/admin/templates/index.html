@@ -387,6 +387,102 @@
             background: var(--gray-300);
         }
 
+        /* Metrics Table Styles */
+        .metrics-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+
+        .metrics-table th,
+        .metrics-table td {
+            padding: 0.75rem 0.5rem;
+            text-align: left;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .metrics-table th {
+            font-weight: 600;
+            color: var(--gray-600);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+
+        .metrics-table tbody tr:hover {
+            background: var(--gray-50);
+        }
+
+        .metric-bar {
+            width: 60px;
+            height: 6px;
+            background: var(--gray-200);
+            border-radius: 3px;
+            overflow: hidden;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 0.5rem;
+        }
+
+        .metric-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+
+        .metric-bar-fill.good {
+            background: var(--success);
+        }
+
+        .metric-bar-fill.medium {
+            background: var(--warning);
+        }
+
+        .metric-bar-fill.poor {
+            background: var(--danger);
+        }
+
+        .confidence-badge {
+            display: inline-block;
+            padding: 0.125rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .confidence-badge.high {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .confidence-badge.medium {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .confidence-badge.low {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .no-data {
+            text-align: center;
+            color: var(--gray-600);
+            padding: 2rem;
+        }
+
+        .refresh-btn {
+            font-size: 0.75rem;
+            padding: 0.375rem 0.75rem;
+        }
+
+        .metric-value {
+            font-weight: 500;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 1rem;
@@ -499,6 +595,19 @@
                 </div>
             </div>
 
+            <!-- Bidder Metrics (Full Width) -->
+            <div class="card full-width">
+                <div class="card-header">
+                    <h2>Bidder Performance Metrics</h2>
+                    <button class="btn btn-secondary refresh-btn" onclick="loadMetrics()">Refresh</button>
+                </div>
+                <div class="card-body">
+                    <div id="metrics-container">
+                        <div class="no-data">Loading metrics...</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Scoring Weights -->
             <div class="card">
                 <div class="card-header">
@@ -581,7 +690,100 @@
             }
 
             updateTotalWeight();
+            loadMetrics();
+
+            // Auto-refresh metrics every 30 seconds
+            setInterval(loadMetrics, 30000);
         });
+
+        async function loadMetrics() {
+            const container = document.getElementById('metrics-container');
+
+            try {
+                const response = await fetch('/api/metrics');
+                const data = await response.json();
+
+                if (data.status === 'error') {
+                    container.innerHTML = '<div class="no-data">' + data.message + '</div>';
+                    return;
+                }
+
+                const bidders = data.bidders || {};
+                const bidderList = Object.entries(bidders);
+
+                if (bidderList.length === 0) {
+                    container.innerHTML = '<div class="no-data">No bidder metrics yet. Metrics will appear after auctions are processed.</div>';
+                    return;
+                }
+
+                // Sort by total requests descending
+                bidderList.sort((a, b) => b[1].total_requests - a[1].total_requests);
+
+                let html = `
+                    <table class="metrics-table">
+                        <thead>
+                            <tr>
+                                <th>Bidder</th>
+                                <th>Win Rate</th>
+                                <th>Bid Rate</th>
+                                <th>Avg CPM</th>
+                                <th>P95 Latency</th>
+                                <th>Requests</th>
+                                <th>Confidence</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                for (const [code, m] of bidderList) {
+                    const winRate = (m.win_rate * 100).toFixed(1);
+                    const bidRate = (m.bid_rate * 100).toFixed(1);
+                    const avgCpm = m.avg_cpm.toFixed(2);
+                    const latency = m.p95_latency_ms.toFixed(0);
+                    const requests = m.total_requests.toLocaleString();
+                    const confidence = (m.confidence * 100).toFixed(0);
+
+                    // Determine bar colors
+                    const winClass = m.win_rate >= 0.15 ? 'good' : m.win_rate >= 0.05 ? 'medium' : 'poor';
+                    const bidClass = m.bid_rate >= 0.7 ? 'good' : m.bid_rate >= 0.4 ? 'medium' : 'poor';
+                    const latClass = m.p95_latency_ms <= 150 ? 'good' : m.p95_latency_ms <= 300 ? 'medium' : 'poor';
+                    const confClass = m.confidence >= 0.7 ? 'high' : m.confidence >= 0.4 ? 'medium' : 'low';
+
+                    html += `
+                        <tr>
+                            <td><strong>${code}</strong></td>
+                            <td>
+                                <div class="metric-bar">
+                                    <div class="metric-bar-fill ${winClass}" style="width: ${Math.min(winRate * 5, 100)}%"></div>
+                                </div>
+                                <span class="metric-value">${winRate}%</span>
+                            </td>
+                            <td>
+                                <div class="metric-bar">
+                                    <div class="metric-bar-fill ${bidClass}" style="width: ${bidRate}%"></div>
+                                </div>
+                                <span class="metric-value">${bidRate}%</span>
+                            </td>
+                            <td class="metric-value">$${avgCpm}</td>
+                            <td>
+                                <div class="metric-bar">
+                                    <div class="metric-bar-fill ${latClass}" style="width: ${Math.min(100 - (m.p95_latency_ms / 5), 100)}%"></div>
+                                </div>
+                                <span class="metric-value">${latency}ms</span>
+                            </td>
+                            <td class="metric-value">${requests}</td>
+                            <td><span class="confidence-badge ${confClass}">${confidence}%</span></td>
+                        </tr>
+                    `;
+                }
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+
+            } catch (e) {
+                container.innerHTML = '<div class="no-data">Error loading metrics: ' + e.message + '</div>';
+            }
+        }
 
         function showAlert(message, type) {
             const alert = document.getElementById('alert');
