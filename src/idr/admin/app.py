@@ -6,6 +6,7 @@ Run with: python -m src.idr.admin.app
 
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -17,6 +18,15 @@ try:
 except ImportError:
     print("Flask not installed. Run: pip install flask")
     raise
+
+# Import IDR components
+try:
+    from src.idr.classifier.request_classifier import RequestClassifier
+    from src.idr.scorer.bidder_scorer import BidderScorer
+    from src.idr.selector.partner_selector import PartnerSelector, SelectorConfig
+    IDR_AVAILABLE = True
+except ImportError:
+    IDR_AVAILABLE = False
 
 
 # Default config path
@@ -195,6 +205,138 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({'status': 'success', 'message': 'Configuration reset to defaults'})
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)}), 400
+
+    @app.route('/health', methods=['GET'])
+    def health():
+        """Health check endpoint for Go PBS server."""
+        return jsonify({
+            'status': 'healthy',
+            'idr_available': IDR_AVAILABLE,
+            'timestamp': datetime.now().isoformat()
+        })
+
+    @app.route('/api/select', methods=['POST'])
+    def select_partners():
+        """
+        Select optimal bidding partners for an auction.
+
+        Request body:
+        {
+            "request": { ... OpenRTB bid request ... },
+            "available_bidders": ["appnexus", "rubicon", ...]
+        }
+
+        Response:
+        {
+            "selected_bidders": [
+                {"bidder_code": "appnexus", "score": 85.5, "reason": "HIGH_SCORE"},
+                ...
+            ],
+            "excluded_bidders": [...],  // Only in shadow mode
+            "mode": "normal" | "shadow" | "bypass",
+            "processing_time_ms": 12.5
+        }
+        """
+        start_time = time.time()
+
+        if not IDR_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'IDR components not available'
+            }), 500
+
+        try:
+            data = request.json
+            ortb_request = data.get('request', {})
+            available_bidders = data.get('available_bidders', [])
+
+            if not available_bidders:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'No available bidders provided'
+                }), 400
+
+            # Load current config
+            config = load_config(app.config['CONFIG_PATH'])
+            selector_config = config.get('selector', {})
+            scoring_config = config.get('scoring', {})
+
+            # Check for bypass mode
+            if selector_config.get('bypass_enabled', False):
+                return jsonify({
+                    'selected_bidders': [
+                        {'bidder_code': b, 'score': 0.0, 'reason': 'BYPASS'}
+                        for b in available_bidders
+                    ],
+                    'excluded_bidders': [],
+                    'mode': 'bypass',
+                    'processing_time_ms': (time.time() - start_time) * 1000
+                })
+
+            # Initialize components
+            classifier = RequestClassifier()
+            scorer = BidderScorer(weights=scoring_config.get('weights'))
+
+            sel_cfg = SelectorConfig(
+                bypass_enabled=selector_config.get('bypass_enabled', False),
+                shadow_mode=selector_config.get('shadow_mode', False),
+                max_bidders=selector_config.get('max_bidders', 15),
+                min_score_threshold=selector_config.get('min_score_threshold', 25),
+                exploration_rate=selector_config.get('exploration_rate', 0.1),
+                exploration_slots=selector_config.get('exploration_slots', 2),
+                anchor_bidder_count=selector_config.get('anchor_bidder_count', 3),
+                diversity_enabled=selector_config.get('diversity_enabled', True),
+            )
+            selector = PartnerSelector(config=sel_cfg)
+
+            # Classify request
+            classified = classifier.classify(ortb_request)
+
+            # Score all available bidders
+            scores = []
+            for bidder in available_bidders:
+                # In production, metrics would come from database
+                score = scorer.score_bidder(bidder, classified)
+                scores.append(score)
+
+            # Select partners
+            result = selector.select_partners(scores, classified)
+
+            # Build response
+            selected = [
+                {
+                    'bidder_code': s.bidder_code,
+                    'score': s.final_score,
+                    'reason': s.selection_reason.name if hasattr(s, 'selection_reason') else 'SELECTED'
+                }
+                for s in result.selected
+            ]
+
+            excluded = []
+            if result.shadow_log:
+                excluded = [
+                    {
+                        'bidder_code': e.bidder_code,
+                        'score': e.final_score,
+                        'reason': 'EXCLUDED'
+                    }
+                    for e in result.shadow_log
+                ]
+
+            mode = 'shadow' if sel_cfg.shadow_mode else 'normal'
+
+            return jsonify({
+                'selected_bidders': selected,
+                'excluded_bidders': excluded,
+                'mode': mode,
+                'processing_time_ms': (time.time() - start_time) * 1000
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
 
     return app
 
