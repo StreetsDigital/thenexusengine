@@ -436,3 +436,8 @@ func (e *Exchange) GetFPDConfig() *fpd.Config {
 	}
 	return e.config.FPD
 }
+
+// GetIDRClient returns the IDR client (for metrics/admin)
+func (e *Exchange) GetIDRClient() *idr.Client {
+	return e.idrClient
+}
