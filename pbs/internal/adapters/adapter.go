@@ -1,0 +1,220 @@
+// Package adapters provides the bidder adapter framework
+package adapters
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
+)
+
+// Adapter defines the interface for bidder adapters
+type Adapter interface {
+	// MakeRequests builds HTTP requests for the bidder
+	MakeRequests(request *openrtb.BidRequest, extraInfo *ExtraRequestInfo) ([]*RequestData, []error)
+
+	// MakeBids parses bidder responses into bids
+	MakeBids(request *openrtb.BidRequest, responseData *ResponseData) (*BidderResponse, []error)
+}
+
+// ExtraRequestInfo contains additional info for request building
+type ExtraRequestInfo struct {
+	PbsEntryPoint string
+	GlobalPrivacy GlobalPrivacy
+	BidderCoreName string
+}
+
+// GlobalPrivacy contains privacy settings
+type GlobalPrivacy struct {
+	GDPR      bool
+	GDPRConsent string
+	CCPA      string
+	GPP       string
+	GPPSID    []int
+}
+
+// RequestData represents an HTTP request to a bidder
+type RequestData struct {
+	Method  string
+	URI     string
+	Body    []byte
+	Headers http.Header
+}
+
+// ResponseData represents an HTTP response from a bidder
+type ResponseData struct {
+	StatusCode int
+	Body       []byte
+	Headers    http.Header
+}
+
+// BidderResponse contains parsed bids from a bidder
+type BidderResponse struct {
+	Bids     []*TypedBid
+	Currency string
+}
+
+// TypedBid is a bid with its type
+type TypedBid struct {
+	Bid      *openrtb.Bid
+	BidType  BidType
+	BidVideo *BidVideo
+	BidMeta  *openrtb.ExtBidPrebidMeta
+	DealPriority int
+}
+
+// BidType represents the type of bid
+type BidType string
+
+const (
+	BidTypeBanner BidType = "banner"
+	BidTypeVideo  BidType = "video"
+	BidTypeAudio  BidType = "audio"
+	BidTypeNative BidType = "native"
+)
+
+// BidVideo contains video-specific bid info
+type BidVideo struct {
+	Duration        int
+	PrimaryCategory string
+}
+
+// BidderInfo contains bidder configuration
+type BidderInfo struct {
+	Enabled                 bool
+	Maintainer              *MaintainerInfo
+	Capabilities            *CapabilitiesInfo
+	ModifyingVastXmlAllowed bool
+	Debug                   *DebugInfo
+	GVLVendorID             int
+	Syncer                  *SyncerInfo
+	Endpoint                string
+	ExtraInfo               string
+}
+
+// MaintainerInfo contains maintainer info
+type MaintainerInfo struct {
+	Email string
+}
+
+// CapabilitiesInfo contains bidder capabilities
+type CapabilitiesInfo struct {
+	App  *PlatformInfo
+	Site *PlatformInfo
+}
+
+// PlatformInfo contains platform capabilities
+type PlatformInfo struct {
+	MediaTypes []BidType
+}
+
+// DebugInfo contains debug configuration
+type DebugInfo struct {
+	AllowDebugOverride bool
+}
+
+// SyncerInfo contains user sync configuration
+type SyncerInfo struct {
+	Supports []string
+}
+
+// AdapterConfig holds runtime adapter configuration
+type AdapterConfig struct {
+	Endpoint string
+	Disabled bool
+	ExtraInfo string
+}
+
+// AdapterWithInfo wraps an adapter with its info
+type AdapterWithInfo struct {
+	Adapter Adapter
+	Info    BidderInfo
+}
+
+// BidderResult contains bidding results
+type BidderResult struct {
+	BidderCode string
+	Bids       []*TypedBid
+	Errors     []error
+	Latency    time.Duration
+}
+
+// HTTPClient defines the interface for HTTP requests
+type HTTPClient interface {
+	Do(ctx context.Context, req *RequestData, timeout time.Duration) (*ResponseData, error)
+}
+
+// DefaultHTTPClient implements HTTPClient
+type DefaultHTTPClient struct {
+	client *http.Client
+}
+
+// NewHTTPClient creates a new HTTP client
+func NewHTTPClient(timeout time.Duration) *DefaultHTTPClient {
+	return &DefaultHTTPClient{
+		client: &http.Client{
+			Timeout: timeout,
+		},
+	}
+}
+
+// Do executes an HTTP request
+func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout time.Duration) (*ResponseData, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URI, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(req.Body) > 0 {
+		httpReq.Body = &bodyReader{data: req.Body}
+		httpReq.ContentLength = int64(len(req.Body))
+	}
+
+	for k, v := range req.Headers {
+		httpReq.Header[k] = v
+	}
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body := make([]byte, 0)
+	buf := make([]byte, 1024)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			body = append(body, buf[:n]...)
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	return &ResponseData{
+		StatusCode: resp.StatusCode,
+		Body:       body,
+		Headers:    resp.Header,
+	}, nil
+}
+
+// bodyReader wraps bytes for http.Request.Body
+type bodyReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *bodyReader) Read(p []byte) (n int, err error) {
+	if r.pos >= len(r.data) {
+		return 0, http.ErrBodyReadAfterClose
+	}
+	n = copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+func (r *bodyReader) Close() error {
+	return nil
+}
