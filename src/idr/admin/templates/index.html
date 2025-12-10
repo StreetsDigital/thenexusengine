@@ -733,6 +733,109 @@
                 </div>
             </div>
 
+            <!-- First Party Data (FPD) -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>First Party Data (FPD)</h2>
+                </div>
+                <div class="card-body">
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">FPD Processing Enabled</div>
+                            <div class="toggle-description">Enable First Party Data handling in bid requests</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="fpd_enabled" {% if not config.fpd or config.fpd.enabled != false %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <hr style="margin: 1rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 0.75rem; color: var(--gray-700);">Data Sources</h4>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Site/App FPD</div>
+                            <div class="toggle-description">Pass site.ext.data and app.ext.data to bidders</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="fpd_site_enabled" {% if not config.fpd or config.fpd.site_enabled != false %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">User FPD</div>
+                            <div class="toggle-description">Pass user.ext.data to bidders</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="fpd_user_enabled" {% if not config.fpd or config.fpd.user_enabled != false %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Impression FPD</div>
+                            <div class="toggle-description">Pass imp[].ext.data to bidders</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="fpd_imp_enabled" {% if not config.fpd or config.fpd.imp_enabled != false %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <hr style="margin: 1rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 0.75rem; color: var(--gray-700);">Advanced Options</h4>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Global FPD (ext.prebid.data)</div>
+                            <div class="toggle-description">Merge global FPD into site/app/user for all bidders</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="fpd_global_enabled" {% if config.fpd and config.fpd.global_enabled %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Bidder-Specific FPD (ext.prebid.bidderconfig)</div>
+                            <div class="toggle-description">Apply FPD selectively to specific bidders</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="fpd_bidderconfig_enabled" {% if config.fpd and config.fpd.bidderconfig_enabled %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Content Data Pass-through</div>
+                            <div class="toggle-description">Pass content categories and keywords to bidders</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="fpd_content_enabled" {% if not config.fpd or config.fpd.content_enabled != false %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <hr style="margin: 1rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 0.75rem; color: var(--gray-700);">EID (Extended ID) Support</h4>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Pass User EIDs</div>
+                            <div class="toggle-description">Forward user.eids to bidders (LiveRamp, UID2, etc.)</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="fpd_eids_enabled" {% if not config.fpd or config.fpd.eids_enabled != false %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group" style="margin-top: 1rem;">
+                        <label>Allowed EID Sources (comma-separated)</label>
+                        <input type="text" id="fpd_eid_sources" value="{{ config.fpd.eid_sources if config.fpd and config.fpd.eid_sources else 'liveramp.com,uidapi.com,id5-sync.com,criteo.com' }}" placeholder="liveramp.com,uidapi.com">
+                        <span class="help-text">Leave empty to allow all EID sources</span>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="saveFpd()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Scoring Weights -->
             <div class="card">
                 <div class="card-header">
@@ -916,6 +1019,37 @@
                 const result = await response.json();
                 if (result.status === 'success') {
                     showAlert('Privacy settings saved!', 'success');
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error saving: ' + e.message, 'error');
+            }
+        }
+
+        async function saveFpd() {
+            try {
+                const data = {
+                    enabled: document.getElementById('fpd_enabled').checked,
+                    site_enabled: document.getElementById('fpd_site_enabled').checked,
+                    user_enabled: document.getElementById('fpd_user_enabled').checked,
+                    imp_enabled: document.getElementById('fpd_imp_enabled').checked,
+                    global_enabled: document.getElementById('fpd_global_enabled').checked,
+                    bidderconfig_enabled: document.getElementById('fpd_bidderconfig_enabled').checked,
+                    content_enabled: document.getElementById('fpd_content_enabled').checked,
+                    eids_enabled: document.getElementById('fpd_eids_enabled').checked,
+                    eid_sources: document.getElementById('fpd_eid_sources').value,
+                };
+
+                const response = await fetch('/api/config/fpd', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('FPD settings saved!', 'success');
                 } else {
                     showAlert(result.message, 'error');
                 }

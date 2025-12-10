@@ -118,6 +118,17 @@ def get_default_config() -> dict[str, Any]:
             'ccpa_enabled': True,
             'coppa_enabled': True,
         },
+        'fpd': {
+            'enabled': True,
+            'site_enabled': True,
+            'user_enabled': True,
+            'imp_enabled': True,
+            'global_enabled': False,
+            'bidderconfig_enabled': False,
+            'content_enabled': True,
+            'eids_enabled': True,
+            'eid_sources': 'liveramp.com,uidapi.com,id5-sync.com,criteo.com',
+        },
     }
 
 
@@ -346,6 +357,36 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'status': 'success',
                 'config': config['privacy'],
                 'message': 'Privacy settings saved.'
+            })
+        except Exception as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 400
+
+    @app.route('/api/config/fpd', methods=['PATCH'])
+    def update_fpd_config():
+        """Update First Party Data (FPD) configuration."""
+        try:
+            config = load_config(app.config['CONFIG_PATH'])
+            updates = request.json
+
+            if 'fpd' not in config:
+                config['fpd'] = {}
+
+            config['fpd']['enabled'] = updates.get('enabled', True)
+            config['fpd']['site_enabled'] = updates.get('site_enabled', True)
+            config['fpd']['user_enabled'] = updates.get('user_enabled', True)
+            config['fpd']['imp_enabled'] = updates.get('imp_enabled', True)
+            config['fpd']['global_enabled'] = updates.get('global_enabled', False)
+            config['fpd']['bidderconfig_enabled'] = updates.get('bidderconfig_enabled', False)
+            config['fpd']['content_enabled'] = updates.get('content_enabled', True)
+            config['fpd']['eids_enabled'] = updates.get('eids_enabled', True)
+            config['fpd']['eid_sources'] = updates.get('eid_sources', '')
+
+            save_config(config, app.config['CONFIG_PATH'])
+
+            return jsonify({
+                'status': 'success',
+                'config': config['fpd'],
+                'message': 'FPD settings saved.'
             })
         except Exception as e:
             return jsonify({'status': 'error', 'message': str(e)}), 400
