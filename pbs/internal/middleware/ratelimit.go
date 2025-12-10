@@ -64,8 +64,10 @@ func NewRateLimiter(config *RateLimitConfig) *RateLimiter {
 		stopCh:  make(chan struct{}),
 	}
 
-	// Start cleanup goroutine
-	go rl.cleanup()
+	// Start cleanup goroutine only if cleanup interval is positive
+	if config.CleanupInterval > 0 {
+		go rl.cleanup()
+	}
 
 	return rl
 }
