@@ -1,0 +1,58 @@
+# IDR Configuration
+# Intelligent Demand Router settings for The Nexus Engine
+
+# Scoring weights (must sum to 1.0)
+scoring:
+  weights:
+    win_rate: 0.25
+    bid_rate: 0.20
+    cpm: 0.15
+    floor_clearance: 0.15
+    latency: 0.10
+    recency: 0.10
+    id_match: 0.05
+
+# Partner selection settings
+selector:
+  max_bidders: 15              # Maximum partners per auction
+  min_score_threshold: 25      # Minimum score to be considered
+  exploration_rate: 0.1        # 10% chance to include low-confidence bidders
+  exploration_slots: 2         # Reserved slots for data gathering
+  anchor_bidder_count: 3       # Always-include top performers
+
+# Performance thresholds
+performance:
+  min_sample_size: 100         # Minimum samples for reliable scoring
+  cold_start_threshold: 10000  # Auctions before full IDR activation
+
+# Latency scoring bounds
+latency:
+  excellent_ms: 100            # Score 100 if p95 <= this
+  poor_ms: 500                 # Score 0 if p95 >= this
+
+# Database settings
+database:
+  redis:
+    host: localhost
+    port: 6379
+    db: 0
+    key_ttl_seconds: 7200      # 2 hours
+
+  timescale:
+    host: localhost
+    port: 5432
+    database: nexus_idr
+    user: nexus
+    # password should be in environment variable TIMESCALE_PASSWORD
+
+# Logging
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  routing_decisions: true      # Log every routing decision
+
+# Feature flags
+features:
+  shadow_mode: false           # Log decisions without actually filtering
+  exploration_enabled: true    # Enable exploration slots
+  diversity_enforcement: true  # Ensure bidder category diversity
