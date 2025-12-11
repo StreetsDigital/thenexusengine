@@ -45,7 +45,7 @@ RUN pip wheel --no-cache-dir -w /wheels -e ".[admin,db]"
 # ====================
 # Stage 3: Runtime - PBS Server (default)
 # ====================
-FROM alpine:3.19 AS pbs
+FROM alpine:3.23 AS pbs
 
 WORKDIR /app
 
