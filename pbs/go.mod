@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/prometheus/client_golang v1.17.0
-	github.com/rs/zerolog v1.31.0
+	github.com/rs/zerolog v1.34.0
 )
 
 require (
