@@ -4,6 +4,7 @@
 [![Deploy](https://github.com/StreetsDigital/thenexusengine/actions/workflows/deploy.yml/badge.svg)](https://github.com/StreetsDigital/thenexusengine/actions/workflows/deploy.yml)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org/)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.0-85EA2D?style=flat&logo=swagger)](docs/api/openapi.yaml)
 
 **Intelligent Prebid Server with Dynamic Demand Routing**
 
@@ -64,41 +65,19 @@ The Nexus Engine combines a high-performance **Go-based Prebid Server** with a *
               ┌────────────────────────┼────────────────────────┐
               ▼                        ▼                        ▼
         ┌──────────┐            ┌──────────┐            ┌──────────┐
-        │ Rubicon  │            │ AppNexus │            │ PubMatic │  ... (22 bidders available)
+        │ Rubicon  │            │ AppNexus │            │ PubMatic │  ... (22 bidders)
         └──────────┘            └──────────┘            └──────────┘
 ```
 
-## Components
+## Features
 
-### 1. Prebid Server Core (`pbs/` - Go)
-
-| Component | Description |
-|-----------|-------------|
-| `cmd/server/` | Main server entry point |
-| `internal/endpoints/` | HTTP endpoints (`/openrtb2/auction`, `/status`, `/info`) |
-| `internal/exchange/` | Auction execution and bid collection |
-| `internal/adapters/` | Bidder adapter implementations |
-| `internal/openrtb/` | OpenRTB 2.5/2.6 request/response models |
-| `pkg/idr/` | IDR client for Python service |
-
-### 2. Intelligent Demand Router (`src/idr/` - Python)
-
-| Component | Description | Status |
-|-----------|-------------|--------|
-| `classifier/` | Extracts features from OpenRTB requests | ✅ Complete |
-| `scorer/` | Scores bidders based on historical performance | ✅ Complete |
-| `selector/` | Selects optimal bidders for each auction | ✅ Complete |
-| `privacy/` | GDPR/CCPA/COPPA privacy compliance filtering | ✅ Complete |
-| `database/` | Redis + TimescaleDB performance storage | ✅ Complete |
-| `admin/` | Web UI for configuration management | ✅ Complete |
-
-### 3. Admin Dashboard (`src/idr/admin/`)
-
-Web-based UI for managing IDR configuration without code changes.
-
-```bash
-python run_admin.py  # http://localhost:5050
-```
+- **22 Prebid Bidder Adapters** - Premium SSPs, video/native specialists, regional partners
+- **Intelligent Demand Routing** - ML-powered bidder selection for optimal yield
+- **Privacy Compliance** - GDPR/TCF, CCPA, COPPA filtering with GVL IDs
+- **Production Ready** - Auth, rate limiting, circuit breakers, structured logging
+- **Full Observability** - Prometheus metrics, JSON logging, request correlation
+- **CI/CD Pipeline** - GitHub Actions with automated testing and deployment
+- **Load Tested** - k6 test suite for 40M+ requests/month validation
 
 ## Quick Start
 
@@ -118,9 +97,6 @@ pip install -e ".[dev]"    # With dev tools
 cd pbs
 go mod download
 go build -o ../bin/pbs-server ./cmd/server
-
-# Run Python tests
-pytest tests/ -v
 ```
 
 ### Running the Services
@@ -133,9 +109,32 @@ python run_admin.py --port 5050
 ./bin/pbs-server --port 8000 --idr-url http://localhost:5050
 ```
 
-### Configuration
+### Docker Compose
 
-Edit `config/idr_config.yaml` or use the Admin UI:
+```bash
+# Start all services
+docker compose up -d
+
+# View logs
+docker compose logs -f
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
+| `LOG_FORMAT` | Output format (json, console) | `json` |
+| `IDR_ENABLED` | Enable IDR integration | `true` |
+| `IDR_TIMEOUT_MS` | IDR request timeout | `50` |
+| `REDIS_URL` | Redis connection URL | `redis://localhost:6379` |
+| `REDIS_SAMPLE_RATE` | Sampling rate for Redis (cost optimization) | `0.1` |
+
+### IDR Configuration
+
+Edit `config/idr_config.yaml` or use the Admin UI at http://localhost:5050:
 
 ```yaml
 selector:
@@ -155,35 +154,38 @@ scoring:
     id_match: 0.05
 ```
 
-## API Endpoints
+## API Documentation
+
+Full OpenAPI 3.0 specification available at [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
 
 ### PBS Server (Go) - Port 8000
 
-#### Auction Endpoint
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/openrtb2/auction` | POST | OpenRTB auction endpoint |
+| `/health` | GET | Health check |
+| `/status` | GET | Service status |
+| `/info/bidders` | GET | List available bidders |
+| `/metrics` | GET | Prometheus metrics |
+| `/admin/circuit-breaker` | GET | Circuit breaker status |
 
+### Example Auction Request
+
+```bash
+curl -X POST http://localhost:8000/openrtb2/auction \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "id": "auction-123",
+    "imp": [{
+      "id": "imp-1",
+      "banner": {"w": 300, "h": 250},
+      "bidfloor": 0.50
+    }],
+    "site": {"domain": "example.com"},
+    "device": {"ua": "Mozilla/5.0...", "ip": "192.168.1.1"}
+  }'
 ```
-POST /openrtb2/auction
-Content-Type: application/json
-
-{
-  "id": "auction-123",
-  "imp": [{
-    "id": "imp-1",
-    "banner": {"w": 300, "h": 250},
-    "bidfloor": 0.50
-  }],
-  "site": {"domain": "example.com"},
-  "device": {"ua": "...", "ip": "..."}
-}
-```
-
-#### Status Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /status` | Health check |
-| `GET /info/bidders` | List available bidders |
-| `GET /metrics` | Prometheus metrics |
 
 ### IDR Service (Python) - Port 5050
 
@@ -191,70 +193,74 @@ Content-Type: application/json
 |----------|--------|-------------|
 | `/` | GET | Admin Dashboard UI |
 | `/api/config` | GET/POST | Full configuration |
-| `/api/select` | POST | Partner selection (called by PBS) |
+| `/api/select` | POST | Partner selection |
 | `/api/mode/bypass` | POST | Toggle bypass mode |
 | `/api/mode/shadow` | POST | Toggle shadow mode |
 | `/health` | GET | Health check |
 
-## IDR Operating Modes
+## Logging
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **Normal** | Full IDR filtering (10-20 bidders) | Production |
-| **Shadow** | Returns all bidders, logs what would be excluded | A/B Testing |
-| **Bypass** | Returns all bidders, no IDR processing | PBS Testing |
+Structured JSON logging with request correlation IDs.
 
-## Development Roadmap
+### Go (zerolog)
 
-### Phase 1: Core IDR ✅
-- [x] Request Classifier
-- [x] Bidder Scorer (7-dimension scoring)
-- [x] Partner Selector (with diversity & exploration)
-- [x] Admin Dashboard
+```go
+// Logs include: timestamp, level, service, request_id, and custom fields
+{"level":"info","service":"pbs","request_id":"abc123","method":"POST","path":"/openrtb2/auction","status":200,"duration_ms":45,"time":"2024-12-11T10:00:00Z"}
+```
 
-### Phase 2: PBS Core (Go) ✅
-- [x] OpenRTB request/response models
-- [x] Auction endpoint
-- [x] Exchange (bid collection)
-- [x] Basic bidder adapters (AppNexus, Rubicon, PubMatic)
-- [x] IDR client integration
+### Python (structlog)
 
-### Phase 3: Integration ✅
-- [x] Performance database (Redis + TimescaleDB)
-- [x] Event pipeline for learning
-- [x] Real bidder endpoint connections
-- [x] Redis sampling for cost optimization
+```python
+from src.idr.logging import get_logger, LogContext
 
-### Phase 4: Production ✅
-- [x] 22 bidder adapter implementations (see full list below)
-- [x] Privacy compliance (GDPR/TCF, CCPA, COPPA)
-- [x] Production hardening (auth, rate limiting, circuit breaker)
-- [x] Metrics & monitoring (Prometheus)
-- [x] Fly.io deployment configuration
-
-### Phase 5: Future Enhancements
-- [ ] Additional privacy regulations (GPP, LGPD, PIPL)
-- [ ] A/B testing framework
-- [ ] Machine learning model for bid prediction
-- [ ] Real-time dashboard analytics
+log = get_logger(__name__)
+with LogContext(request_id="abc123"):
+    log.info("Processing auction", bidders=15, duration_ms=12)
+```
 
 ## Testing
 
-```bash
-# Run Python IDR tests (139 tests)
-pytest tests/ -v
+### Unit Tests
 
-# Run specific module
-pytest tests/test_bidder_scorer.py -v
+```bash
+# Run Python tests (139 tests)
+pytest tests/ -v
 
 # With coverage
 pytest tests/ --cov=src --cov-report=html
 
-# Build and test Go PBS (88 tests)
-cd pbs
-go build ./...
-go test ./...
+# Run Go tests (88 tests)
+cd pbs && go test ./...
 ```
+
+### Load Testing
+
+```bash
+# Install k6
+brew install k6  # macOS
+# or: https://k6.io/docs/getting-started/installation/
+
+# Run load tests
+k6 run tests/load/auction.js
+
+# With custom target
+PBS_URL=https://your-server.fly.dev k6 run tests/load/auction.js
+```
+
+**Load Test Scenarios:**
+
+| Scenario | VUs | Duration | Target |
+|----------|-----|----------|--------|
+| Smoke | 1 | 30s | Verify functionality |
+| Load | 15 | 5min | Normal traffic (~15 RPS) |
+| Stress | 75 | 3min | Peak traffic (~75 RPS) |
+| Spike | 100 | 50s | Traffic spike handling |
+
+**Thresholds:**
+- p95 response time < 400ms
+- p99 response time < 800ms
+- Success rate > 95%
 
 ### Test Coverage
 
@@ -270,70 +276,101 @@ go test ./...
 | Go Middleware | 25 | ✅ |
 | Go IDR Client | 16 | ✅ |
 
+## CI/CD
+
+GitHub Actions workflows for automated testing and deployment.
+
+### Workflows
+
+| Workflow | Trigger | Description |
+|----------|---------|-------------|
+| `ci.yml` | PR, Push | Tests, linting, security scan, Docker build |
+| `deploy.yml` | Push to main | Deploy to Fly.io with health checks |
+| `release.yml` | Version tag | Build Docker image, create release, deploy |
+
+### Required Secrets
+
+| Secret | Description |
+|--------|-------------|
+| `FLY_API_TOKEN` | Fly.io deployment token |
+
 ## Deployment
 
 ### Local Development (Docker)
 
 ```bash
-# Start all services
 docker compose up -d
-
-# View logs
-docker compose logs -f
 ```
 
-See [docs/docker-setup.md](docs/docker-setup.md) for detailed Docker configuration.
+See [docs/docker-setup.md](docs/docker-setup.md) for detailed configuration.
 
 ### Production (Fly.io)
 
-The project includes Fly.io configuration for production deployment:
-
 ```bash
-# Deploy to Fly.io
+# Deploy
 fly deploy
 
-# Scale for traffic
-fly scale count 3  # Multiple instances
-fly scale memory 1024  # Increase memory
+# Scale
+fly scale count 3
+fly scale memory 1024
 ```
 
-**Fly.io Configuration Highlights:**
+**Production Features:**
 - Auto-scaling based on CPU/memory
-- Health checks on `/health` endpoint
-- Redis sampling to reduce Upstash costs (10% sample rate)
+- Health check monitoring
+- Redis sampling (10% to reduce costs)
 - Configured for 40M+ requests/month
 
 ## Project Structure
 
 ```
 thenexusengine/
+├── .github/
+│   ├── workflows/              # CI/CD pipelines
+│   │   ├── ci.yml              # Test and build
+│   │   ├── deploy.yml          # Fly.io deployment
+│   │   └── release.yml         # Release automation
+│   ├── dependabot.yml          # Dependency updates
+│   └── CODEOWNERS              # Review assignments
 ├── config/
 │   └── idr_config.yaml         # IDR configuration
+├── docs/
+│   ├── api/
+│   │   └── openapi.yaml        # OpenAPI 3.0 specification
+│   └── docker-setup.md         # Docker documentation
 ├── pbs/                         # Prebid Server (Go)
-│   ├── cmd/server/              # Main server
+│   ├── cmd/server/              # Main server entry point
 │   ├── internal/
 │   │   ├── openrtb/             # OpenRTB models
 │   │   ├── exchange/            # Auction engine
-│   │   ├── adapters/            # 22 Bidder adapters (see list below)
+│   │   ├── adapters/            # 22 Bidder adapters
 │   │   ├── endpoints/           # HTTP handlers
 │   │   ├── middleware/          # Auth, rate limiting, metrics
-│   │   ├── fpd/                 # First-party data handling
+│   │   ├── fpd/                 # First-party data
 │   │   └── metrics/             # Prometheus metrics
-│   └── pkg/idr/                 # IDR client
-├── src/                         # Python source
-│   └── idr/                     # Intelligent Demand Router
-│       ├── classifier/          # Request classification
-│       ├── scorer/              # Bidder scoring
-│       ├── selector/            # Partner selection
-│       ├── privacy/             # Privacy compliance (GDPR/CCPA/COPPA)
-│       ├── database/            # Redis + TimescaleDB integration
-│       ├── admin/               # Admin dashboard
-│       └── models/              # Data models
-├── tests/                       # Python test suite
-├── fly.toml                     # Fly.io deployment config
+│   └── pkg/
+│       ├── idr/                 # IDR client + circuit breaker
+│       └── logger/              # Structured logging (zerolog)
+├── src/idr/                     # Intelligent Demand Router (Python)
+│   ├── classifier/              # Request classification
+│   ├── scorer/                  # Bidder scoring
+│   ├── selector/                # Partner selection
+│   ├── privacy/                 # Privacy compliance
+│   ├── database/                # Redis + TimescaleDB
+│   ├── admin/                   # Admin dashboard
+│   ├── logging.py               # Structured logging (structlog)
+│   └── models/                  # Data models
+├── tests/
+│   ├── load/                    # k6 load tests
+│   │   └── auction.js           # Auction endpoint tests
+│   ├── test_*.py                # Python unit tests
+│   └── ...
+├── docker/
+│   └── timescaledb/
+│       └── init.sql             # Database schema
+├── fly.toml                     # Fly.io config
 ├── Dockerfile                   # Container build
 ├── docker-compose.yml           # Local development
-├── run_admin.py                 # Admin UI launcher
 └── pyproject.toml               # Python project config
 ```
 
@@ -348,12 +385,37 @@ thenexusengine/
 | **Regional (EMEA)** | adform, smartadserver, improvedigital | 50, 45, 253 |
 | **Additional** | medianet, conversant | 142, 24 |
 
+## Development Roadmap
+
+### Completed ✅
+
+- [x] Core IDR (classifier, scorer, selector)
+- [x] PBS Core (OpenRTB, auction, exchange)
+- [x] 22 Bidder adapters with GVL IDs
+- [x] Privacy compliance (GDPR/TCF, CCPA, COPPA)
+- [x] Database integration (Redis + TimescaleDB)
+- [x] Production hardening (auth, rate limiting, circuit breaker)
+- [x] CI/CD pipeline (GitHub Actions)
+- [x] Structured logging (zerolog, structlog)
+- [x] API documentation (OpenAPI 3.0)
+- [x] Load testing (k6)
+
+### Future Enhancements
+
+- [ ] Additional privacy regulations (GPP, LGPD, PIPL)
+- [ ] A/B testing framework
+- [ ] Machine learning model for bid prediction
+- [ ] Real-time dashboard analytics
+- [ ] Grafana dashboard templates
+
 ## License
 
 Proprietary - The Nexus Engine
 
 ## Links
 
+- [OpenAPI Documentation](docs/api/openapi.yaml)
+- [Docker Setup Guide](docs/docker-setup.md)
 - [Prebid Server (Go)](https://github.com/prebid/prebid-server)
 - [OpenRTB 2.5 Spec](https://www.iab.com/wp-content/uploads/2016/03/OpenRTB-API-Specification-Version-2-5-FINAL.pdf)
 - [Prebid.js Documentation](https://docs.prebid.org/)
