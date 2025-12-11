@@ -20,6 +20,10 @@ docker compose up -d
 
 # View logs
 docker compose logs -f
+
+# Check health
+curl http://localhost:8000/health
+curl http://localhost:5050/health
 ```
 
 ## Services
@@ -33,9 +37,13 @@ docker compose logs -f
 
 ## Accessing Services
 
-- **PBS Auction Endpoint**: http://localhost:8000/openrtb2/auction
-- **IDR Admin Dashboard**: http://localhost:5050
-- **Health Checks**: http://localhost:8000/status, http://localhost:5050/health
+| URL | Description |
+|-----|-------------|
+| http://localhost:8000/openrtb2/auction | PBS Auction Endpoint |
+| http://localhost:8000/health | PBS Health Check |
+| http://localhost:8000/metrics | Prometheus Metrics |
+| http://localhost:5050 | IDR Admin Dashboard |
+| http://localhost:5050/health | IDR Health Check |
 
 ## Environment Variables
 
@@ -50,9 +58,16 @@ IDR_PORT=5050
 REDIS_PORT=6379
 TIMESCALE_PORT=5432
 
+# Logging
+LOG_LEVEL=info          # debug, info, warn, error
+LOG_FORMAT=json         # json or console
+
 # IDR Settings
 IDR_ENABLED=true
 IDR_TIMEOUT_MS=50
+
+# Redis Sampling (cost optimization)
+REDIS_SAMPLE_RATE=0.1   # 10% sampling reduces costs by 90%
 
 # Event Recording
 EVENT_RECORD_ENABLED=true
@@ -249,9 +264,97 @@ docker compose up -d --scale pbs=3
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+## Logging
+
+The Nexus Engine uses structured JSON logging for production observability.
+
+### Log Output
+
+```json
+{"level":"info","service":"pbs","request_id":"20241211100000-abc12345","method":"POST","path":"/openrtb2/auction","status":200,"duration_ms":45,"time":"2024-12-11T10:00:00Z"}
+```
+
+### Log Levels
+
+| Level | Description |
+|-------|-------------|
+| `debug` | Detailed debugging information |
+| `info` | General operational messages |
+| `warn` | Warning messages (4xx errors) |
+| `error` | Error messages (5xx errors) |
+
+### Console Format (Development)
+
+For human-readable logs during development:
+
+```bash
+LOG_FORMAT=console docker compose up
+```
+
+Output:
+```
+10:00:00 INF HTTP request method=POST path=/openrtb2/auction status=200 duration_ms=45
+```
+
+## Load Testing
+
+Before production, validate performance with k6:
+
+```bash
+# Install k6
+brew install k6  # macOS
+
+# Run load tests against local Docker
+k6 run tests/load/auction.js
+
+# View results
+cat tests/load/summary.json
+```
+
 ## Next Steps
 
 1. Access the Admin Dashboard: http://localhost:5050
 2. Configure bidder settings via the UI
 3. Send test auction requests to http://localhost:8000/openrtb2/auction
 4. Monitor performance in the Bidder Metrics panel
+5. Run load tests to validate performance
+
+## Fly.io Production Deployment
+
+For production deployment, we recommend using Fly.io instead of Docker Compose:
+
+```bash
+# Install Fly CLI
+curl -L https://fly.io/install.sh | sh
+
+# Login and deploy
+fly auth login
+fly deploy
+
+# View logs
+fly logs
+
+# Scale for traffic
+fly scale count 3
+```
+
+The project includes `fly.toml` pre-configured for:
+- Auto-scaling based on load
+- Health check monitoring
+- Redis sampling (10% to reduce Upstash costs)
+- Optimized for 40M+ requests/month
+
+See the main [README.md](../README.md) for more deployment options.
+
+## Supported Bidders
+
+The Nexus Engine supports **22 bidder adapters** across categories:
+
+- **Premium SSPs**: AppNexus, Rubicon, PubMatic, OpenX, Index Exchange
+- **Mid-tier**: TripleLift, Sovrn, Sharethrough, GumGum, 33Across, Criteo
+- **Video Specialists**: SpotX, Beachfront, Unruly
+- **Native Specialists**: Teads, Outbrain, Taboola
+- **Regional (EMEA)**: Adform, Smart AdServer, Improve Digital
+- **Additional**: Media.net, Conversant
+
+All adapters include GVL IDs for GDPR/TCF compliance.
