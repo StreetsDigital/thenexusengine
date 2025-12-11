@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /build/pbs-server ./cm
 # ====================
 # Stage 2: Build Python IDR Service
 # ====================
-FROM python:3.11-slim AS python-builder
+FROM python:3.14-slim AS python-builder
 
 WORKDIR /build
 
@@ -79,7 +79,7 @@ CMD ["/app/pbs-server"]
 # ====================
 # Stage 4: Runtime - IDR Service
 # ====================
-FROM python:3.11-slim AS idr
+FROM python:3.14-slim AS idr
 
 WORKDIR /app
 
