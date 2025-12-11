@@ -203,6 +203,22 @@ BIDDER_PRIVACY_CONFIG: dict[str, BidderPrivacyRequirements] = {
         supports_coppa=False,
     ),
 
+    # Additional SSPs
+    'medianet': BidderPrivacyRequirements(
+        bidder_code='medianet',
+        gvl_id=142,
+        required_purposes={1, 2},
+        requires_personalization=False,
+        supports_coppa=False,
+    ),
+    'conversant': BidderPrivacyRequirements(
+        bidder_code='conversant',
+        gvl_id=24,  # Epsilon
+        required_purposes={1, 2, 7},
+        requires_personalization=False,
+        supports_coppa=True,
+    ),
+
     # Regional (EMEA focused)
     'adform': BidderPrivacyRequirements(
         bidder_code='adform',
