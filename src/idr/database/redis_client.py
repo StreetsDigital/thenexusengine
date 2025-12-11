@@ -3,9 +3,14 @@ Redis client for real-time bidder metrics.
 
 Stores hot metrics with automatic expiry for fast lookups during auctions.
 Uses Redis hashes and sorted sets for efficient aggregation.
+
+Supports sampling to reduce Redis commands for high-traffic deployments.
+With 10% sampling (sample_rate=0.1), you get statistically accurate metrics
+while using 90% fewer Redis commands.
 """
 
 import json
+import random
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -16,6 +21,10 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
+
+
+# Default sampling rate (1.0 = 100%, 0.1 = 10%)
+DEFAULT_SAMPLE_RATE = 1.0
 
 
 @dataclass
@@ -95,7 +104,21 @@ class RedisMetricsClient:
         db: int = 0,
         password: Optional[str] = None,
         decode_responses: bool = True,
+        sample_rate: float = DEFAULT_SAMPLE_RATE,
     ):
+        """
+        Initialize Redis metrics client.
+
+        Args:
+            host: Redis host
+            port: Redis port
+            db: Redis database number
+            password: Redis password
+            decode_responses: Whether to decode responses as strings
+            sample_rate: Sampling rate (0.0-1.0). Use 0.1 for 10% sampling
+                        to reduce Redis commands by 90% while maintaining
+                        statistical accuracy. Reads are automatically scaled.
+        """
         if not REDIS_AVAILABLE:
             raise ImportError("redis package not installed. Run: pip install redis")
 
@@ -107,6 +130,8 @@ class RedisMetricsClient:
             decode_responses=decode_responses,
         )
         self._connected = False
+        self._sample_rate = max(0.01, min(1.0, sample_rate))  # Clamp to 1%-100%
+        self._sample_multiplier = 1.0 / self._sample_rate
 
     def connect(self) -> bool:
         """Test connection to Redis."""
@@ -121,6 +146,22 @@ class RedisMetricsClient:
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    @property
+    def sample_rate(self) -> float:
+        """Current sampling rate (0.0-1.0)."""
+        return self._sample_rate
+
+    def set_sample_rate(self, rate: float) -> None:
+        """Update sampling rate dynamically."""
+        self._sample_rate = max(0.01, min(1.0, rate))
+        self._sample_multiplier = 1.0 / self._sample_rate
+
+    def _should_sample(self) -> bool:
+        """Determine if this event should be recorded based on sample rate."""
+        if self._sample_rate >= 1.0:
+            return True
+        return random.random() < self._sample_rate
 
     def _context_key(self, bidder: str, context_hash: str) -> str:
         """Build key for bidder+context metrics."""
@@ -143,9 +184,9 @@ class RedisMetricsClient:
         bid_cpm: Optional[float] = None,
         timed_out: bool = False,
         had_error: bool = False,
-    ) -> None:
+    ) -> bool:
         """
-        Record a bid request event.
+        Record a bid request event (subject to sampling).
 
         Args:
             bidder: Bidder code
@@ -155,7 +196,14 @@ class RedisMetricsClient:
             bid_cpm: CPM of the bid (if any)
             timed_out: Whether request timed out
             had_error: Whether there was an error
+
+        Returns:
+            True if event was recorded, False if skipped due to sampling
         """
+        # Apply sampling - skip most events when sample_rate < 1.0
+        if not self._should_sample():
+            return False
+
         now = time.time()
         pipe = self.client.pipeline()
 
@@ -205,6 +253,7 @@ class RedisMetricsClient:
             pipe.zremrangebyscore(bids_key, "-inf", now - self.LATENCY_WINDOW)
 
         pipe.execute()
+        return True
 
     def record_win(
         self,
@@ -212,16 +261,23 @@ class RedisMetricsClient:
         context_hash: str,
         win_cpm: float,
         clearing_price: Optional[float] = None,
-    ) -> None:
+    ) -> bool:
         """
-        Record a win event.
+        Record a win event (subject to sampling).
 
         Args:
             bidder: Bidder code
             context_hash: Hash of request context
             win_cpm: Winning bid CPM
             clearing_price: Second price (if available)
+
+        Returns:
+            True if event was recorded, False if skipped due to sampling
         """
+        # Apply sampling
+        if not self._should_sample():
+            return False
+
         now = time.time()
         pipe = self.client.pipeline()
 
@@ -242,12 +298,15 @@ class RedisMetricsClient:
         pipe.zremrangebyscore(wins_key, "-inf", now - self.LATENCY_WINDOW)
 
         pipe.execute()
+        return True
 
     # =========================================================================
     # Reading Metrics
     # =========================================================================
 
-    def get_metrics(self, bidder: str, context_hash: Optional[str] = None) -> RealTimeMetrics:
+    def get_metrics(
+        self, bidder: str, context_hash: Optional[str] = None, extrapolate: bool = True
+    ) -> RealTimeMetrics:
         """
         Get metrics for a bidder.
 
@@ -255,9 +314,11 @@ class RedisMetricsClient:
             bidder: Bidder code
             context_hash: Optional context hash for context-specific metrics.
                          If None, returns global metrics.
+            extrapolate: If True, scale counts to account for sampling.
+                        E.g., with 10% sampling, multiply counts by 10.
 
         Returns:
-            RealTimeMetrics object
+            RealTimeMetrics object with (optionally) extrapolated counts
         """
         if context_hash:
             key = self._context_key(bidder, context_hash)
@@ -266,16 +327,19 @@ class RedisMetricsClient:
 
         data = self.client.hgetall(key)
 
+        # Scale factor: extrapolate sampled counts to estimate real totals
+        scale = self._sample_multiplier if extrapolate else 1.0
+
         return RealTimeMetrics(
             bidder_code=bidder,
-            requests=int(data.get("requests", 0)),
-            bids=int(data.get("bids", 0)),
-            wins=int(data.get("wins", 0)),
-            timeouts=int(data.get("timeouts", 0)),
-            errors=int(data.get("errors", 0)),
-            total_bid_value=float(data.get("total_bid_value", 0.0)),
-            total_win_value=float(data.get("total_win_value", 0.0)),
-            total_latency_ms=float(data.get("total_latency_ms", 0.0)),
+            requests=int(int(data.get("requests", 0)) * scale),
+            bids=int(int(data.get("bids", 0)) * scale),
+            wins=int(int(data.get("wins", 0)) * scale),
+            timeouts=int(int(data.get("timeouts", 0)) * scale),
+            errors=int(int(data.get("errors", 0)) * scale),
+            total_bid_value=float(data.get("total_bid_value", 0.0)) * scale,
+            total_win_value=float(data.get("total_win_value", 0.0)) * scale,
+            total_latency_ms=float(data.get("total_latency_ms", 0.0)) * scale,
         )
 
     def get_p95_latency(self, bidder: str) -> float:
@@ -374,10 +438,11 @@ class RedisMetricsClient:
 class MockRedisClient:
     """In-memory mock for testing without Redis."""
 
-    def __init__(self):
+    def __init__(self, sample_rate: float = 1.0):
         self._data: dict[str, dict] = {}
         self._sorted_sets: dict[str, list] = {}
         self._connected = True
+        self._sample_rate = sample_rate
 
     def connect(self) -> bool:
         return True
@@ -386,7 +451,14 @@ class MockRedisClient:
     def is_connected(self) -> bool:
         return self._connected
 
-    def record_request(self, bidder: str, context_hash: str, **kwargs) -> None:
+    @property
+    def sample_rate(self) -> float:
+        return self._sample_rate
+
+    def set_sample_rate(self, rate: float) -> None:
+        self._sample_rate = rate
+
+    def record_request(self, bidder: str, context_hash: str, **kwargs) -> bool:
         key = f"global:{bidder}"
         if key not in self._data:
             self._data[key] = {"requests": 0, "bids": 0, "wins": 0, "timeouts": 0,
@@ -406,7 +478,9 @@ class MockRedisClient:
         if kwargs.get("had_error"):
             self._data[key]["errors"] += 1
 
-    def record_win(self, bidder: str, context_hash: str, win_cpm: float, **kwargs) -> None:
+        return True
+
+    def record_win(self, bidder: str, context_hash: str, win_cpm: float, **kwargs) -> bool:
         key = f"global:{bidder}"
         if key not in self._data:
             self._data[key] = {"requests": 0, "bids": 0, "wins": 0, "timeouts": 0,
@@ -415,8 +489,9 @@ class MockRedisClient:
 
         self._data[key]["wins"] += 1
         self._data[key]["total_win_value"] += win_cpm
+        return True
 
-    def get_metrics(self, bidder: str, context_hash: Optional[str] = None) -> RealTimeMetrics:
+    def get_metrics(self, bidder: str, context_hash: Optional[str] = None, extrapolate: bool = True) -> RealTimeMetrics:
         key = f"global:{bidder}"
         data = self._data.get(key, {})
 

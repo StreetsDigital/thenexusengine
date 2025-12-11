@@ -6,11 +6,12 @@ from the appropriate source based on recency and context.
 """
 
 import hashlib
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional, Union
 
-from src.idr.database.redis_client import RedisMetricsClient, RealTimeMetrics, MockRedisClient
+from src.idr.database.redis_client import RedisMetricsClient, RealTimeMetrics, MockRedisClient, DEFAULT_SAMPLE_RATE
 from src.idr.database.timescale_client import TimescaleClient, BidderPerformance, MockTimescaleClient
 from src.idr.models.classified_request import ClassifiedRequest
 
@@ -107,8 +108,20 @@ class MetricsStore:
         timescale_user: str = "idr",
         timescale_password: str = "",
         use_mocks: bool = False,
+        redis_sample_rate: Optional[float] = None,
     ) -> "MetricsStore":
-        """Factory method to create a configured MetricsStore."""
+        """
+        Factory method to create a configured MetricsStore.
+
+        Args:
+            redis_sample_rate: Sampling rate for Redis (0.0-1.0). Default from
+                              REDIS_SAMPLE_RATE env var or 1.0. Use 0.1 for 10%
+                              sampling to reduce Redis commands by 90%.
+        """
+        # Get sample rate from env var if not specified
+        if redis_sample_rate is None:
+            redis_sample_rate = float(os.getenv("REDIS_SAMPLE_RATE", str(DEFAULT_SAMPLE_RATE)))
+
         if use_mocks:
             return cls(
                 redis_client=MockRedisClient(),
@@ -120,10 +133,16 @@ class MetricsStore:
 
         # Try to connect to Redis
         try:
-            redis_client = RedisMetricsClient(host=redis_host, port=redis_port)
+            redis_client = RedisMetricsClient(
+                host=redis_host,
+                port=redis_port,
+                sample_rate=redis_sample_rate,
+            )
             if not redis_client.connect():
                 print("Warning: Could not connect to Redis, using mock")
                 redis_client = MockRedisClient()
+            else:
+                print(f"Redis connected with {redis_sample_rate:.0%} sampling rate")
         except ImportError:
             print("Warning: redis package not available, using mock")
             redis_client = MockRedisClient()

@@ -19,6 +19,9 @@ primary_region = "iad"  # US East - change based on your users
   AUTH_ENABLED = "true"
   RATE_LIMIT_ENABLED = "true"
   RATE_LIMIT_RPS = "1000"
+  # 10% sampling reduces Redis commands by 90% while maintaining accuracy
+  # At 40M req/month: ~60M Redis commands/month instead of ~600M
+  REDIS_SAMPLE_RATE = "0.1"
 
 [http_service]
   internal_port = 5050
