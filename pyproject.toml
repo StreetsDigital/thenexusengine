@@ -21,7 +21,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-dependencies = []
+dependencies = [
+    "structlog>=23.0.0",
+]
 
 [project.optional-dependencies]
 dev = [

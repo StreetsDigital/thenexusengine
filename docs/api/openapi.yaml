@@ -1,0 +1,587 @@
+openapi: 3.0.3
+info:
+  title: The Nexus Engine - Prebid Server API
+  description: |
+    The Nexus Engine is an Intelligent Prebid Server with Dynamic Demand Routing.
+
+    This API handles OpenRTB 2.5/2.6 auction requests and routes them through the
+    Intelligent Demand Router (IDR) for optimized bidder selection.
+
+    ## Authentication
+
+    API requests require an API key passed via:
+    - Header: `X-API-Key: your-api-key`
+    - Header: `Authorization: Bearer your-api-key`
+
+    ## Rate Limiting
+
+    Requests are rate-limited per publisher ID or IP address.
+    When rate limited, responses include:
+    - `429 Too Many Requests` status code
+    - `Retry-After` header indicating seconds to wait
+
+  version: 1.0.0
+  contact:
+    name: The Nexus Engine
+    url: https://github.com/StreetsDigital/thenexusengine
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://thenexusengine.fly.dev
+    description: Production server
+  - url: http://localhost:8000
+    description: Local development
+
+tags:
+  - name: Auction
+    description: OpenRTB auction endpoints
+  - name: Status
+    description: Health and status endpoints
+  - name: Admin
+    description: Administrative endpoints
+
+paths:
+  /openrtb2/auction:
+    post:
+      tags:
+        - Auction
+      summary: Execute OpenRTB auction
+      description: |
+        Accepts an OpenRTB 2.5/2.6 bid request and returns bid responses from
+        selected demand partners. The IDR selects optimal bidders based on
+        historical performance and request characteristics.
+      operationId: runAuction
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BidRequest'
+            examples:
+              banner:
+                summary: Banner ad request
+                value:
+                  id: "auction-12345"
+                  imp:
+                    - id: "imp-1"
+                      banner:
+                        w: 300
+                        h: 250
+                        pos: 1
+                      bidfloor: 0.50
+                      bidfloorcur: "USD"
+                  site:
+                    domain: "example.com"
+                    page: "https://example.com/article"
+                    cat: ["IAB1"]
+                  device:
+                    ua: "Mozilla/5.0..."
+                    ip: "192.168.1.1"
+                    devicetype: 2
+                  user:
+                    id: "user-123"
+                  at: 1
+                  tmax: 500
+              video:
+                summary: Video ad request
+                value:
+                  id: "auction-67890"
+                  imp:
+                    - id: "imp-1"
+                      video:
+                        mimes: ["video/mp4"]
+                        minduration: 5
+                        maxduration: 30
+                        w: 640
+                        h: 480
+                      bidfloor: 2.00
+                  site:
+                    domain: "example.com"
+                  device:
+                    ua: "Mozilla/5.0..."
+                  at: 1
+                  tmax: 1000
+      responses:
+        '200':
+          description: Successful auction with bid responses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BidResponse'
+              example:
+                id: "auction-12345"
+                seatbid:
+                  - bid:
+                      - id: "bid-1"
+                        impid: "imp-1"
+                        price: 1.25
+                        adm: "<div>Ad creative...</div>"
+                        w: 300
+                        h: 250
+                    seat: "rubicon"
+                cur: "USD"
+        '204':
+          description: No bids received
+        '400':
+          description: Invalid bid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "Missing required field: imp"
+        '429':
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /health:
+    get:
+      tags:
+        - Status
+      summary: Health check
+      description: Returns service health status
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "healthy"
+                timestamp: "2024-12-11T10:00:00Z"
+                version: "1.0.0"
+
+  /status:
+    get:
+      tags:
+        - Status
+      summary: Service status
+      description: Returns detailed service status
+      operationId: getStatus
+      responses:
+        '200':
+          description: Service status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+
+  /info/bidders:
+    get:
+      tags:
+        - Status
+      summary: List available bidders
+      description: Returns list of registered bidder adapters
+      operationId: listBidders
+      responses:
+        '200':
+          description: List of bidders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bidders:
+                    type: array
+                    items:
+                      type: string
+              example:
+                bidders:
+                  - appnexus
+                  - rubicon
+                  - pubmatic
+                  - openx
+                  - ix
+
+  /metrics:
+    get:
+      tags:
+        - Status
+      summary: Prometheus metrics
+      description: Returns Prometheus-formatted metrics
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /admin/circuit-breaker:
+    get:
+      tags:
+        - Admin
+      summary: Get circuit breaker status
+      description: Returns IDR circuit breaker state and statistics
+      operationId: getCircuitBreaker
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Circuit breaker status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CircuitBreakerStatus'
+              example:
+                state: "closed"
+                failures: 0
+                successes: 10
+                last_failure: null
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    BidRequest:
+      type: object
+      required:
+        - id
+        - imp
+      properties:
+        id:
+          type: string
+          description: Unique auction ID
+        imp:
+          type: array
+          items:
+            $ref: '#/components/schemas/Impression'
+          minItems: 1
+          description: Array of impression objects
+        site:
+          $ref: '#/components/schemas/Site'
+        app:
+          $ref: '#/components/schemas/App'
+        device:
+          $ref: '#/components/schemas/Device'
+        user:
+          $ref: '#/components/schemas/User'
+        at:
+          type: integer
+          enum: [1, 2]
+          default: 1
+          description: Auction type (1=first price, 2=second price)
+        tmax:
+          type: integer
+          description: Maximum auction time in milliseconds
+        cur:
+          type: array
+          items:
+            type: string
+          description: Allowed currencies
+        regs:
+          $ref: '#/components/schemas/Regs'
+        ext:
+          type: object
+          description: Exchange-specific extensions
+
+    Impression:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        banner:
+          $ref: '#/components/schemas/Banner'
+        video:
+          $ref: '#/components/schemas/Video'
+        native:
+          $ref: '#/components/schemas/Native'
+        bidfloor:
+          type: number
+          format: float
+        bidfloorcur:
+          type: string
+          default: "USD"
+        ext:
+          type: object
+
+    Banner:
+      type: object
+      properties:
+        w:
+          type: integer
+          description: Width in pixels
+        h:
+          type: integer
+          description: Height in pixels
+        format:
+          type: array
+          items:
+            type: object
+            properties:
+              w:
+                type: integer
+              h:
+                type: integer
+        pos:
+          type: integer
+          description: Ad position (0=unknown, 1=above fold, 3=below fold)
+
+    Video:
+      type: object
+      properties:
+        mimes:
+          type: array
+          items:
+            type: string
+        minduration:
+          type: integer
+        maxduration:
+          type: integer
+        w:
+          type: integer
+        h:
+          type: integer
+        protocols:
+          type: array
+          items:
+            type: integer
+
+    Native:
+      type: object
+      properties:
+        request:
+          type: string
+          description: Native request payload (JSON string)
+        ver:
+          type: string
+
+    Site:
+      type: object
+      properties:
+        id:
+          type: string
+        domain:
+          type: string
+        page:
+          type: string
+        cat:
+          type: array
+          items:
+            type: string
+        publisher:
+          $ref: '#/components/schemas/Publisher'
+
+    App:
+      type: object
+      properties:
+        id:
+          type: string
+        bundle:
+          type: string
+        name:
+          type: string
+        cat:
+          type: array
+          items:
+            type: string
+        publisher:
+          $ref: '#/components/schemas/Publisher'
+
+    Publisher:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        domain:
+          type: string
+
+    Device:
+      type: object
+      properties:
+        ua:
+          type: string
+          description: User agent
+        ip:
+          type: string
+          description: IPv4 address
+        ipv6:
+          type: string
+          description: IPv6 address
+        devicetype:
+          type: integer
+          description: Device type (1=mobile, 2=pc, 3=tv, 4=phone, 5=tablet, 6=connected device, 7=set top box)
+        geo:
+          $ref: '#/components/schemas/Geo'
+
+    Geo:
+      type: object
+      properties:
+        country:
+          type: string
+          description: ISO-3166-1 alpha-2 country code
+        region:
+          type: string
+        city:
+          type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        buyeruid:
+          type: string
+        consent:
+          type: string
+          description: TCF consent string
+        ext:
+          type: object
+          properties:
+            eids:
+              type: array
+              items:
+                $ref: '#/components/schemas/EID'
+
+    EID:
+      type: object
+      properties:
+        source:
+          type: string
+        uids:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              atype:
+                type: integer
+
+    Regs:
+      type: object
+      properties:
+        coppa:
+          type: integer
+          description: COPPA flag (0=no, 1=yes)
+        gdpr:
+          type: integer
+          description: GDPR flag (0=no, 1=yes)
+        ext:
+          type: object
+          properties:
+            us_privacy:
+              type: string
+              description: CCPA string
+
+    BidResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Auction ID from request
+        seatbid:
+          type: array
+          items:
+            $ref: '#/components/schemas/SeatBid'
+        cur:
+          type: string
+          description: Currency of bids
+        ext:
+          type: object
+
+    SeatBid:
+      type: object
+      properties:
+        bid:
+          type: array
+          items:
+            $ref: '#/components/schemas/Bid'
+        seat:
+          type: string
+          description: Bidder code
+
+    Bid:
+      type: object
+      properties:
+        id:
+          type: string
+        impid:
+          type: string
+        price:
+          type: number
+          format: float
+        adm:
+          type: string
+          description: Ad markup
+        w:
+          type: integer
+        h:
+          type: integer
+        crid:
+          type: string
+          description: Creative ID
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        uptime:
+          type: integer
+        bidders:
+          type: array
+          items:
+            type: string
+
+    CircuitBreakerStatus:
+      type: object
+      properties:
+        state:
+          type: string
+          enum: [closed, open, half-open]
+        failures:
+          type: integer
+        successes:
+          type: integer
+        last_failure:
+          type: string
+          format: date-time
+          nullable: true
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
