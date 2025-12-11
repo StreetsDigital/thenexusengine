@@ -1,5 +1,10 @@
 # The Nexus Engine
 
+[![CI](https://github.com/StreetsDigital/thenexusengine/actions/workflows/ci.yml/badge.svg)](https://github.com/StreetsDigital/thenexusengine/actions/workflows/ci.yml)
+[![Deploy](https://github.com/StreetsDigital/thenexusengine/actions/workflows/deploy.yml/badge.svg)](https://github.com/StreetsDigital/thenexusengine/actions/workflows/deploy.yml)
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org/)
+
 **Intelligent Prebid Server with Dynamic Demand Routing**
 
 The Nexus Engine combines a high-performance **Go-based Prebid Server** with a **Python-based Intelligent Demand Router (IDR)** - a machine learning-powered system that optimizes bid request routing to maximize yield while minimizing latency.

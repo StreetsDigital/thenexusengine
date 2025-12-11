@@ -1,0 +1,21 @@
+# Default owners for everything in the repo
+* @StreetsDigital
+
+# Go code
+/pbs/ @StreetsDigital
+
+# Python IDR code
+/src/idr/ @StreetsDigital
+
+# Infrastructure
+/docker/ @StreetsDigital
+/fly*.toml @StreetsDigital
+Dockerfile @StreetsDigital
+docker-compose.yml @StreetsDigital
+
+# CI/CD
+/.github/ @StreetsDigital
+
+# Documentation
+*.md @StreetsDigital
+/docs/ @StreetsDigital
