@@ -46,15 +46,15 @@ primary_region = "iad"  # US East - change based on your users
   path = "/health"
 
 [[vm]]
-  memory = "256mb"
+  memory = "512mb"
   cpu_kind = "shared"
   cpus = 1
 
-# Scale up for production:
-# [[vm]]
-#   memory = "512mb"
-#   cpu_kind = "performance"
-#   cpus = 2
+# For 40M req/month (~15 rps avg, ~75 rps peak)
+# 2 machines gives redundancy + handles bursts
+[deploy]
+  min_machines = 2
+  max_machines = 4
 
 [metrics]
   port = 8000

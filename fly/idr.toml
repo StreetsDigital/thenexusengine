@@ -45,11 +45,11 @@ primary_region = "iad"  # US East - change based on your users
   cpu_kind = "shared"
   cpus = 1
 
-# Scale up for production:
-# [[vm]]
-#   memory = "1gb"
-#   cpu_kind = "performance"
-#   cpus = 2
+# For 40M req/month (~15 rps avg, ~75 rps peak)
+# 2 machines for redundancy
+[deploy]
+  min_machines = 2
+  max_machines = 4
 
 [metrics]
   port = 5050
