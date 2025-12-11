@@ -59,7 +59,7 @@ The Nexus Engine combines a high-performance **Go-based Prebid Server** with a *
               ┌────────────────────────┼────────────────────────┐
               ▼                        ▼                        ▼
         ┌──────────┐            ┌──────────┐            ┌──────────┐
-        │ Rubicon  │            │ AppNexus │            │ PubMatic │  ... (selected only)
+        │ Rubicon  │            │ AppNexus │            │ PubMatic │  ... (22 bidders available)
         └──────────┘            └──────────┘            └──────────┘
 ```
 
@@ -83,7 +83,8 @@ The Nexus Engine combines a high-performance **Go-based Prebid Server** with a *
 | `classifier/` | Extracts features from OpenRTB requests | ✅ Complete |
 | `scorer/` | Scores bidders based on historical performance | ✅ Complete |
 | `selector/` | Selects optimal bidders for each auction | ✅ Complete |
-| `database/` | Redis + TimescaleDB performance storage | 🚧 Planned |
+| `privacy/` | GDPR/CCPA/COPPA privacy compliance filtering | ✅ Complete |
+| `database/` | Redis + TimescaleDB performance storage | ✅ Complete |
 | `admin/` | Web UI for configuration management | ✅ Complete |
 
 ### 3. Admin Dashboard (`src/idr/admin/`)
@@ -213,21 +214,29 @@ Content-Type: application/json
 - [x] Basic bidder adapters (AppNexus, Rubicon, PubMatic)
 - [x] IDR client integration
 
-### Phase 3: Integration 🚧
-- [ ] Performance database (Redis + TimescaleDB)
-- [ ] Event pipeline for learning
-- [ ] Real bidder endpoint connections
+### Phase 3: Integration ✅
+- [x] Performance database (Redis + TimescaleDB)
+- [x] Event pipeline for learning
+- [x] Real bidder endpoint connections
+- [x] Redis sampling for cost optimization
 
-### Phase 4: Production
-- [ ] Additional adapter implementations
-- [ ] Privacy compliance (GDPR, CCPA, GPP)
-- [ ] Caching layer
-- [ ] Metrics & monitoring
+### Phase 4: Production ✅
+- [x] 22 bidder adapter implementations (see full list below)
+- [x] Privacy compliance (GDPR/TCF, CCPA, COPPA)
+- [x] Production hardening (auth, rate limiting, circuit breaker)
+- [x] Metrics & monitoring (Prometheus)
+- [x] Fly.io deployment configuration
+
+### Phase 5: Future Enhancements
+- [ ] Additional privacy regulations (GPP, LGPD, PIPL)
+- [ ] A/B testing framework
+- [ ] Machine learning model for bid prediction
+- [ ] Real-time dashboard analytics
 
 ## Testing
 
 ```bash
-# Run Python IDR tests
+# Run Python IDR tests (139 tests)
 pytest tests/ -v
 
 # Run specific module
@@ -236,11 +245,58 @@ pytest tests/test_bidder_scorer.py -v
 # With coverage
 pytest tests/ --cov=src --cov-report=html
 
-# Build and test Go PBS
+# Build and test Go PBS (88 tests)
 cd pbs
 go build ./...
 go test ./...
 ```
+
+### Test Coverage
+
+| Component | Tests | Status |
+|-----------|-------|--------|
+| Request Classifier | 21 | ✅ |
+| Bidder Scorer | 24 | ✅ |
+| Partner Selector | 32 | ✅ |
+| Privacy Filter | 39 | ✅ |
+| Redis Sampling | 23 | ✅ |
+| Go Exchange | 35 | ✅ |
+| Go FPD | 12 | ✅ |
+| Go Middleware | 25 | ✅ |
+| Go IDR Client | 16 | ✅ |
+
+## Deployment
+
+### Local Development (Docker)
+
+```bash
+# Start all services
+docker compose up -d
+
+# View logs
+docker compose logs -f
+```
+
+See [docs/docker-setup.md](docs/docker-setup.md) for detailed Docker configuration.
+
+### Production (Fly.io)
+
+The project includes Fly.io configuration for production deployment:
+
+```bash
+# Deploy to Fly.io
+fly deploy
+
+# Scale for traffic
+fly scale count 3  # Multiple instances
+fly scale memory 1024  # Increase memory
+```
+
+**Fly.io Configuration Highlights:**
+- Auto-scaling based on CPU/memory
+- Health checks on `/health` endpoint
+- Redis sampling to reduce Upstash costs (10% sample rate)
+- Configured for 40M+ requests/month
 
 ## Project Structure
 
@@ -253,23 +309,39 @@ thenexusengine/
 │   ├── internal/
 │   │   ├── openrtb/             # OpenRTB models
 │   │   ├── exchange/            # Auction engine
-│   │   ├── adapters/            # Bidder adapters
-│   │   │   ├── appnexus/
-│   │   │   ├── rubicon/
-│   │   │   └── pubmatic/
-│   │   └── endpoints/           # HTTP handlers
+│   │   ├── adapters/            # 22 Bidder adapters (see list below)
+│   │   ├── endpoints/           # HTTP handlers
+│   │   ├── middleware/          # Auth, rate limiting, metrics
+│   │   ├── fpd/                 # First-party data handling
+│   │   └── metrics/             # Prometheus metrics
 │   └── pkg/idr/                 # IDR client
 ├── src/                         # Python source
 │   └── idr/                     # Intelligent Demand Router
 │       ├── classifier/          # Request classification
 │       ├── scorer/              # Bidder scoring
 │       ├── selector/            # Partner selection
+│       ├── privacy/             # Privacy compliance (GDPR/CCPA/COPPA)
+│       ├── database/            # Redis + TimescaleDB integration
 │       ├── admin/               # Admin dashboard
 │       └── models/              # Data models
 ├── tests/                       # Python test suite
+├── fly.toml                     # Fly.io deployment config
+├── Dockerfile                   # Container build
+├── docker-compose.yml           # Local development
 ├── run_admin.py                 # Admin UI launcher
 └── pyproject.toml               # Python project config
 ```
+
+## Supported Bidders (22)
+
+| Category | Bidders | GVL IDs |
+|----------|---------|---------|
+| **Premium SSPs** | appnexus, rubicon, pubmatic, openx, ix | 32, 52, 76, 69, 10 |
+| **Mid-tier** | triplelift, sovrn, sharethrough, gumgum, 33across, criteo | 28, 13, 80, 61, 58, 91 |
+| **Video Specialists** | spotx, beachfront, unruly | 165, 335, 36 |
+| **Native Specialists** | teads, outbrain, taboola | 132, 164, 42 |
+| **Regional (EMEA)** | adform, smartadserver, improvedigital | 50, 45, 253 |
+| **Additional** | medianet, conversant | 142, 24 |
 
 ## License
 

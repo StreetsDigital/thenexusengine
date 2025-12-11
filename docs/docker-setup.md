@@ -255,3 +255,43 @@ docker compose up -d --scale pbs=3
 2. Configure bidder settings via the UI
 3. Send test auction requests to http://localhost:8000/openrtb2/auction
 4. Monitor performance in the Bidder Metrics panel
+
+## Fly.io Production Deployment
+
+For production deployment, we recommend using Fly.io instead of Docker Compose:
+
+```bash
+# Install Fly CLI
+curl -L https://fly.io/install.sh | sh
+
+# Login and deploy
+fly auth login
+fly deploy
+
+# View logs
+fly logs
+
+# Scale for traffic
+fly scale count 3
+```
+
+The project includes `fly.toml` pre-configured for:
+- Auto-scaling based on load
+- Health check monitoring
+- Redis sampling (10% to reduce Upstash costs)
+- Optimized for 40M+ requests/month
+
+See the main [README.md](../README.md) for more deployment options.
+
+## Supported Bidders
+
+The Nexus Engine supports **22 bidder adapters** across categories:
+
+- **Premium SSPs**: AppNexus, Rubicon, PubMatic, OpenX, Index Exchange
+- **Mid-tier**: TripleLift, Sovrn, Sharethrough, GumGum, 33Across, Criteo
+- **Video Specialists**: SpotX, Beachfront, Unruly
+- **Native Specialists**: Teads, Outbrain, Taboola
+- **Regional (EMEA)**: Adform, Smart AdServer, Improve Digital
+- **Additional**: Media.net, Conversant
+
+All adapters include GVL IDs for GDPR/TCF compliance.
