@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters"
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/fpd"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 	"github.com/StreetsDigital/thenexusengine/pbs/pkg/idr"
 )
@@ -20,6 +21,8 @@ type Exchange struct {
 	idrClient     *idr.Client
 	eventRecorder *idr.EventRecorder
 	config        *Config
+	fpdProcessor  *fpd.Processor
+	eidFilter     *fpd.EIDFilter
 }
 
 // Config holds exchange configuration
@@ -32,6 +35,7 @@ type Config struct {
 	EventBufferSize    int
 	CurrencyConv       bool
 	DefaultCurrency    string
+	FPD                *fpd.Config
 }
 
 // DefaultConfig returns default configuration
@@ -45,6 +49,7 @@ func DefaultConfig() *Config {
 		EventBufferSize:    100,
 		CurrencyConv:       false,
 		DefaultCurrency:    "USD",
+		FPD:                fpd.DefaultConfig(),
 	}
 }
 
@@ -54,10 +59,18 @@ func New(registry *adapters.Registry, config *Config) *Exchange {
 		config = DefaultConfig()
 	}
 
+	// Initialize FPD config if not provided
+	fpdConfig := config.FPD
+	if fpdConfig == nil {
+		fpdConfig = fpd.DefaultConfig()
+	}
+
 	ex := &Exchange{
-		registry:   registry,
-		httpClient: adapters.NewHTTPClient(config.DefaultTimeout),
-		config:     config,
+		registry:     registry,
+		httpClient:   adapters.NewHTTPClient(config.DefaultTimeout),
+		config:       config,
+		fpdProcessor: fpd.NewProcessor(fpdConfig),
+		eidFilter:    fpd.NewEIDFilter(fpdConfig),
 	}
 
 	if config.IDREnabled && config.IDRServiceURL != "" {
@@ -167,8 +180,25 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 
 	response.DebugInfo.SelectedBidders = selectedBidders
 
+	// Process FPD and filter EIDs
+	var bidderFPD fpd.BidderFPD
+	if e.fpdProcessor != nil {
+		// Filter EIDs first
+		if e.eidFilter != nil {
+			e.eidFilter.ProcessRequestEIDs(req.BidRequest)
+		}
+
+		// Process FPD for each bidder
+		var err error
+		bidderFPD, err = e.fpdProcessor.ProcessRequest(req.BidRequest, selectedBidders)
+		if err != nil {
+			// Log error but continue - FPD is not critical
+			response.DebugInfo.Errors["fpd"] = []string{err.Error()}
+		}
+	}
+
 	// Call bidders in parallel
-	results := e.callBidders(ctx, req.BidRequest, selectedBidders, timeout)
+	results := e.callBiddersWithFPD(ctx, req.BidRequest, selectedBidders, timeout, bidderFPD)
 
 	// Extract request context for event recording
 	var country, deviceType, mediaType, adSize, publisherID string
@@ -274,8 +304,13 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	return response, nil
 }
 
-// callBidders calls all selected bidders in parallel
+// callBidders calls all selected bidders in parallel (legacy, without FPD)
 func (e *Exchange) callBidders(ctx context.Context, req *openrtb.BidRequest, bidders []string, timeout time.Duration) map[string]*BidderResult {
+	return e.callBiddersWithFPD(ctx, req, bidders, timeout, nil)
+}
+
+// callBiddersWithFPD calls all selected bidders in parallel with FPD support
+func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidRequest, bidders []string, timeout time.Duration, bidderFPD fpd.BidderFPD) map[string]*BidderResult {
 	results := make(map[string]*BidderResult)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -290,7 +325,10 @@ func (e *Exchange) callBidders(ctx context.Context, req *openrtb.BidRequest, bid
 		go func(code string, awi adapters.AdapterWithInfo) {
 			defer wg.Done()
 
-			result := e.callBidder(ctx, req, code, awi.Adapter, timeout)
+			// Clone request and apply bidder-specific FPD
+			bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
+
+			result := e.callBidder(ctx, bidderReq, code, awi.Adapter, timeout)
 
 			mu.Lock()
 			results[code] = result
@@ -300,6 +338,28 @@ func (e *Exchange) callBidders(ctx context.Context, req *openrtb.BidRequest, bid
 
 	wg.Wait()
 	return results
+}
+
+// cloneRequestWithFPD creates a copy of the request with bidder-specific FPD applied
+func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode string, bidderFPD fpd.BidderFPD) *openrtb.BidRequest {
+	if bidderFPD == nil {
+		return req
+	}
+
+	fpdData, ok := bidderFPD[bidderCode]
+	if !ok || fpdData == nil {
+		return req
+	}
+
+	// Create a shallow clone of the request
+	clone := *req
+
+	// Apply FPD using the processor
+	if e.fpdProcessor != nil {
+		e.fpdProcessor.ApplyFPDToRequest(&clone, bidderCode, fpdData)
+	}
+
+	return &clone
 }
 
 // callBidder calls a single bidder
@@ -356,4 +416,28 @@ func (e *Exchange) buildEmptyResponse(req *openrtb.BidRequest) *openrtb.BidRespo
 		SeatBid: []openrtb.SeatBid{},
 		Cur:     e.config.DefaultCurrency,
 	}
+}
+
+// UpdateFPDConfig updates the FPD configuration at runtime
+func (e *Exchange) UpdateFPDConfig(config *fpd.Config) {
+	if config == nil {
+		return
+	}
+
+	e.config.FPD = config
+	e.fpdProcessor = fpd.NewProcessor(config)
+	e.eidFilter = fpd.NewEIDFilter(config)
+}
+
+// GetFPDConfig returns the current FPD configuration
+func (e *Exchange) GetFPDConfig() *fpd.Config {
+	if e.config == nil {
+		return nil
+	}
+	return e.config.FPD
+}
+
+// GetIDRClient returns the IDR client (for metrics/admin)
+func (e *Exchange) GetIDRClient() *idr.Client {
+	return e.idrClient
 }

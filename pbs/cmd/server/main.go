@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/rubicon"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/endpoints"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/exchange"
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/metrics"
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/middleware"
 )
 
 func main() {
@@ -33,14 +36,28 @@ func main() {
 	log.Printf("  IDR Enabled: %v", *idrEnabled)
 	log.Printf("  Timeout: %v", *timeout)
 
+	// Initialize Prometheus metrics
+	m := metrics.NewMetrics("pbs")
+	log.Printf("  Metrics: enabled")
+
+	// Initialize middleware
+	auth := middleware.NewAuth(middleware.DefaultAuthConfig())
+	rateLimiter := middleware.NewRateLimiter(middleware.DefaultRateLimitConfig())
+	sizeLimiter := middleware.NewSizeLimiter(middleware.DefaultSizeLimitConfig())
+
+	log.Printf("  Auth: %v", auth.IsEnabled())
+	log.Printf("  Rate Limiting: %v", rateLimiter != nil)
+
 	// Configure exchange
 	config := &exchange.Config{
-		DefaultTimeout:  *timeout,
-		MaxBidders:      50,
-		IDREnabled:      *idrEnabled,
-		IDRServiceURL:   *idrURL,
-		CurrencyConv:    false,
-		DefaultCurrency: "USD",
+		DefaultTimeout:     *timeout,
+		MaxBidders:         50,
+		IDREnabled:         *idrEnabled,
+		IDRServiceURL:      *idrURL,
+		EventRecordEnabled: true,
+		EventBufferSize:    100,
+		CurrencyConv:       false,
+		DefaultCurrency:    "USD",
 	}
 
 	// Create exchange with default registry
@@ -59,18 +76,35 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/openrtb2/auction", auctionHandler)
 	mux.Handle("/status", statusHandler)
+	mux.Handle("/health", healthHandler())
 	mux.Handle("/info/bidders", biddersHandler)
 
-	// Add metrics endpoint placeholder
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("# Prometheus metrics endpoint\n"))
+	// Prometheus metrics endpoint
+	mux.Handle("/metrics", metrics.Handler())
+
+	// Admin endpoints for runtime configuration
+	mux.HandleFunc("/admin/circuit-breaker", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if ex.GetIDRClient() != nil {
+			stats := ex.GetIDRClient().CircuitBreakerStats()
+			json.NewEncoder(w).Encode(stats)
+		} else {
+			json.NewEncoder(w).Encode(map[string]string{"status": "IDR disabled"})
+		}
 	})
+
+	// Build middleware chain: Size Limit -> Rate Limit -> Auth -> Metrics -> Handler
+	handler := http.Handler(mux)
+	handler = m.Middleware(handler)
+	handler = auth.Middleware(handler)
+	handler = rateLimiter.Middleware(handler)
+	handler = sizeLimiter.Middleware(handler)
+	handler = loggingMiddleware(handler)
 
 	// Create server
 	server := &http.Server{
 		Addr:         ":" + *port,
-		Handler:      loggingMiddleware(mux),
+		Handler:      handler,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -91,6 +125,9 @@ func main() {
 
 	log.Println("Shutting down server...")
 
+	// Stop rate limiter cleanup goroutine
+	rateLimiter.Stop()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -107,5 +144,19 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		next.ServeHTTP(w, r)
 		log.Printf("%s %s %v", r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
+// healthHandler returns a comprehensive health check
+func healthHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		health := map[string]interface{}{
+			"status":    "healthy",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"version":   "1.0.0",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(health)
 	})
 }

@@ -14,6 +14,7 @@ from ..models.classified_request import (
     ClassifiedRequest,
     DeviceType,
 )
+from ..privacy.consent_models import ConsentSignals
 from ..utils.constants import (
     CONNECTION_TYPE_MAP,
     OPENRTB_DEVICE_TYPE_MAP,
@@ -68,6 +69,9 @@ class RequestClassifier:
         # Extract geo information
         geo = device.get('geo', {}) or ortb_request.get('geo', {})
 
+        # Extract privacy/consent signals
+        consent_signals = ConsentSignals.from_openrtb(ortb_request)
+
         # Build classified request
         return ClassifiedRequest(
             # Impression attributes
@@ -98,6 +102,9 @@ class RequestClassifier:
             user_ids=self._extract_user_ids(user, ortb_request),
             has_consent=self._check_consent(regs, user),
             consent_string=self._extract_consent_string(user, regs),
+
+            # Privacy / Consent
+            consent_signals=consent_signals,
 
             # Context
             timestamp=datetime.now(timezone.utc),

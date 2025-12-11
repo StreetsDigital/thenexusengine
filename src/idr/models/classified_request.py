@@ -3,7 +3,10 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from ..privacy.consent_models import ConsentSignals
 
 
 class AdFormat(str, Enum):
@@ -67,6 +70,9 @@ class ClassifiedRequest:
     has_consent: bool = False
     consent_string: Optional[str] = None
 
+    # Privacy / Consent (full signals)
+    consent_signals: Optional["ConsentSignals"] = None
+
     # Context
     timestamp: datetime = field(default_factory=datetime.utcnow)
     hour_of_day: int = 0  # 0-23
@@ -97,6 +103,34 @@ class ClassifiedRequest:
         """Check if any user IDs are present."""
         return bool(self.user_ids)
 
+    @property
+    def gdpr_applies(self) -> bool:
+        """Check if GDPR applies to this request."""
+        if self.consent_signals:
+            return self.consent_signals.gdpr_applies
+        return False
+
+    @property
+    def ccpa_applies(self) -> bool:
+        """Check if CCPA applies to this request."""
+        if self.consent_signals:
+            return self.consent_signals.ccpa_applies
+        return False
+
+    @property
+    def coppa_applies(self) -> bool:
+        """Check if COPPA applies to this request."""
+        if self.consent_signals:
+            return self.consent_signals.coppa_applies
+        return False
+
+    @property
+    def can_personalize(self) -> bool:
+        """Check if personalized ads are allowed."""
+        if self.consent_signals:
+            return self.consent_signals.can_personalize_ads()
+        return self.has_consent
+
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
         return {
@@ -124,4 +158,10 @@ class ClassifiedRequest:
             'day_of_week': self.day_of_week,
             'floor_price': self.floor_price,
             'floor_currency': self.floor_currency,
+            'privacy': {
+                'gdpr_applies': self.gdpr_applies,
+                'ccpa_applies': self.ccpa_applies,
+                'coppa_applies': self.coppa_applies,
+                'can_personalize': self.can_personalize,
+            } if self.consent_signals else None,
         }
