@@ -148,6 +148,19 @@ def _sanitize_publisher_id(publisher_id: str) -> str:
     return sanitized[:64]  # Limit length
 
 
+def _safe_error_response(error: Exception, generic_message: str, status_code: int = 500):
+    """
+    Return a safe error response without leaking internal details.
+    Logs the actual error server-side for debugging.
+    """
+    # Log the actual error for debugging (server-side only)
+    import logging
+    logging.error(f"{generic_message}: {error}", exc_info=True)
+
+    # Return generic message to client (no internal details)
+    return {'status': 'error', 'message': generic_message}, status_code
+
+
 # Default config path
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent.parent.parent / "config" / "idr_config.yaml"
 
@@ -372,7 +385,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             save_config(new_config, app.config['CONFIG_PATH'])
             return jsonify({'status': 'success', 'message': 'Configuration saved'})
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+            return jsonify(_safe_error_response(e, 'Failed to save configuration', 400))
 
     @app.route('/api/config/selector', methods=['PATCH'])
     @login_required
@@ -385,7 +398,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             save_config(config, app.config['CONFIG_PATH'])
             return jsonify({'status': 'success', 'config': config['selector']})
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+            return jsonify(_safe_error_response(e, 'Failed to update selector settings', 400))
 
     @app.route('/api/config/scoring', methods=['PATCH'])
     @login_required
@@ -407,7 +420,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             save_config(config, app.config['CONFIG_PATH'])
             return jsonify({'status': 'success', 'config': config['scoring']})
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+            return jsonify(_safe_error_response(e, 'Failed to update scoring weights', 400))
 
     @app.route('/api/mode/bypass', methods=['POST'])
     @login_required
@@ -426,7 +439,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'message': 'Bypass mode ' + ('ENABLED - All bidders will be selected' if enabled else 'DISABLED')
             })
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+            return jsonify(_safe_error_response(e, 'Failed to set bypass mode', 400))
 
     @app.route('/api/mode/shadow', methods=['POST'])
     @login_required
@@ -445,7 +458,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'message': 'Shadow mode ' + ('ENABLED - Logging without filtering' if enabled else 'DISABLED')
             })
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+            return jsonify(_safe_error_response(e, 'Failed to set shadow mode', 400))
 
     @app.route('/api/reset', methods=['POST'])
     @login_required
@@ -456,7 +469,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             save_config(default, app.config['CONFIG_PATH'])
             return jsonify({'status': 'success', 'message': 'Configuration reset to defaults'})
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+            return jsonify(_safe_error_response(e, 'Failed to reset configuration', 400))
 
     @app.route('/health', methods=['GET'])
     def health():
@@ -547,7 +560,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'message': 'Database settings saved. Restart services to apply changes.'
             })
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+            return jsonify(_safe_error_response(e, 'Failed to update database settings', 400))
 
     @app.route('/api/config/privacy', methods=['PATCH'])
     @login_required
@@ -577,7 +590,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'message': 'Privacy settings saved.'
             })
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+            return jsonify(_safe_error_response(e, 'Failed to update privacy settings', 400))
 
     @app.route('/api/config/fpd', methods=['PATCH'])
     @login_required
@@ -608,7 +621,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'message': 'FPD settings saved.'
             })
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 400
+            return jsonify(_safe_error_response(e, 'Failed to update FPD settings', 400))
 
     @app.route('/api/select', methods=['POST'])
     @login_required
@@ -729,10 +742,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
+            return jsonify(_safe_error_response(e, 'Partner selection failed', 500))
 
     @app.route('/api/events', methods=['POST'])
     @login_required
@@ -824,10 +834,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
+            return jsonify(_safe_error_response(e, 'Failed to record events', 500))
 
     @app.route('/api/metrics', methods=['GET'])
     @login_required
@@ -862,10 +869,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
+            return jsonify(_safe_error_response(e, 'Failed to load metrics', 500))
 
     @app.route('/api/metrics/<bidder_code>', methods=['GET'])
     @login_required
@@ -902,10 +906,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
+            return jsonify(_safe_error_response(e, 'Failed to load bidder metrics', 500))
 
     # =========================================
     # Publisher Management Endpoints
@@ -952,10 +953,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
+            return jsonify(_safe_error_response(e, 'Failed to list publishers', 500))
 
     @app.route('/api/publishers/<publisher_id>', methods=['GET'])
     @login_required
@@ -1018,10 +1016,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
+            return jsonify(_safe_error_response(e, 'Failed to load publisher', 500))
 
     @app.route('/api/publishers/<publisher_id>', methods=['PUT'])
     @login_required
@@ -1078,10 +1073,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
+            return jsonify(_safe_error_response(e, 'Failed to save publisher', 500))
 
     @app.route('/api/publishers/<publisher_id>', methods=['DELETE'])
     @login_required
@@ -1123,10 +1115,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
+            return jsonify(_safe_error_response(e, 'Failed to delete publisher', 500))
 
     @app.route('/api/publishers/reload', methods=['POST'])
     @login_required
@@ -1150,10 +1139,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             })
 
         except Exception as e:
-            return jsonify({
-                'status': 'error',
-                'message': str(e)
-            }), 500
+            return jsonify(_safe_error_response(e, 'Failed to reload publishers', 500))
 
     # Legacy endpoint for backwards compatibility
     @app.route('/admin/reload-configs', methods=['POST'])

@@ -974,6 +974,27 @@
     </div>
 
     <script>
+        // ===========================================
+        // Security: HTML escaping to prevent XSS
+        // ===========================================
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        // Escape for use in HTML attributes (more strict)
+        function escapeAttr(text) {
+            if (text === null || text === undefined) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/'/g, '&#39;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
         // Initialize mode display
         document.addEventListener('DOMContentLoaded', function() {
             const bypassEnabled = {{ 'true' if config.selector.bypass_enabled else 'false' }};
@@ -1010,7 +1031,7 @@
                 const data = await response.json();
 
                 if (data.status === 'error') {
-                    container.innerHTML = '<div class="no-data">' + data.message + '</div>';
+                    container.innerHTML = '<div class="no-data">Error loading publishers</div>';
                     return;
                 }
 
@@ -1044,18 +1065,20 @@
                 for (const pub of publishers) {
                     const statusClass = pub.enabled ? 'high' : 'low';
                     const statusText = pub.enabled ? 'Active' : 'Disabled';
+                    const safeId = escapeAttr(pub.id);
+                    const safeName = escapeHtml(pub.name);
 
                     html += `
                         <tr>
-                            <td><strong>${pub.id}</strong></td>
-                            <td>${pub.name}</td>
-                            <td>${pub.sites}</td>
-                            <td>${pub.bidders}</td>
+                            <td><strong>${escapeHtml(pub.id)}</strong></td>
+                            <td>${safeName}</td>
+                            <td>${escapeHtml(pub.sites)}</td>
+                            <td>${escapeHtml(pub.bidders)}</td>
                             <td><span class="confidence-badge ${statusClass}">${statusText}</span></td>
                             <td>
-                                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="viewPublisher('${pub.id}')">View</button>
-                                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="editPublisher('${pub.id}')">Edit</button>
-                                <button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="deletePublisher('${pub.id}')">Delete</button>
+                                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="viewPublisher('${safeId}')">View</button>
+                                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="editPublisher('${safeId}')">Edit</button>
+                                <button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="deletePublisher('${safeId}')">Delete</button>
                             </td>
                         </tr>
                     `;
@@ -1065,17 +1088,18 @@
                 container.innerHTML = html;
 
             } catch (e) {
-                container.innerHTML = '<div class="no-data">Error loading publishers: ' + e.message + '</div>';
+                container.innerHTML = '<div class="no-data">Error loading publishers</div>';
+                console.error('Error loading publishers:', e);
             }
         }
 
         async function viewPublisher(publisherId) {
             try {
-                const response = await fetch('/api/publishers/' + publisherId);
+                const response = await fetch('/api/publishers/' + encodeURIComponent(publisherId));
                 const data = await response.json();
 
                 if (data.status === 'error') {
-                    showAlert(data.message, 'error');
+                    showAlert('Error loading publisher details', 'error');
                     return;
                 }
 
@@ -1083,23 +1107,24 @@
                 let sitesHtml = '';
                 for (const site of data.sites || []) {
                     const adUnits = site.ad_units ? site.ad_units.length : 0;
-                    sitesHtml += `<li><strong>${site.domain}</strong> (${site.name}) - ${adUnits} ad units</li>`;
+                    sitesHtml += `<li><strong>${escapeHtml(site.domain)}</strong> (${escapeHtml(site.name)}) - ${escapeHtml(adUnits)} ad units</li>`;
                 }
 
                 // Build bidders summary
                 let biddersHtml = '';
                 for (const [code, config] of Object.entries(data.bidders || {})) {
                     const status = config.enabled ? '✓' : '✗';
-                    biddersHtml += `<li>${status} ${code}</li>`;
+                    biddersHtml += `<li>${status} ${escapeHtml(code)}</li>`;
                 }
 
+                const safePublisherId = escapeAttr(publisherId);
                 const html = `
                     <div style="padding: 1rem; background: var(--gray-50); border-radius: 0.5rem; margin-bottom: 1rem;">
-                        <h3 style="margin-bottom: 0.5rem;">${data.name}</h3>
-                        <p style="color: var(--gray-600);">ID: ${data.publisher_id}</p>
-                        <p style="color: var(--gray-600);">Contact: ${data.contact?.email || 'Not set'}</p>
+                        <h3 style="margin-bottom: 0.5rem;">${escapeHtml(data.name)}</h3>
+                        <p style="color: var(--gray-600);">ID: ${escapeHtml(data.publisher_id)}</p>
+                        <p style="color: var(--gray-600);">Contact: ${escapeHtml(data.contact?.email || 'Not set')}</p>
 
-                        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Sites (${data.sites?.length || 0})</h4>
+                        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Sites (${escapeHtml(data.sites?.length || 0)})</h4>
                         <ul style="margin-left: 1.5rem; color: var(--gray-700);">${sitesHtml || '<li>No sites</li>'}</ul>
 
                         <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Bidders</h4>
@@ -1107,14 +1132,14 @@
 
                         <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">IDR Settings</h4>
                         <ul style="margin-left: 1.5rem; color: var(--gray-700);">
-                            <li>Max Bidders: ${data.idr?.max_bidders || 8}</li>
-                            <li>Min Score: ${data.idr?.min_score || 0.1}</li>
-                            <li>Timeout: ${data.idr?.timeout_ms || 50}ms</li>
+                            <li>Max Bidders: ${escapeHtml(data.idr?.max_bidders || 8)}</li>
+                            <li>Min Score: ${escapeHtml(data.idr?.min_score || 0.1)}</li>
+                            <li>Timeout: ${escapeHtml(data.idr?.timeout_ms || 50)}ms</li>
                         </ul>
 
                         <div style="margin-top: 1rem;">
                             <button class="btn btn-secondary" onclick="loadPublishers()">Close</button>
-                            <button class="btn btn-primary" onclick="editPublisher('${publisherId}')">Edit</button>
+                            <button class="btn btn-primary" onclick="editPublisher('${safePublisherId}')">Edit</button>
                         </div>
                     </div>
                 `;
@@ -1122,7 +1147,8 @@
                 document.getElementById('publishers-container').innerHTML = html;
 
             } catch (e) {
-                showAlert('Error loading publisher: ' + e.message, 'error');
+                showAlert('Error loading publisher details', 'error');
+                console.error('Error loading publisher:', e);
             }
         }
 
@@ -1992,7 +2018,7 @@
                 const data = await response.json();
 
                 if (data.status === 'error') {
-                    container.innerHTML = '<div class="no-data">' + data.message + '</div>';
+                    container.innerHTML = '<div class="no-data">Error loading metrics</div>';
                     return;
                 }
 
@@ -2039,28 +2065,28 @@
 
                     html += `
                         <tr>
-                            <td><strong>${code}</strong></td>
+                            <td><strong>${escapeHtml(code)}</strong></td>
                             <td>
                                 <div class="metric-bar">
                                     <div class="metric-bar-fill ${winClass}" style="width: ${Math.min(winRate * 5, 100)}%"></div>
                                 </div>
-                                <span class="metric-value">${winRate}%</span>
+                                <span class="metric-value">${escapeHtml(winRate)}%</span>
                             </td>
                             <td>
                                 <div class="metric-bar">
-                                    <div class="metric-bar-fill ${bidClass}" style="width: ${bidRate}%"></div>
+                                    <div class="metric-bar-fill ${bidClass}" style="width: ${escapeHtml(bidRate)}%"></div>
                                 </div>
-                                <span class="metric-value">${bidRate}%</span>
+                                <span class="metric-value">${escapeHtml(bidRate)}%</span>
                             </td>
-                            <td class="metric-value">$${avgCpm}</td>
+                            <td class="metric-value">$${escapeHtml(avgCpm)}</td>
                             <td>
                                 <div class="metric-bar">
                                     <div class="metric-bar-fill ${latClass}" style="width: ${Math.min(100 - (m.p95_latency_ms / 5), 100)}%"></div>
                                 </div>
-                                <span class="metric-value">${latency}ms</span>
+                                <span class="metric-value">${escapeHtml(latency)}ms</span>
                             </td>
-                            <td class="metric-value">${requests}</td>
-                            <td><span class="confidence-badge ${confClass}">${confidence}%</span></td>
+                            <td class="metric-value">${escapeHtml(requests)}</td>
+                            <td><span class="confidence-badge ${confClass}">${escapeHtml(confidence)}%</span></td>
                         </tr>
                     `;
                 }
@@ -2069,7 +2095,8 @@
                 container.innerHTML = html;
 
             } catch (e) {
-                container.innerHTML = '<div class="no-data">Error loading metrics: ' + e.message + '</div>';
+                container.innerHTML = '<div class="no-data">Error loading metrics</div>';
+                console.error('Error loading metrics:', e);
             }
         }
 
