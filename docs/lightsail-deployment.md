@@ -74,12 +74,22 @@ cd /opt/nexus-engine
 # Create environment file
 cat > .env << EOF
 POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)
+SECRET_KEY=$(openssl rand -hex 32)
 LOG_LEVEL=info
 LOG_FORMAT=json
 IDR_ENABLED=true
 IDR_TIMEOUT_MS=50
 REDIS_SAMPLE_RATE=0.1
+
+# Admin authentication (REQUIRED - change these!)
+ADMIN_USERS=admin:$(openssl rand -base64 16),ops:$(openssl rand -base64 16),devops:$(openssl rand -base64 16)
 EOF
+
+# IMPORTANT: Note your admin credentials
+echo "=== ADMIN CREDENTIALS ==="
+grep ADMIN_USERS .env
+echo "========================="
+echo "Save these credentials securely!"
 
 # Start services
 docker compose -f docker-compose.prod.yml up -d
@@ -114,6 +124,56 @@ After deployment, your services are available at:
 | IDR Health | `http://<ip>:5050/health` | Health check |
 
 ## Production Hardening
+
+### Admin Authentication (Required)
+
+The admin dashboard requires authentication. Configure admin users via environment variables:
+
+```bash
+# Edit your .env file
+nano /opt/nexus-engine/.env
+```
+
+**Environment Variables:**
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `ADMIN_USERS` | Comma-separated `user:pass` pairs | `admin:secret123,ops:pass456` |
+| `ADMIN_USER_1` | Individual admin user | `admin:secret123` |
+| `ADMIN_USER_2` | Second admin user | `ops:pass456` |
+| `ADMIN_USER_3` | Third admin user | `devops:pass789` |
+| `SECRET_KEY` | Flask session secret (auto-generated if not set) | `your-secret-key` |
+| `SESSION_COOKIE_SECURE` | Set `true` when using HTTPS | `true` |
+
+**Example .env for 3 admin users:**
+
+```bash
+# Admin authentication
+ADMIN_USERS=admin:MySecurePass123,ops:OpsTeamPass456,devops:DevOpsPass789
+SECRET_KEY=your-32-char-random-secret-key-here
+SESSION_COOKIE_SECURE=true
+```
+
+**Or use individual variables:**
+
+```bash
+ADMIN_USER_1=admin:MySecurePass123
+ADMIN_USER_2=ops:OpsTeamPass456
+ADMIN_USER_3=devops:DevOpsPass789
+```
+
+After updating credentials, restart the IDR service:
+
+```bash
+docker compose -f docker-compose.prod.yml restart idr
+```
+
+**Security Notes:**
+- All API endpoints require authentication when `ADMIN_USERS` is configured
+- Health endpoints (`/health`) remain public for load balancer checks
+- Sessions expire after 8 hours of inactivity
+- Failed login attempts are rate-limited with a 0.5s delay
+- Passwords are hashed using PBKDF2 with 100,000 iterations
 
 ### Enable TLS with Let's Encrypt
 

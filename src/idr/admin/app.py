@@ -2,19 +2,32 @@
 IDR Admin Dashboard - Simple web UI for managing IDR configuration.
 
 Run with: python -m src.idr.admin.app
+
+Authentication:
+    Set admin credentials via environment variables:
+    - ADMIN_USER_1=username:password
+    - ADMIN_USER_2=username:password
+    - ADMIN_USER_3=username:password
+
+    Or use ADMIN_USERS for all at once:
+    - ADMIN_USERS=user1:pass1,user2:pass2,user3:pass3
 """
 
-import json
+import hashlib
+import hmac
 import os
+import re
+import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import wraps
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
 
 try:
-    from flask import Flask, jsonify, render_template, request
+    from flask import Flask, jsonify, render_template, request, redirect, url_for, session, g
 except ImportError:
     print("Flask not installed. Run: pip install flask")
     raise
@@ -39,6 +52,100 @@ except ImportError:
 # Global metrics store and event pipeline (initialized on first request)
 _metrics_store = None
 _event_pipeline = None
+
+
+# =============================================================================
+# Authentication System
+# =============================================================================
+
+def _hash_password(password: str, salt: str) -> str:
+    """Hash a password with salt using PBKDF2."""
+    return hashlib.pbkdf2_hmac(
+        'sha256',
+        password.encode('utf-8'),
+        salt.encode('utf-8'),
+        100000  # iterations
+    ).hex()
+
+
+def _parse_admin_users() -> dict[str, dict[str, str]]:
+    """
+    Parse admin users from environment variables.
+
+    Supports two formats:
+    1. Individual: ADMIN_USER_1=user:pass, ADMIN_USER_2=user:pass, etc.
+    2. Combined: ADMIN_USERS=user1:pass1,user2:pass2,user3:pass3
+    """
+    users = {}
+    salt = os.environ.get('ADMIN_SALT', 'nexus-engine-default-salt')
+
+    # Try combined format first
+    combined = os.environ.get('ADMIN_USERS', '')
+    if combined:
+        for pair in combined.split(','):
+            pair = pair.strip()
+            if ':' in pair:
+                username, password = pair.split(':', 1)
+                username = username.strip()
+                password = password.strip()
+                if username and password:
+                    users[username] = {
+                        'password_hash': _hash_password(password, salt),
+                        'salt': salt
+                    }
+
+    # Also check individual user env vars (ADMIN_USER_1, ADMIN_USER_2, ADMIN_USER_3)
+    for i in range(1, 4):
+        user_env = os.environ.get(f'ADMIN_USER_{i}', '')
+        if user_env and ':' in user_env:
+            username, password = user_env.split(':', 1)
+            username = username.strip()
+            password = password.strip()
+            if username and password:
+                users[username] = {
+                    'password_hash': _hash_password(password, salt),
+                    'salt': salt
+                }
+
+    # If no users configured, create a default admin (with warning)
+    if not users:
+        default_pass = os.environ.get('ADMIN_DEFAULT_PASSWORD', '')
+        if default_pass:
+            users['admin'] = {
+                'password_hash': _hash_password(default_pass, salt),
+                'salt': salt
+            }
+
+    return users
+
+
+def _verify_password(username: str, password: str, users: dict) -> bool:
+    """Verify a password against stored hash."""
+    if username not in users:
+        return False
+
+    user_data = users[username]
+    expected_hash = user_data['password_hash']
+    salt = user_data['salt']
+    actual_hash = _hash_password(password, salt)
+
+    # Use constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(expected_hash, actual_hash)
+
+
+def _sanitize_publisher_id(publisher_id: str) -> str:
+    """
+    Sanitize publisher_id to prevent path traversal attacks.
+    Only allows alphanumeric characters, hyphens, and underscores.
+    """
+    if not publisher_id:
+        return ''
+    # Remove any path separators and only allow safe characters
+    sanitized = re.sub(r'[^a-zA-Z0-9_-]', '', publisher_id)
+    # Ensure it doesn't start with a dash (could be interpreted as option)
+    if sanitized.startswith('-'):
+        sanitized = sanitized[1:]
+    return sanitized[:64]  # Limit length
 
 
 # Default config path
@@ -142,19 +249,122 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
 
     app.config['CONFIG_PATH'] = config_path or DEFAULT_CONFIG_PATH
 
+    # Security configuration
+    app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+    app.config['SESSION_COOKIE_SECURE'] = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
+
+    # Load admin users
+    admin_users = _parse_admin_users()
+    auth_enabled = bool(admin_users)
+
+    if not auth_enabled:
+        print("\n" + "=" * 60)
+        print("  WARNING: No admin users configured!")
+        print("  The admin dashboard is UNPROTECTED.")
+        print("  Set ADMIN_USERS or ADMIN_USER_1/2/3 environment variables.")
+        print("  Example: ADMIN_USERS=admin:secretpass123")
+        print("=" * 60 + "\n")
+
+    def login_required(f):
+        """Decorator to require authentication for a route."""
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not auth_enabled:
+                # Auth disabled - allow access but set a warning
+                g.user = None
+                return f(*args, **kwargs)
+
+            if 'user' not in session:
+                if request.is_json:
+                    return jsonify({'error': 'Authentication required'}), 401
+                return redirect(url_for('login'))
+
+            g.user = session['user']
+            return f(*args, **kwargs)
+        return decorated_function
+
+    # =================================
+    # Authentication Routes
+    # =================================
+
+    @app.route('/login', methods=['GET', 'POST'])
+    def login():
+        """Login page and handler."""
+        if not auth_enabled:
+            return redirect(url_for('index'))
+
+        error = None
+
+        if request.method == 'POST':
+            username = request.form.get('username', '').strip()
+            password = request.form.get('password', '')
+
+            if _verify_password(username, password, admin_users):
+                session.permanent = True
+                session['user'] = username
+                session['login_time'] = datetime.now().isoformat()
+                return redirect(url_for('index'))
+            else:
+                error = 'Invalid username or password'
+                # Add small delay to prevent brute force
+                time.sleep(0.5)
+
+        return render_template('login.html', error=error)
+
+    @app.route('/logout')
+    def logout():
+        """Logout handler."""
+        session.clear()
+        return redirect(url_for('login'))
+
+    @app.route('/api/auth/status', methods=['GET'])
+    def auth_status():
+        """Check authentication status."""
+        if not auth_enabled:
+            return jsonify({
+                'authenticated': True,
+                'auth_enabled': False,
+                'user': None,
+                'warning': 'Authentication is disabled'
+            })
+
+        if 'user' in session:
+            return jsonify({
+                'authenticated': True,
+                'auth_enabled': True,
+                'user': session['user'],
+                'login_time': session.get('login_time')
+            })
+
+        return jsonify({
+            'authenticated': False,
+            'auth_enabled': True,
+            'user': None
+        }), 401
+
+    # =================================
+    # Protected Routes
+    # =================================
+
     @app.route('/')
+    @login_required
     def index():
         """Main dashboard page."""
         config = load_config(app.config['CONFIG_PATH'])
-        return render_template('index.html', config=config)
+        return render_template('index.html', config=config, user=getattr(g, 'user', None), auth_enabled=auth_enabled)
 
     @app.route('/api/config', methods=['GET'])
+    @login_required
     def get_config():
         """Get current configuration."""
         config = load_config(app.config['CONFIG_PATH'])
         return jsonify(config)
 
     @app.route('/api/config', methods=['POST'])
+    @login_required
     def update_config():
         """Update configuration."""
         try:
@@ -165,6 +375,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({'status': 'error', 'message': str(e)}), 400
 
     @app.route('/api/config/selector', methods=['PATCH'])
+    @login_required
     def update_selector():
         """Update selector settings only."""
         try:
@@ -177,6 +388,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({'status': 'error', 'message': str(e)}), 400
 
     @app.route('/api/config/scoring', methods=['PATCH'])
+    @login_required
     def update_scoring():
         """Update scoring weights."""
         try:
@@ -198,6 +410,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({'status': 'error', 'message': str(e)}), 400
 
     @app.route('/api/mode/bypass', methods=['POST'])
+    @login_required
     def set_bypass_mode():
         """Quick toggle for bypass mode."""
         try:
@@ -216,6 +429,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({'status': 'error', 'message': str(e)}), 400
 
     @app.route('/api/mode/shadow', methods=['POST'])
+    @login_required
     def set_shadow_mode():
         """Quick toggle for shadow mode."""
         try:
@@ -234,6 +448,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({'status': 'error', 'message': str(e)}), 400
 
     @app.route('/api/reset', methods=['POST'])
+    @login_required
     def reset_config():
         """Reset to default configuration."""
         try:
@@ -253,6 +468,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
         })
 
     @app.route('/api/status', methods=['GET'])
+    @login_required
     def get_status():
         """Get infrastructure status (databases, pipeline)."""
         global _metrics_store, _event_pipeline
@@ -309,6 +525,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
         return jsonify(status)
 
     @app.route('/api/config/database', methods=['PATCH'])
+    @login_required
     def update_database_config():
         """Update database configuration."""
         try:
@@ -333,6 +550,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({'status': 'error', 'message': str(e)}), 400
 
     @app.route('/api/config/privacy', methods=['PATCH'])
+    @login_required
     def update_privacy_config():
         """Update privacy compliance configuration."""
         try:
@@ -362,6 +580,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({'status': 'error', 'message': str(e)}), 400
 
     @app.route('/api/config/fpd', methods=['PATCH'])
+    @login_required
     def update_fpd_config():
         """Update First Party Data (FPD) configuration."""
         try:
@@ -392,6 +611,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({'status': 'error', 'message': str(e)}), 400
 
     @app.route('/api/select', methods=['POST'])
+    @login_required
     def select_partners():
         """
         Select optimal bidding partners for an auction.
@@ -515,6 +735,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             }), 500
 
     @app.route('/api/events', methods=['POST'])
+    @login_required
     def record_events():
         """
         Record auction events from PBS for metrics tracking.
@@ -609,6 +830,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             }), 500
 
     @app.route('/api/metrics', methods=['GET'])
+    @login_required
     def get_metrics():
         """Get current bidder metrics."""
         global _metrics_store
@@ -646,6 +868,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             }), 500
 
     @app.route('/api/metrics/<bidder_code>', methods=['GET'])
+    @login_required
     def get_bidder_metrics(bidder_code: str):
         """Get metrics for a specific bidder."""
         global _metrics_store
@@ -699,6 +922,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
         PUBLISHER_CONFIG_AVAILABLE = False
 
     @app.route('/api/publishers', methods=['GET'])
+    @login_required
     def list_publishers():
         """List all configured publishers."""
         if not PUBLISHER_CONFIG_AVAILABLE:
@@ -734,6 +958,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             }), 500
 
     @app.route('/api/publishers/<publisher_id>', methods=['GET'])
+    @login_required
     def get_publisher(publisher_id: str):
         """Get configuration for a specific publisher."""
         if not PUBLISHER_CONFIG_AVAILABLE:
@@ -742,9 +967,17 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'message': 'Publisher config module not available'
             }), 500
 
+        # Sanitize publisher_id to prevent path traversal
+        safe_publisher_id = _sanitize_publisher_id(publisher_id)
+        if not safe_publisher_id or safe_publisher_id != publisher_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid publisher ID format'
+            }), 400
+
         try:
             manager = get_publisher_config_manager()
-            config = manager.get(publisher_id)
+            config = manager.get(safe_publisher_id)
 
             if config is None:
                 return jsonify({
@@ -791,6 +1024,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             }), 500
 
     @app.route('/api/publishers/<publisher_id>', methods=['PUT'])
+    @login_required
     def save_publisher(publisher_id: str):
         """Save/update a publisher configuration."""
         if not PUBLISHER_CONFIG_AVAILABLE:
@@ -799,13 +1033,21 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'message': 'Publisher config module not available'
             }), 500
 
+        # Sanitize publisher_id to prevent path traversal
+        safe_publisher_id = _sanitize_publisher_id(publisher_id)
+        if not safe_publisher_id or safe_publisher_id != publisher_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid publisher ID format. Use only alphanumeric characters, hyphens, and underscores.'
+            }), 400
+
         try:
             data = request.json
 
             # Build YAML content
             config_content = {
-                'publisher_id': publisher_id,
-                'name': data.get('name', publisher_id),
+                'publisher_id': safe_publisher_id,
+                'name': data.get('name', safe_publisher_id),
                 'enabled': data.get('enabled', True),
                 'contact': data.get('contact', {}),
                 'sites': data.get('sites', []),
@@ -817,7 +1059,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
 
             # Get config directory
             manager = get_publisher_config_manager()
-            config_path = manager.config_dir / f"{publisher_id}.yaml"
+            config_path = manager.config_dir / f"{safe_publisher_id}.yaml"
 
             # Ensure directory exists
             config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -827,11 +1069,11 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 yaml.dump(config_content, f, default_flow_style=False, sort_keys=False)
 
             # Reload config
-            manager.reload(publisher_id)
+            manager.reload(safe_publisher_id)
 
             return jsonify({
                 'status': 'success',
-                'message': f'Publisher {publisher_id} saved',
+                'message': f'Publisher {safe_publisher_id} saved',
                 'path': str(config_path)
             })
 
@@ -842,6 +1084,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             }), 500
 
     @app.route('/api/publishers/<publisher_id>', methods=['DELETE'])
+    @login_required
     def delete_publisher(publisher_id: str):
         """Delete a publisher configuration."""
         if not PUBLISHER_CONFIG_AVAILABLE:
@@ -850,25 +1093,33 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'message': 'Publisher config module not available'
             }), 500
 
+        # Sanitize publisher_id to prevent path traversal
+        safe_publisher_id = _sanitize_publisher_id(publisher_id)
+        if not safe_publisher_id or safe_publisher_id != publisher_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid publisher ID format'
+            }), 400
+
         try:
             manager = get_publisher_config_manager()
-            config_path = manager.config_dir / f"{publisher_id}.yaml"
+            config_path = manager.config_dir / f"{safe_publisher_id}.yaml"
 
             if not config_path.exists():
                 return jsonify({
                     'status': 'error',
-                    'message': f'Publisher {publisher_id} not found'
+                    'message': f'Publisher {safe_publisher_id} not found'
                 }), 404
 
             # Remove file
             config_path.unlink()
 
             # Clear from cache
-            manager.reload(publisher_id)
+            manager.reload(safe_publisher_id)
 
             return jsonify({
                 'status': 'success',
-                'message': f'Publisher {publisher_id} deleted'
+                'message': f'Publisher {safe_publisher_id} deleted'
             })
 
         except Exception as e:
@@ -878,6 +1129,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             }), 500
 
     @app.route('/api/publishers/reload', methods=['POST'])
+    @login_required
     def reload_publishers():
         """Reload all publisher configurations from disk."""
         if not PUBLISHER_CONFIG_AVAILABLE:
@@ -905,6 +1157,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
 
     # Legacy endpoint for backwards compatibility
     @app.route('/admin/reload-configs', methods=['POST'])
+    @login_required
     def reload_configs_legacy():
         """Legacy endpoint - redirects to new API."""
         return reload_publishers()
@@ -912,14 +1165,29 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
     return app
 
 
-def run_admin(host: str = '0.0.0.0', port: int = 5050, debug: bool = True):
-    """Run the admin dashboard."""
+def run_admin(host: str = '0.0.0.0', port: int = 5050, debug: bool = False):
+    """
+    Run the admin dashboard.
+
+    Args:
+        host: Host to bind to (default: 0.0.0.0)
+        port: Port to listen on (default: 5050)
+        debug: Enable debug mode (default: False for security)
+
+    Environment variables for authentication:
+        ADMIN_USERS: Comma-separated user:pass pairs (e.g., "admin:pass123,ops:secret456")
+        ADMIN_USER_1: First admin user (format: "username:password")
+        ADMIN_USER_2: Second admin user (format: "username:password")
+        ADMIN_USER_3: Third admin user (format: "username:password")
+        SECRET_KEY: Flask secret key for sessions (auto-generated if not set)
+    """
     app = create_app()
     print(f"\n{'='*60}")
     print("  IDR Admin Dashboard")
     print(f"{'='*60}")
     print(f"  URL: http://localhost:{port}")
     print(f"  Config: {DEFAULT_CONFIG_PATH}")
+    print(f"  Debug: {debug}")
     print(f"{'='*60}\n")
     app.run(host=host, port=port, debug=debug)
 

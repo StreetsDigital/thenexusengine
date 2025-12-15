@@ -53,6 +53,49 @@
             font-size: 0.875rem;
         }
 
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--gray-300);
+            font-size: 0.875rem;
+        }
+
+        .user-info .user-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--gray-700);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            color: white;
+        }
+
+        .btn-logout {
+            background: transparent;
+            border: 1px solid var(--gray-600);
+            color: var(--gray-300);
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.15s;
+        }
+
+        .btn-logout:hover {
+            background: var(--gray-700);
+            border-color: var(--gray-500);
+            color: white;
+        }
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
@@ -502,7 +545,18 @@
             <h1>IDR Admin Dashboard</h1>
             <span class="subtitle">The Nexus Engine - Intelligent Demand Router</span>
         </div>
-        <div>
+        <div class="header-right">
+            {% if user %}
+            <div class="user-info">
+                <div class="user-icon">{{ user[0]|upper }}</div>
+                <span>{{ user }}</span>
+            </div>
+            <a href="{{ url_for('logout') }}" class="btn-logout">Logout</a>
+            {% elif not auth_enabled %}
+            <div class="user-info" style="color: var(--warning);">
+                <span>Auth Disabled</span>
+            </div>
+            {% endif %}
             <button class="btn btn-secondary" onclick="resetConfig()">Reset to Defaults</button>
         </div>
     </header>
