@@ -53,6 +53,49 @@
             font-size: 0.875rem;
         }
 
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--gray-300);
+            font-size: 0.875rem;
+        }
+
+        .user-info .user-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--gray-700);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            color: white;
+        }
+
+        .btn-logout {
+            background: transparent;
+            border: 1px solid var(--gray-600);
+            color: var(--gray-300);
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.15s;
+        }
+
+        .btn-logout:hover {
+            background: var(--gray-700);
+            border-color: var(--gray-500);
+            color: white;
+        }
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
@@ -502,7 +545,18 @@
             <h1>IDR Admin Dashboard</h1>
             <span class="subtitle">The Nexus Engine - Intelligent Demand Router</span>
         </div>
-        <div>
+        <div class="header-right">
+            {% if user %}
+            <div class="user-info">
+                <div class="user-icon">{{ user[0]|upper }}</div>
+                <span>{{ user }}</span>
+            </div>
+            <a href="{{ url_for('logout') }}" class="btn-logout">Logout</a>
+            {% elif not auth_enabled %}
+            <div class="user-info" style="color: var(--warning);">
+                <span>Auth Disabled</span>
+            </div>
+            {% endif %}
             <button class="btn btn-secondary" onclick="resetConfig()">Reset to Defaults</button>
         </div>
     </header>
@@ -591,6 +645,22 @@
                     </div>
                     <div class="btn-group">
                         <button class="btn btn-primary" onclick="saveSelector()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Publisher Management (Full Width) -->
+            <div class="card full-width">
+                <div class="card-header">
+                    <h2>Publisher Management</h2>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-secondary refresh-btn" onclick="loadPublishers()">Refresh</button>
+                        <button class="btn btn-primary" onclick="showAddPublisher()">+ Add Publisher</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="publishers-container">
+                        <div class="no-data">Loading publishers...</div>
                     </div>
                 </div>
             </div>
@@ -904,6 +974,27 @@
     </div>
 
     <script>
+        // ===========================================
+        // Security: HTML escaping to prevent XSS
+        // ===========================================
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
+        // Escape for use in HTML attributes (more strict)
+        function escapeAttr(text) {
+            if (text === null || text === undefined) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/'/g, '&#39;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
         // Initialize mode display
         document.addEventListener('DOMContentLoaded', function() {
             const bypassEnabled = {{ 'true' if config.selector.bypass_enabled else 'false' }};
@@ -918,13 +1009,874 @@
             }
 
             updateTotalWeight();
+            loadPublishers();
             loadMetrics();
             loadDbStatus();
 
-            // Auto-refresh metrics every 30 seconds
+            // Auto-refresh
+            setInterval(loadPublishers, 60000);
             setInterval(loadMetrics, 30000);
             setInterval(loadDbStatus, 60000);
         });
+
+        // =============================================
+        // Publisher Management Functions
+        // =============================================
+
+        async function loadPublishers() {
+            const container = document.getElementById('publishers-container');
+
+            try {
+                const response = await fetch('/api/publishers');
+                const data = await response.json();
+
+                if (data.status === 'error') {
+                    container.innerHTML = '<div class="no-data">Error loading publishers</div>';
+                    return;
+                }
+
+                const publishers = data.publishers || [];
+
+                if (publishers.length === 0) {
+                    container.innerHTML = `
+                        <div class="no-data">
+                            No publishers configured yet.<br>
+                            <button class="btn btn-primary" style="margin-top: 1rem;" onclick="showAddPublisher()">+ Add Your First Publisher</button>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = `
+                    <table class="metrics-table">
+                        <thead>
+                            <tr>
+                                <th>Publisher ID</th>
+                                <th>Name</th>
+                                <th>Sites</th>
+                                <th>Bidders</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                for (const pub of publishers) {
+                    const statusClass = pub.enabled ? 'high' : 'low';
+                    const statusText = pub.enabled ? 'Active' : 'Disabled';
+                    const safeId = escapeAttr(pub.id);
+                    const safeName = escapeHtml(pub.name);
+
+                    html += `
+                        <tr>
+                            <td><strong>${escapeHtml(pub.id)}</strong></td>
+                            <td>${safeName}</td>
+                            <td>${escapeHtml(pub.sites)}</td>
+                            <td>${escapeHtml(pub.bidders)}</td>
+                            <td><span class="confidence-badge ${statusClass}">${statusText}</span></td>
+                            <td>
+                                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="viewPublisher('${safeId}')">View</button>
+                                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="editPublisher('${safeId}')">Edit</button>
+                                <button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="deletePublisher('${safeId}')">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                }
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+
+            } catch (e) {
+                container.innerHTML = '<div class="no-data">Error loading publishers</div>';
+                console.error('Error loading publishers:', e);
+            }
+        }
+
+        async function viewPublisher(publisherId) {
+            try {
+                const response = await fetch('/api/publishers/' + encodeURIComponent(publisherId));
+                const data = await response.json();
+
+                if (data.status === 'error') {
+                    showAlert('Error loading publisher details', 'error');
+                    return;
+                }
+
+                // Build sites summary
+                let sitesHtml = '';
+                for (const site of data.sites || []) {
+                    const adUnits = site.ad_units ? site.ad_units.length : 0;
+                    sitesHtml += `<li><strong>${escapeHtml(site.domain)}</strong> (${escapeHtml(site.name)}) - ${escapeHtml(adUnits)} ad units</li>`;
+                }
+
+                // Build bidders summary
+                let biddersHtml = '';
+                for (const [code, config] of Object.entries(data.bidders || {})) {
+                    const status = config.enabled ? '✓' : '✗';
+                    biddersHtml += `<li>${status} ${escapeHtml(code)}</li>`;
+                }
+
+                const safePublisherId = escapeAttr(publisherId);
+                const html = `
+                    <div style="padding: 1rem; background: var(--gray-50); border-radius: 0.5rem; margin-bottom: 1rem;">
+                        <h3 style="margin-bottom: 0.5rem;">${escapeHtml(data.name)}</h3>
+                        <p style="color: var(--gray-600);">ID: ${escapeHtml(data.publisher_id)}</p>
+                        <p style="color: var(--gray-600);">Contact: ${escapeHtml(data.contact?.email || 'Not set')}</p>
+
+                        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Sites (${escapeHtml(data.sites?.length || 0)})</h4>
+                        <ul style="margin-left: 1.5rem; color: var(--gray-700);">${sitesHtml || '<li>No sites</li>'}</ul>
+
+                        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Bidders</h4>
+                        <ul style="margin-left: 1.5rem; color: var(--gray-700); columns: 2;">${biddersHtml || '<li>No bidders</li>'}</ul>
+
+                        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">IDR Settings</h4>
+                        <ul style="margin-left: 1.5rem; color: var(--gray-700);">
+                            <li>Max Bidders: ${escapeHtml(data.idr?.max_bidders || 8)}</li>
+                            <li>Min Score: ${escapeHtml(data.idr?.min_score || 0.1)}</li>
+                            <li>Timeout: ${escapeHtml(data.idr?.timeout_ms || 50)}ms</li>
+                        </ul>
+
+                        <div style="margin-top: 1rem;">
+                            <button class="btn btn-secondary" onclick="loadPublishers()">Close</button>
+                            <button class="btn btn-primary" onclick="editPublisher('${safePublisherId}')">Edit</button>
+                        </div>
+                    </div>
+                `;
+
+                document.getElementById('publishers-container').innerHTML = html;
+
+            } catch (e) {
+                showAlert('Error loading publisher details', 'error');
+                console.error('Error loading publisher:', e);
+            }
+        }
+
+        function showAddPublisher() {
+            const html = `
+                <div style="padding: 1rem; background: var(--gray-50); border-radius: 0.5rem;">
+                    <h3 style="margin-bottom: 1rem;">Add New Publisher</h3>
+
+                    <div class="form-group">
+                        <label>Publisher ID (lowercase, no spaces)</label>
+                        <input type="text" id="new-pub-id" placeholder="my-publisher" pattern="[a-z0-9-]+">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Publisher Name</label>
+                        <input type="text" id="new-pub-name" placeholder="My Publisher Inc">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Contact Email</label>
+                        <input type="email" id="new-pub-email" placeholder="adops@mypublisher.com">
+                    </div>
+
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" onclick="loadPublishers()">Cancel</button>
+                        <button class="btn btn-primary" onclick="createPublisher()">Create Publisher</button>
+                    </div>
+
+                    <p style="margin-top: 1rem; font-size: 0.8rem; color: var(--gray-600);">
+                        After creating, you can add sites, ad units, and bidder configurations.
+                    </p>
+                </div>
+            `;
+
+            document.getElementById('publishers-container').innerHTML = html;
+        }
+
+        async function createPublisher() {
+            const publisherId = document.getElementById('new-pub-id').value.trim().toLowerCase();
+            const name = document.getElementById('new-pub-name').value.trim();
+            const email = document.getElementById('new-pub-email').value.trim();
+
+            if (!publisherId) {
+                showAlert('Publisher ID is required', 'error');
+                return;
+            }
+
+            if (!/^[a-z0-9-]+$/.test(publisherId)) {
+                showAlert('Publisher ID must be lowercase letters, numbers, and hyphens only', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/publishers/' + publisherId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: name || publisherId,
+                        enabled: true,
+                        contact: { email: email, name: '' },
+                        sites: [],
+                        bidders: {},
+                        idr: { max_bidders: 8, min_score: 0.1, timeout_ms: 50 },
+                        rate_limits: { requests_per_second: 1000, burst: 100 },
+                        privacy: { gdpr_applies: true, ccpa_applies: true, coppa_applies: false }
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showAlert('Publisher created! Now add sites and bidders.', 'success');
+                    loadPublishers();
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error creating publisher: ' + e.message, 'error');
+            }
+        }
+
+        // Current publisher being edited
+        let currentPublisherData = null;
+
+        async function editPublisher(publisherId) {
+            try {
+                const response = await fetch('/api/publishers/' + publisherId);
+                const data = await response.json();
+
+                if (data.status === 'error') {
+                    showAlert(data.message, 'error');
+                    return;
+                }
+
+                currentPublisherData = data;
+                showPublisherEditor(data);
+
+            } catch (e) {
+                showAlert('Error loading publisher: ' + e.message, 'error');
+            }
+        }
+
+        function showPublisherEditor(data) {
+            const container = document.getElementById('publishers-container');
+
+            // Build sites HTML
+            let sitesHtml = '';
+            (data.sites || []).forEach((site, idx) => {
+                const adUnitsCount = site.ad_units ? site.ad_units.length : 0;
+                sitesHtml += `
+                    <div class="site-item" style="background: white; padding: 0.75rem; border-radius: 0.375rem; margin-bottom: 0.5rem; border: 1px solid var(--gray-200);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong>${site.domain || 'New Site'}</strong>
+                                <span style="color: var(--gray-600); font-size: 0.8rem;"> - ${site.name || ''} (${adUnitsCount} ad units)</span>
+                            </div>
+                            <div>
+                                <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="editSite(${idx})">Edit</button>
+                                <button class="btn btn-danger" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="removeSite(${idx})">Remove</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            // Build bidders HTML
+            let biddersHtml = '';
+            const allBidders = ['appnexus', 'rubicon', 'pubmatic', 'openx', 'ix', 'triplelift', 'criteo', 'sovrn', 'sharethrough', 'gumgum', '33across', 'spotx', 'teads', 'medianet', 'conversant', 'adform', 'smartadserver', 'improvedigital', 'unruly', 'beachfront', 'outbrain', 'taboola'];
+
+            allBidders.forEach(bidder => {
+                const config = (data.bidders || {})[bidder];
+                const enabled = config ? config.enabled : false;
+                const hasParams = config && Object.keys(config.params || {}).length > 0;
+
+                biddersHtml += `
+                    <div class="bidder-item" style="display: flex; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--gray-100);">
+                        <label class="toggle" style="margin-right: 0.75rem;">
+                            <input type="checkbox" id="bidder-${bidder}" ${enabled ? 'checked' : ''} onchange="toggleBidder('${bidder}')">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span style="flex: 1; font-weight: 500;">${bidder}</span>
+                        <span style="color: ${hasParams ? 'var(--success)' : 'var(--gray-400)'}; font-size: 0.75rem; margin-right: 0.5rem;">
+                            ${hasParams ? '✓ Configured' : 'Not configured'}
+                        </span>
+                        <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.7rem;" onclick="editBidder('${bidder}')">Configure</button>
+                    </div>
+                `;
+            });
+
+            const html = `
+                <div style="background: var(--gray-50); border-radius: 0.5rem; padding: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h3>Edit Publisher: ${data.name}</h3>
+                        <div>
+                            <button class="btn btn-secondary" onclick="loadPublishers()">Cancel</button>
+                            <button class="btn btn-primary" onclick="savePublisherChanges()">Save All Changes</button>
+                        </div>
+                    </div>
+
+                    <!-- Tabs -->
+                    <div style="display: flex; gap: 0.25rem; margin-bottom: 1rem; border-bottom: 2px solid var(--gray-200);">
+                        <button id="tab-general" class="tab-btn active" onclick="showTab('general')">General</button>
+                        <button id="tab-sites" class="tab-btn" onclick="showTab('sites')">Sites & Ad Units</button>
+                        <button id="tab-bidders" class="tab-btn" onclick="showTab('bidders')">Bidders</button>
+                        <button id="tab-settings" class="tab-btn" onclick="showTab('settings')">Settings</button>
+                    </div>
+
+                    <!-- General Tab -->
+                    <div id="panel-general" class="tab-panel" style="background: white; padding: 1rem; border-radius: 0.375rem;">
+                        <div class="form-group">
+                            <label>Publisher ID</label>
+                            <input type="text" id="edit-pub-id" value="${data.publisher_id}" disabled style="background: var(--gray-100);">
+                        </div>
+                        <div class="form-group">
+                            <label>Publisher Name</label>
+                            <input type="text" id="edit-pub-name" value="${data.name || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Contact Email</label>
+                            <input type="email" id="edit-pub-email" value="${data.contact?.email || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Contact Name</label>
+                            <input type="text" id="edit-pub-contact-name" value="${data.contact?.name || ''}">
+                        </div>
+                        <div class="toggle-group">
+                            <div>
+                                <div class="toggle-label">Publisher Enabled</div>
+                                <div class="toggle-description">Disable to stop serving ads for this publisher</div>
+                            </div>
+                            <label class="toggle">
+                                <input type="checkbox" id="edit-pub-enabled" ${data.enabled !== false ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Sites Tab -->
+                    <div id="panel-sites" class="tab-panel" style="display: none; background: white; padding: 1rem; border-radius: 0.375rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h4>Sites</h4>
+                            <button class="btn btn-primary" style="font-size: 0.8rem;" onclick="addSite()">+ Add Site</button>
+                        </div>
+                        <div id="sites-list">
+                            ${sitesHtml || '<p style="color: var(--gray-600);">No sites configured. Add a site to get started.</p>'}
+                        </div>
+                    </div>
+
+                    <!-- Bidders Tab -->
+                    <div id="panel-bidders" class="tab-panel" style="display: none; background: white; padding: 1rem; border-radius: 0.375rem;">
+                        <p style="margin-bottom: 1rem; color: var(--gray-600); font-size: 0.875rem;">
+                            Enable bidders and configure their parameters. Each bidder requires specific credentials from the demand partner.
+                        </p>
+                        <div id="bidders-list" style="max-height: 400px; overflow-y: auto;">
+                            ${biddersHtml}
+                        </div>
+                    </div>
+
+                    <!-- Settings Tab -->
+                    <div id="panel-settings" class="tab-panel" style="display: none; background: white; padding: 1rem; border-radius: 0.375rem;">
+                        <h4 style="margin-bottom: 1rem;">IDR Settings</h4>
+                        <div class="form-group">
+                            <label>Max Bidders per Auction</label>
+                            <input type="number" id="edit-idr-max" value="${data.idr?.max_bidders || 8}" min="1" max="20">
+                        </div>
+                        <div class="form-group">
+                            <label>Min Score Threshold (0-1)</label>
+                            <input type="number" id="edit-idr-min-score" value="${data.idr?.min_score || 0.1}" min="0" max="1" step="0.05">
+                        </div>
+                        <div class="form-group">
+                            <label>Selection Timeout (ms)</label>
+                            <input type="number" id="edit-idr-timeout" value="${data.idr?.timeout_ms || 50}" min="10" max="200">
+                        </div>
+
+                        <h4 style="margin: 1.5rem 0 1rem;">Rate Limits</h4>
+                        <div class="form-group">
+                            <label>Requests per Second</label>
+                            <input type="number" id="edit-rate-rps" value="${data.rate_limits?.requests_per_second || 1000}" min="10">
+                        </div>
+                        <div class="form-group">
+                            <label>Burst Limit</label>
+                            <input type="number" id="edit-rate-burst" value="${data.rate_limits?.burst || 100}" min="1">
+                        </div>
+
+                        <h4 style="margin: 1.5rem 0 1rem;">Privacy</h4>
+                        <div class="toggle-group">
+                            <div class="toggle-label">GDPR Applies</div>
+                            <label class="toggle">
+                                <input type="checkbox" id="edit-privacy-gdpr" ${data.privacy?.gdpr_applies !== false ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="toggle-group">
+                            <div class="toggle-label">CCPA Applies</div>
+                            <label class="toggle">
+                                <input type="checkbox" id="edit-privacy-ccpa" ${data.privacy?.ccpa_applies !== false ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="toggle-group">
+                            <div class="toggle-label">COPPA Applies</div>
+                            <label class="toggle">
+                                <input type="checkbox" id="edit-privacy-coppa" ${data.privacy?.coppa_applies ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <style>
+                    .tab-btn {
+                        padding: 0.5rem 1rem;
+                        background: none;
+                        border: none;
+                        cursor: pointer;
+                        font-weight: 500;
+                        color: var(--gray-600);
+                        border-bottom: 2px solid transparent;
+                        margin-bottom: -2px;
+                    }
+                    .tab-btn:hover {
+                        color: var(--gray-800);
+                    }
+                    .tab-btn.active {
+                        color: var(--primary);
+                        border-bottom-color: var(--primary);
+                    }
+                </style>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        function showTab(tabName) {
+            // Hide all panels
+            document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+
+            // Show selected panel
+            document.getElementById('panel-' + tabName).style.display = 'block';
+            document.getElementById('tab-' + tabName).classList.add('active');
+        }
+
+        function toggleBidder(bidderCode) {
+            const checkbox = document.getElementById('bidder-' + bidderCode);
+            if (!currentPublisherData.bidders) {
+                currentPublisherData.bidders = {};
+            }
+            if (!currentPublisherData.bidders[bidderCode]) {
+                currentPublisherData.bidders[bidderCode] = { enabled: false, params: {} };
+            }
+            currentPublisherData.bidders[bidderCode].enabled = checkbox.checked;
+        }
+
+        function editBidder(bidderCode) {
+            const config = (currentPublisherData.bidders || {})[bidderCode] || { enabled: false, params: {} };
+
+            // Bidder-specific param templates
+            const paramTemplates = {
+                appnexus: [{ key: 'placement_id', label: 'Placement ID', type: 'number' }],
+                rubicon: [
+                    { key: 'account_id', label: 'Account ID', type: 'number' },
+                    { key: 'site_id', label: 'Site ID', type: 'number' },
+                    { key: 'zone_id', label: 'Zone ID', type: 'number' }
+                ],
+                pubmatic: [{ key: 'publisher_id', label: 'Publisher ID', type: 'text' }],
+                openx: [
+                    { key: 'unit', label: 'Unit ID', type: 'text' },
+                    { key: 'del_domain', label: 'Delivery Domain', type: 'text' }
+                ],
+                ix: [{ key: 'site_id', label: 'Site ID', type: 'text' }],
+                triplelift: [{ key: 'inventory_code', label: 'Inventory Code', type: 'text' }],
+                criteo: [{ key: 'zone_id', label: 'Zone ID', type: 'number' }],
+                sovrn: [{ key: 'tag_id', label: 'Tag ID', type: 'text' }],
+                sharethrough: [{ key: 'pkey', label: 'Placement Key', type: 'text' }],
+                gumgum: [{ key: 'zone', label: 'Zone', type: 'text' }],
+                '33across': [
+                    { key: 'site_id', label: 'Site ID', type: 'text' },
+                    { key: 'product_id', label: 'Product ID', type: 'text' }
+                ],
+                spotx: [{ key: 'channel_id', label: 'Channel ID', type: 'text' }],
+                teads: [
+                    { key: 'page_id', label: 'Page ID', type: 'number' },
+                    { key: 'placement_id', label: 'Placement ID', type: 'number' }
+                ],
+                medianet: [
+                    { key: 'cid', label: 'Customer ID', type: 'text' },
+                    { key: 'crid', label: 'Creative ID', type: 'text' }
+                ],
+                conversant: [{ key: 'site_id', label: 'Site ID', type: 'text' }],
+                adform: [{ key: 'mid', label: 'Master ID', type: 'number' }],
+                smartadserver: [
+                    { key: 'site_id', label: 'Site ID', type: 'number' },
+                    { key: 'page_id', label: 'Page ID', type: 'number' },
+                    { key: 'format_id', label: 'Format ID', type: 'number' }
+                ],
+                improvedigital: [{ key: 'placement_id', label: 'Placement ID', type: 'number' }],
+                unruly: [{ key: 'site_id', label: 'Site ID', type: 'number' }],
+                beachfront: [
+                    { key: 'app_id', label: 'App ID', type: 'text' },
+                    { key: 'video_response_type', label: 'Response Type', type: 'text' }
+                ],
+                outbrain: [{ key: 'publisher_id', label: 'Publisher ID', type: 'text' }],
+                taboola: [
+                    { key: 'publisher_id', label: 'Publisher ID', type: 'text' },
+                    { key: 'tag_id', label: 'Tag ID', type: 'text' }
+                ]
+            };
+
+            const params = paramTemplates[bidderCode] || [{ key: 'placement_id', label: 'Placement ID', type: 'text' }];
+
+            let paramsHtml = '';
+            params.forEach(param => {
+                const value = config.params?.[param.key] || '';
+                paramsHtml += `
+                    <div class="form-group">
+                        <label>${param.label}</label>
+                        <input type="${param.type}" id="bidder-param-${param.key}" value="${value}" placeholder="Enter ${param.label.toLowerCase()}">
+                    </div>
+                `;
+            });
+
+            const modal = document.createElement('div');
+            modal.id = 'bidder-modal';
+            modal.innerHTML = `
+                <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;">
+                    <div style="background: white; padding: 1.5rem; border-radius: 0.5rem; width: 400px; max-width: 90%;">
+                        <h3 style="margin-bottom: 1rem;">Configure ${bidderCode}</h3>
+                        ${paramsHtml}
+                        <div class="btn-group" style="justify-content: flex-end;">
+                            <button class="btn btn-secondary" onclick="closeBidderModal()">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveBidderParams('${bidderCode}', ${JSON.stringify(params.map(p => p.key))})">Save</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function closeBidderModal() {
+            const modal = document.getElementById('bidder-modal');
+            if (modal) modal.remove();
+        }
+
+        function saveBidderParams(bidderCode, paramKeys) {
+            if (!currentPublisherData.bidders) {
+                currentPublisherData.bidders = {};
+            }
+            if (!currentPublisherData.bidders[bidderCode]) {
+                currentPublisherData.bidders[bidderCode] = { enabled: true, params: {} };
+            }
+
+            const params = {};
+            paramKeys.forEach(key => {
+                const input = document.getElementById('bidder-param-' + key);
+                if (input && input.value) {
+                    params[key] = input.type === 'number' ? parseInt(input.value) : input.value;
+                }
+            });
+
+            currentPublisherData.bidders[bidderCode].params = params;
+            currentPublisherData.bidders[bidderCode].enabled = true;
+
+            closeBidderModal();
+            showPublisherEditor(currentPublisherData);
+            showTab('bidders');
+            showAlert(`${bidderCode} configuration saved`, 'success');
+        }
+
+        function addSite() {
+            const siteId = prompt('Enter Site ID (lowercase, no spaces):', 'new-site');
+            if (!siteId) return;
+
+            const domain = prompt('Enter domain (e.g., www.example.com):');
+            if (!domain) return;
+
+            const name = prompt('Enter site name:', domain);
+
+            if (!currentPublisherData.sites) {
+                currentPublisherData.sites = [];
+            }
+
+            currentPublisherData.sites.push({
+                site_id: siteId.toLowerCase().replace(/\s+/g, '-'),
+                domain: domain,
+                name: name || domain,
+                enabled: true,
+                ad_units: []
+            });
+
+            showPublisherEditor(currentPublisherData);
+            showTab('sites');
+            showAlert('Site added. Now add ad units.', 'success');
+        }
+
+        function removeSite(idx) {
+            if (!confirm('Remove this site and all its ad units?')) return;
+            currentPublisherData.sites.splice(idx, 1);
+            showPublisherEditor(currentPublisherData);
+            showTab('sites');
+        }
+
+        function editSite(idx) {
+            const site = currentPublisherData.sites[idx];
+
+            let adUnitsHtml = '';
+            (site.ad_units || []).forEach((unit, unitIdx) => {
+                adUnitsHtml += `
+                    <div style="background: var(--gray-50); padding: 0.5rem; border-radius: 0.25rem; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>${unit.unit_id}</strong>
+                            <span style="color: var(--gray-600); font-size: 0.8rem;"> - ${unit.name || ''} (${unit.media_type}, ${JSON.stringify(unit.sizes?.[0] || [])})</span>
+                        </div>
+                        <div>
+                            <button class="btn btn-secondary" style="padding: 0.15rem 0.4rem; font-size: 0.7rem;" onclick="editAdUnit(${idx}, ${unitIdx})">Edit</button>
+                            <button class="btn btn-danger" style="padding: 0.15rem 0.4rem; font-size: 0.7rem;" onclick="removeAdUnit(${idx}, ${unitIdx})">X</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            const modal = document.createElement('div');
+            modal.id = 'site-modal';
+            modal.innerHTML = `
+                <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;">
+                    <div style="background: white; padding: 1.5rem; border-radius: 0.5rem; width: 500px; max-width: 90%; max-height: 80vh; overflow-y: auto;">
+                        <h3 style="margin-bottom: 1rem;">Edit Site: ${site.domain}</h3>
+
+                        <div class="form-group">
+                            <label>Site ID</label>
+                            <input type="text" id="site-edit-id" value="${site.site_id}" disabled style="background: var(--gray-100);">
+                        </div>
+                        <div class="form-group">
+                            <label>Domain</label>
+                            <input type="text" id="site-edit-domain" value="${site.domain}">
+                        </div>
+                        <div class="form-group">
+                            <label>Name</label>
+                            <input type="text" id="site-edit-name" value="${site.name || ''}">
+                        </div>
+                        <div class="toggle-group">
+                            <div class="toggle-label">Site Enabled</div>
+                            <label class="toggle">
+                                <input type="checkbox" id="site-edit-enabled" ${site.enabled !== false ? 'checked' : ''}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+
+                        <h4 style="margin: 1rem 0 0.5rem; display: flex; justify-content: space-between; align-items: center;">
+                            Ad Units
+                            <button class="btn btn-primary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;" onclick="addAdUnit(${idx})">+ Add</button>
+                        </h4>
+                        <div id="ad-units-list">
+                            ${adUnitsHtml || '<p style="color: var(--gray-600); font-size: 0.875rem;">No ad units. Add one to start.</p>'}
+                        </div>
+
+                        <div class="btn-group" style="justify-content: flex-end; margin-top: 1rem;">
+                            <button class="btn btn-secondary" onclick="closeSiteModal()">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveSiteChanges(${idx})">Save Site</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function closeSiteModal() {
+            const modal = document.getElementById('site-modal');
+            if (modal) modal.remove();
+        }
+
+        function saveSiteChanges(idx) {
+            currentPublisherData.sites[idx].domain = document.getElementById('site-edit-domain').value;
+            currentPublisherData.sites[idx].name = document.getElementById('site-edit-name').value;
+            currentPublisherData.sites[idx].enabled = document.getElementById('site-edit-enabled').checked;
+
+            closeSiteModal();
+            showPublisherEditor(currentPublisherData);
+            showTab('sites');
+            showAlert('Site updated', 'success');
+        }
+
+        function addAdUnit(siteIdx) {
+            closeSiteModal();
+
+            const unitId = prompt('Enter Ad Unit ID (e.g., leaderboard-top):');
+            if (!unitId) { editSite(siteIdx); return; }
+
+            const name = prompt('Enter Ad Unit Name:', unitId);
+            const mediaType = prompt('Media Type (banner/video/native):', 'banner');
+            const sizesStr = prompt('Sizes as JSON (e.g., [[300,250],[728,90]]):', '[[300,250]]');
+            const floorPrice = prompt('Floor Price (USD):', '0.50');
+
+            let sizes = [[300, 250]];
+            try {
+                sizes = JSON.parse(sizesStr);
+            } catch (e) {}
+
+            if (!currentPublisherData.sites[siteIdx].ad_units) {
+                currentPublisherData.sites[siteIdx].ad_units = [];
+            }
+
+            currentPublisherData.sites[siteIdx].ad_units.push({
+                unit_id: unitId.toLowerCase().replace(/\s+/g, '-'),
+                name: name || unitId,
+                sizes: sizes,
+                media_type: mediaType || 'banner',
+                position: 'atf',
+                floor_price: parseFloat(floorPrice) || 0.50,
+                floor_currency: 'USD'
+            });
+
+            editSite(siteIdx);
+            showAlert('Ad unit added', 'success');
+        }
+
+        function removeAdUnit(siteIdx, unitIdx) {
+            if (!confirm('Remove this ad unit?')) return;
+            currentPublisherData.sites[siteIdx].ad_units.splice(unitIdx, 1);
+            closeSiteModal();
+            editSite(siteIdx);
+        }
+
+        function editAdUnit(siteIdx, unitIdx) {
+            closeSiteModal();
+            const unit = currentPublisherData.sites[siteIdx].ad_units[unitIdx];
+
+            const modal = document.createElement('div');
+            modal.id = 'adunit-modal';
+            modal.innerHTML = `
+                <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;">
+                    <div style="background: white; padding: 1.5rem; border-radius: 0.5rem; width: 400px; max-width: 90%;">
+                        <h3 style="margin-bottom: 1rem;">Edit Ad Unit</h3>
+
+                        <div class="form-group">
+                            <label>Unit ID</label>
+                            <input type="text" id="adunit-id" value="${unit.unit_id}" disabled style="background: var(--gray-100);">
+                        </div>
+                        <div class="form-group">
+                            <label>Name</label>
+                            <input type="text" id="adunit-name" value="${unit.name || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Media Type</label>
+                            <select id="adunit-media-type">
+                                <option value="banner" ${unit.media_type === 'banner' ? 'selected' : ''}>Banner</option>
+                                <option value="video" ${unit.media_type === 'video' ? 'selected' : ''}>Video</option>
+                                <option value="native" ${unit.media_type === 'native' ? 'selected' : ''}>Native</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Sizes (JSON array)</label>
+                            <input type="text" id="adunit-sizes" value='${JSON.stringify(unit.sizes || [])}'>
+                        </div>
+                        <div class="form-group">
+                            <label>Position</label>
+                            <select id="adunit-position">
+                                <option value="atf" ${unit.position === 'atf' ? 'selected' : ''}>Above the Fold</option>
+                                <option value="btf" ${unit.position === 'btf' ? 'selected' : ''}>Below the Fold</option>
+                                <option value="interstitial" ${unit.position === 'interstitial' ? 'selected' : ''}>Interstitial</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Floor Price (USD)</label>
+                            <input type="number" id="adunit-floor" value="${unit.floor_price || 0}" step="0.01" min="0">
+                        </div>
+
+                        <div class="btn-group" style="justify-content: flex-end;">
+                            <button class="btn btn-secondary" onclick="closeAdUnitModal(${siteIdx})">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveAdUnit(${siteIdx}, ${unitIdx})">Save</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function closeAdUnitModal(siteIdx) {
+            const modal = document.getElementById('adunit-modal');
+            if (modal) modal.remove();
+            editSite(siteIdx);
+        }
+
+        function saveAdUnit(siteIdx, unitIdx) {
+            const unit = currentPublisherData.sites[siteIdx].ad_units[unitIdx];
+
+            unit.name = document.getElementById('adunit-name').value;
+            unit.media_type = document.getElementById('adunit-media-type').value;
+            unit.position = document.getElementById('adunit-position').value;
+            unit.floor_price = parseFloat(document.getElementById('adunit-floor').value) || 0;
+
+            try {
+                unit.sizes = JSON.parse(document.getElementById('adunit-sizes').value);
+            } catch (e) {}
+
+            closeAdUnitModal(siteIdx);
+            showAlert('Ad unit updated', 'success');
+        }
+
+        async function savePublisherChanges() {
+            // Collect data from form
+            const data = {
+                name: document.getElementById('edit-pub-name').value,
+                enabled: document.getElementById('edit-pub-enabled').checked,
+                contact: {
+                    email: document.getElementById('edit-pub-email').value,
+                    name: document.getElementById('edit-pub-contact-name').value
+                },
+                sites: currentPublisherData.sites || [],
+                bidders: currentPublisherData.bidders || {},
+                idr: {
+                    max_bidders: parseInt(document.getElementById('edit-idr-max').value) || 8,
+                    min_score: parseFloat(document.getElementById('edit-idr-min-score').value) || 0.1,
+                    timeout_ms: parseInt(document.getElementById('edit-idr-timeout').value) || 50
+                },
+                rate_limits: {
+                    requests_per_second: parseInt(document.getElementById('edit-rate-rps').value) || 1000,
+                    burst: parseInt(document.getElementById('edit-rate-burst').value) || 100
+                },
+                privacy: {
+                    gdpr_applies: document.getElementById('edit-privacy-gdpr').checked,
+                    ccpa_applies: document.getElementById('edit-privacy-ccpa').checked,
+                    coppa_applies: document.getElementById('edit-privacy-coppa').checked
+                }
+            };
+
+            try {
+                const response = await fetch('/api/publishers/' + currentPublisherData.publisher_id, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showAlert('Publisher saved successfully!', 'success');
+                    loadPublishers();
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error saving: ' + e.message, 'error');
+            }
+        }
+
+        async function deletePublisher(publisherId) {
+            if (!confirm('Delete publisher "' + publisherId + '"? This cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/publishers/' + publisherId, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showAlert('Publisher deleted', 'success');
+                    loadPublishers();
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error deleting publisher: ' + e.message, 'error');
+            }
+        }
 
         async function loadDbStatus() {
             try {
@@ -1066,7 +2018,7 @@
                 const data = await response.json();
 
                 if (data.status === 'error') {
-                    container.innerHTML = '<div class="no-data">' + data.message + '</div>';
+                    container.innerHTML = '<div class="no-data">Error loading metrics</div>';
                     return;
                 }
 
@@ -1113,28 +2065,28 @@
 
                     html += `
                         <tr>
-                            <td><strong>${code}</strong></td>
+                            <td><strong>${escapeHtml(code)}</strong></td>
                             <td>
                                 <div class="metric-bar">
                                     <div class="metric-bar-fill ${winClass}" style="width: ${Math.min(winRate * 5, 100)}%"></div>
                                 </div>
-                                <span class="metric-value">${winRate}%</span>
+                                <span class="metric-value">${escapeHtml(winRate)}%</span>
                             </td>
                             <td>
                                 <div class="metric-bar">
-                                    <div class="metric-bar-fill ${bidClass}" style="width: ${bidRate}%"></div>
+                                    <div class="metric-bar-fill ${bidClass}" style="width: ${escapeHtml(bidRate)}%"></div>
                                 </div>
-                                <span class="metric-value">${bidRate}%</span>
+                                <span class="metric-value">${escapeHtml(bidRate)}%</span>
                             </td>
-                            <td class="metric-value">$${avgCpm}</td>
+                            <td class="metric-value">$${escapeHtml(avgCpm)}</td>
                             <td>
                                 <div class="metric-bar">
                                     <div class="metric-bar-fill ${latClass}" style="width: ${Math.min(100 - (m.p95_latency_ms / 5), 100)}%"></div>
                                 </div>
-                                <span class="metric-value">${latency}ms</span>
+                                <span class="metric-value">${escapeHtml(latency)}ms</span>
                             </td>
-                            <td class="metric-value">${requests}</td>
-                            <td><span class="confidence-badge ${confClass}">${confidence}%</span></td>
+                            <td class="metric-value">${escapeHtml(requests)}</td>
+                            <td><span class="confidence-badge ${confClass}">${escapeHtml(confidence)}%</span></td>
                         </tr>
                     `;
                 }
@@ -1143,7 +2095,8 @@
                 container.innerHTML = html;
 
             } catch (e) {
-                container.innerHTML = '<div class="no-data">Error loading metrics: ' + e.message + '</div>';
+                container.innerHTML = '<div class="no-data">Error loading metrics</div>';
+                console.error('Error loading metrics:', e);
             }
         }
 

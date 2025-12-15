@@ -1,0 +1,200 @@
+# Example Publisher Configuration
+# Copy this file and rename to your-publisher-id.yaml
+#
+# Taxonomy: Publisher → Sites → Ad Units → Bidders
+#
+
+# =============================================
+# PUBLISHER INFORMATION
+# =============================================
+publisher_id: "example-publisher"
+name: "Example Publisher Inc"
+enabled: true
+
+contact:
+  email: "adops@example.com"
+  name: "Ad Operations Team"
+
+# =============================================
+# SITES
+# Each publisher can have multiple websites
+# =============================================
+sites:
+  - site_id: "main-site"
+    domain: "www.example.com"
+    name: "Example Main Site"
+    enabled: true
+
+    # Ad Units for this site
+    ad_units:
+      - unit_id: "leaderboard-top"
+        name: "Top Leaderboard"
+        sizes: [[728, 90], [970, 90], [970, 250]]
+        media_type: "banner"
+        position: "atf"  # above-the-fold
+        floor_price: 1.50
+        floor_currency: "USD"
+
+      - unit_id: "sidebar-mrec"
+        name: "Sidebar Medium Rectangle"
+        sizes: [[300, 250], [300, 600]]
+        media_type: "banner"
+        position: "atf"
+        floor_price: 0.75
+        floor_currency: "USD"
+
+      - unit_id: "in-article"
+        name: "In-Article Native"
+        sizes: [[1, 1]]  # Native uses 1x1
+        media_type: "native"
+        position: "btf"  # below-the-fold
+        floor_price: 0.50
+        floor_currency: "USD"
+
+      - unit_id: "outstream-video"
+        name: "Outstream Video"
+        sizes: [[640, 480]]
+        media_type: "video"
+        video:
+          context: "outstream"
+          mimes: ["video/mp4", "video/webm"]
+          protocols: [2, 3, 5, 6]
+          playback_method: [1, 2]
+          max_duration: 30
+        floor_price: 5.00
+        floor_currency: "USD"
+
+  - site_id: "mobile-site"
+    domain: "m.example.com"
+    name: "Example Mobile Site"
+    enabled: true
+
+    ad_units:
+      - unit_id: "mobile-banner"
+        name: "Mobile Banner"
+        sizes: [[320, 50], [300, 50]]
+        media_type: "banner"
+        position: "atf"
+        floor_price: 0.50
+        floor_currency: "USD"
+
+      - unit_id: "mobile-interstitial"
+        name: "Mobile Interstitial"
+        sizes: [[320, 480], [300, 250]]
+        media_type: "banner"
+        position: "interstitial"
+        floor_price: 3.00
+        floor_currency: "USD"
+
+  - site_id: "blog"
+    domain: "blog.example.com"
+    name: "Example Blog"
+    enabled: true
+
+    ad_units:
+      - unit_id: "blog-sidebar"
+        name: "Blog Sidebar"
+        sizes: [[300, 250]]
+        media_type: "banner"
+        position: "atf"
+        floor_price: 0.40
+        floor_currency: "USD"
+
+# =============================================
+# BIDDER CONFIGURATIONS
+# Default credentials for all sites (can be overridden per-site)
+# =============================================
+bidders:
+  appnexus:
+    enabled: true
+    params:
+      placement_id: 12345678
+    # Optional: per-site overrides
+    site_overrides:
+      mobile-site:
+        placement_id: 87654321
+
+  rubicon:
+    enabled: true
+    params:
+      account_id: 1001
+      site_id: 2002
+      zone_id: 3003
+
+  pubmatic:
+    enabled: true
+    params:
+      publisher_id: "pub-12345"
+
+  openx:
+    enabled: true
+    params:
+      unit: "540123456"
+      del_domain: "example-pub.openx.net"
+
+  ix:
+    enabled: true
+    params:
+      site_id: "123456"
+
+  triplelift:
+    enabled: true
+    params:
+      inventory_code: "example_main"
+
+  # Video specialists (for video ad units)
+  spotx:
+    enabled: true
+    params:
+      channel_id: "123456"
+
+# =============================================
+# IDR SETTINGS
+# Intelligent Demand Router optimization
+# =============================================
+idr:
+  max_bidders: 8          # Max bidders per auction
+  min_score: 0.1          # Minimum score threshold (0.0-1.0)
+  timeout_ms: 50          # Partner selection timeout
+
+  # Per-site IDR overrides (optional)
+  site_overrides:
+    mobile-site:
+      max_bidders: 5      # Fewer bidders for mobile (speed)
+      timeout_ms: 30
+
+# =============================================
+# RATE LIMITS
+# =============================================
+rate_limits:
+  requests_per_second: 1000
+  burst: 100
+
+  # Per-site limits (optional)
+  site_overrides:
+    blog:
+      requests_per_second: 200
+      burst: 20
+
+# =============================================
+# PRIVACY SETTINGS
+# =============================================
+privacy:
+  gdpr_applies: true
+  ccpa_applies: true
+  coppa_applies: false
+
+# =============================================
+# TARGETING RULES (Optional)
+# Restrict which bidders can bid on which inventory
+# =============================================
+targeting:
+  # Block specific bidders from specific ad units
+  blocked:
+    - bidder: "spotx"
+      ad_units: ["sidebar-mrec", "leaderboard-top"]  # Video bidder shouldn't get banner units
+
+  # Only allow specific bidders for specific ad units
+  allowed:
+    - bidder: "spotx"
+      ad_units: ["outstream-video"]  # Only allow on video units
