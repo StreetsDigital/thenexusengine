@@ -684,6 +684,231 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'message': str(e)
             }), 500
 
+    # =========================================
+    # Publisher Management Endpoints
+    # =========================================
+
+    # Import publisher config manager
+    try:
+        from src.idr.config.publisher_config import (
+            PublisherConfigManager,
+            get_publisher_config_manager,
+        )
+        PUBLISHER_CONFIG_AVAILABLE = True
+    except ImportError:
+        PUBLISHER_CONFIG_AVAILABLE = False
+
+    @app.route('/api/publishers', methods=['GET'])
+    def list_publishers():
+        """List all configured publishers."""
+        if not PUBLISHER_CONFIG_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Publisher config module not available'
+            }), 500
+
+        try:
+            manager = get_publisher_config_manager()
+            configs = manager.load_all()
+
+            publishers = []
+            for pub_id, config in configs.items():
+                publishers.append({
+                    'id': config.publisher_id,
+                    'name': config.name,
+                    'enabled': config.enabled,
+                    'sites': len(config.sites),
+                    'bidders': len(config.get_enabled_bidders()),
+                    'contact_email': config.contact_email,
+                })
+
+            return jsonify({
+                'publishers': publishers,
+                'total': len(publishers)
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    @app.route('/api/publishers/<publisher_id>', methods=['GET'])
+    def get_publisher(publisher_id: str):
+        """Get configuration for a specific publisher."""
+        if not PUBLISHER_CONFIG_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Publisher config module not available'
+            }), 500
+
+        try:
+            manager = get_publisher_config_manager()
+            config = manager.get(publisher_id)
+
+            if config is None:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Publisher {publisher_id} not found'
+                }), 404
+
+            return jsonify({
+                'publisher_id': config.publisher_id,
+                'name': config.name,
+                'enabled': config.enabled,
+                'contact': {
+                    'email': config.contact_email,
+                    'name': config.contact_name,
+                },
+                'sites': [
+                    {'site_id': s.site_id, 'domain': s.domain, 'name': s.name}
+                    for s in config.sites
+                ],
+                'bidders': {
+                    code: {'enabled': bc.enabled, 'params': bc.params}
+                    for code, bc in config.bidders.items()
+                },
+                'idr': {
+                    'max_bidders': config.idr.max_bidders,
+                    'min_score': config.idr.min_score,
+                    'timeout_ms': config.idr.timeout_ms,
+                },
+                'rate_limits': {
+                    'requests_per_second': config.rate_limits.requests_per_second,
+                    'burst': config.rate_limits.burst,
+                },
+                'privacy': {
+                    'gdpr_applies': config.privacy.gdpr_applies,
+                    'ccpa_applies': config.privacy.ccpa_applies,
+                    'coppa_applies': config.privacy.coppa_applies,
+                },
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    @app.route('/api/publishers/<publisher_id>', methods=['PUT'])
+    def save_publisher(publisher_id: str):
+        """Save/update a publisher configuration."""
+        if not PUBLISHER_CONFIG_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Publisher config module not available'
+            }), 500
+
+        try:
+            data = request.json
+
+            # Build YAML content
+            config_content = {
+                'publisher_id': publisher_id,
+                'name': data.get('name', publisher_id),
+                'enabled': data.get('enabled', True),
+                'contact': data.get('contact', {}),
+                'sites': data.get('sites', []),
+                'bidders': data.get('bidders', {}),
+                'idr': data.get('idr', {'max_bidders': 8, 'min_score': 0.1, 'timeout_ms': 50}),
+                'rate_limits': data.get('rate_limits', {'requests_per_second': 1000, 'burst': 100}),
+                'privacy': data.get('privacy', {'gdpr_applies': True, 'ccpa_applies': True, 'coppa_applies': False}),
+            }
+
+            # Get config directory
+            manager = get_publisher_config_manager()
+            config_path = manager.config_dir / f"{publisher_id}.yaml"
+
+            # Ensure directory exists
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write config
+            with open(config_path, 'w') as f:
+                yaml.dump(config_content, f, default_flow_style=False, sort_keys=False)
+
+            # Reload config
+            manager.reload(publisher_id)
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Publisher {publisher_id} saved',
+                'path': str(config_path)
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    @app.route('/api/publishers/<publisher_id>', methods=['DELETE'])
+    def delete_publisher(publisher_id: str):
+        """Delete a publisher configuration."""
+        if not PUBLISHER_CONFIG_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Publisher config module not available'
+            }), 500
+
+        try:
+            manager = get_publisher_config_manager()
+            config_path = manager.config_dir / f"{publisher_id}.yaml"
+
+            if not config_path.exists():
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Publisher {publisher_id} not found'
+                }), 404
+
+            # Remove file
+            config_path.unlink()
+
+            # Clear from cache
+            manager.reload(publisher_id)
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Publisher {publisher_id} deleted'
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    @app.route('/api/publishers/reload', methods=['POST'])
+    def reload_publishers():
+        """Reload all publisher configurations from disk."""
+        if not PUBLISHER_CONFIG_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Publisher config module not available'
+            }), 500
+
+        try:
+            manager = get_publisher_config_manager()
+            manager.reload()
+            configs = manager.load_all()
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Reloaded {len(configs)} publisher configurations',
+                'publishers': list(configs.keys())
+            })
+
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 500
+
+    # Legacy endpoint for backwards compatibility
+    @app.route('/admin/reload-configs', methods=['POST'])
+    def reload_configs_legacy():
+        """Legacy endpoint - redirects to new API."""
+        return reload_publishers()
+
     return app
 
 

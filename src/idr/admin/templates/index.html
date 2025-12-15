@@ -595,6 +595,22 @@
                 </div>
             </div>
 
+            <!-- Publisher Management (Full Width) -->
+            <div class="card full-width">
+                <div class="card-header">
+                    <h2>Publisher Management</h2>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button class="btn btn-secondary refresh-btn" onclick="loadPublishers()">Refresh</button>
+                        <button class="btn btn-primary" onclick="showAddPublisher()">+ Add Publisher</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="publishers-container">
+                        <div class="no-data">Loading publishers...</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Bidder Metrics (Full Width) -->
             <div class="card full-width">
                 <div class="card-header">
@@ -918,13 +934,249 @@
             }
 
             updateTotalWeight();
+            loadPublishers();
             loadMetrics();
             loadDbStatus();
 
-            // Auto-refresh metrics every 30 seconds
+            // Auto-refresh
+            setInterval(loadPublishers, 60000);
             setInterval(loadMetrics, 30000);
             setInterval(loadDbStatus, 60000);
         });
+
+        // =============================================
+        // Publisher Management Functions
+        // =============================================
+
+        async function loadPublishers() {
+            const container = document.getElementById('publishers-container');
+
+            try {
+                const response = await fetch('/api/publishers');
+                const data = await response.json();
+
+                if (data.status === 'error') {
+                    container.innerHTML = '<div class="no-data">' + data.message + '</div>';
+                    return;
+                }
+
+                const publishers = data.publishers || [];
+
+                if (publishers.length === 0) {
+                    container.innerHTML = `
+                        <div class="no-data">
+                            No publishers configured yet.<br>
+                            <button class="btn btn-primary" style="margin-top: 1rem;" onclick="showAddPublisher()">+ Add Your First Publisher</button>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = `
+                    <table class="metrics-table">
+                        <thead>
+                            <tr>
+                                <th>Publisher ID</th>
+                                <th>Name</th>
+                                <th>Sites</th>
+                                <th>Bidders</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                for (const pub of publishers) {
+                    const statusClass = pub.enabled ? 'high' : 'low';
+                    const statusText = pub.enabled ? 'Active' : 'Disabled';
+
+                    html += `
+                        <tr>
+                            <td><strong>${pub.id}</strong></td>
+                            <td>${pub.name}</td>
+                            <td>${pub.sites}</td>
+                            <td>${pub.bidders}</td>
+                            <td><span class="confidence-badge ${statusClass}">${statusText}</span></td>
+                            <td>
+                                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="viewPublisher('${pub.id}')">View</button>
+                                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="editPublisher('${pub.id}')">Edit</button>
+                                <button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="deletePublisher('${pub.id}')">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                }
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+
+            } catch (e) {
+                container.innerHTML = '<div class="no-data">Error loading publishers: ' + e.message + '</div>';
+            }
+        }
+
+        async function viewPublisher(publisherId) {
+            try {
+                const response = await fetch('/api/publishers/' + publisherId);
+                const data = await response.json();
+
+                if (data.status === 'error') {
+                    showAlert(data.message, 'error');
+                    return;
+                }
+
+                // Build sites summary
+                let sitesHtml = '';
+                for (const site of data.sites || []) {
+                    const adUnits = site.ad_units ? site.ad_units.length : 0;
+                    sitesHtml += `<li><strong>${site.domain}</strong> (${site.name}) - ${adUnits} ad units</li>`;
+                }
+
+                // Build bidders summary
+                let biddersHtml = '';
+                for (const [code, config] of Object.entries(data.bidders || {})) {
+                    const status = config.enabled ? '✓' : '✗';
+                    biddersHtml += `<li>${status} ${code}</li>`;
+                }
+
+                const html = `
+                    <div style="padding: 1rem; background: var(--gray-50); border-radius: 0.5rem; margin-bottom: 1rem;">
+                        <h3 style="margin-bottom: 0.5rem;">${data.name}</h3>
+                        <p style="color: var(--gray-600);">ID: ${data.publisher_id}</p>
+                        <p style="color: var(--gray-600);">Contact: ${data.contact?.email || 'Not set'}</p>
+
+                        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Sites (${data.sites?.length || 0})</h4>
+                        <ul style="margin-left: 1.5rem; color: var(--gray-700);">${sitesHtml || '<li>No sites</li>'}</ul>
+
+                        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Bidders</h4>
+                        <ul style="margin-left: 1.5rem; color: var(--gray-700); columns: 2;">${biddersHtml || '<li>No bidders</li>'}</ul>
+
+                        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">IDR Settings</h4>
+                        <ul style="margin-left: 1.5rem; color: var(--gray-700);">
+                            <li>Max Bidders: ${data.idr?.max_bidders || 8}</li>
+                            <li>Min Score: ${data.idr?.min_score || 0.1}</li>
+                            <li>Timeout: ${data.idr?.timeout_ms || 50}ms</li>
+                        </ul>
+
+                        <div style="margin-top: 1rem;">
+                            <button class="btn btn-secondary" onclick="loadPublishers()">Close</button>
+                            <button class="btn btn-primary" onclick="editPublisher('${publisherId}')">Edit</button>
+                        </div>
+                    </div>
+                `;
+
+                document.getElementById('publishers-container').innerHTML = html;
+
+            } catch (e) {
+                showAlert('Error loading publisher: ' + e.message, 'error');
+            }
+        }
+
+        function showAddPublisher() {
+            const html = `
+                <div style="padding: 1rem; background: var(--gray-50); border-radius: 0.5rem;">
+                    <h3 style="margin-bottom: 1rem;">Add New Publisher</h3>
+
+                    <div class="form-group">
+                        <label>Publisher ID (lowercase, no spaces)</label>
+                        <input type="text" id="new-pub-id" placeholder="my-publisher" pattern="[a-z0-9-]+">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Publisher Name</label>
+                        <input type="text" id="new-pub-name" placeholder="My Publisher Inc">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Contact Email</label>
+                        <input type="email" id="new-pub-email" placeholder="adops@mypublisher.com">
+                    </div>
+
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" onclick="loadPublishers()">Cancel</button>
+                        <button class="btn btn-primary" onclick="createPublisher()">Create Publisher</button>
+                    </div>
+
+                    <p style="margin-top: 1rem; font-size: 0.8rem; color: var(--gray-600);">
+                        After creating, you can add sites, ad units, and bidder configurations.
+                    </p>
+                </div>
+            `;
+
+            document.getElementById('publishers-container').innerHTML = html;
+        }
+
+        async function createPublisher() {
+            const publisherId = document.getElementById('new-pub-id').value.trim().toLowerCase();
+            const name = document.getElementById('new-pub-name').value.trim();
+            const email = document.getElementById('new-pub-email').value.trim();
+
+            if (!publisherId) {
+                showAlert('Publisher ID is required', 'error');
+                return;
+            }
+
+            if (!/^[a-z0-9-]+$/.test(publisherId)) {
+                showAlert('Publisher ID must be lowercase letters, numbers, and hyphens only', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/publishers/' + publisherId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name: name || publisherId,
+                        enabled: true,
+                        contact: { email: email, name: '' },
+                        sites: [],
+                        bidders: {},
+                        idr: { max_bidders: 8, min_score: 0.1, timeout_ms: 50 },
+                        rate_limits: { requests_per_second: 1000, burst: 100 },
+                        privacy: { gdpr_applies: true, ccpa_applies: true, coppa_applies: false }
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showAlert('Publisher created! Now add sites and bidders.', 'success');
+                    loadPublishers();
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error creating publisher: ' + e.message, 'error');
+            }
+        }
+
+        function editPublisher(publisherId) {
+            showAlert('Edit publisher in config file: config/publishers/' + publisherId + '.yaml', 'success');
+            viewPublisher(publisherId);
+        }
+
+        async function deletePublisher(publisherId) {
+            if (!confirm('Delete publisher "' + publisherId + '"? This cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/publishers/' + publisherId, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showAlert('Publisher deleted', 'success');
+                    loadPublishers();
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error deleting publisher: ' + e.message, 'error');
+            }
+        }
 
         async function loadDbStatus() {
             try {
