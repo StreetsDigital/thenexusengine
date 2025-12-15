@@ -1,0 +1,74 @@
+# Example Publisher Configuration
+# Copy this file and rename to your-publisher-id.yaml
+
+# Publisher Information
+publisher_id: "example-publisher"
+name: "Example Publisher"
+enabled: true
+
+# Contact (for internal reference)
+contact:
+  email: "adops@example.com"
+  name: "Ad Operations Team"
+
+# Sites belonging to this publisher
+sites:
+  - site_id: "site-001"
+    domain: "www.example.com"
+    name: "Example Main Site"
+
+  - site_id: "site-002"
+    domain: "blog.example.com"
+    name: "Example Blog"
+
+# Bidder configurations (credentials per demand partner)
+bidders:
+  appnexus:
+    enabled: true
+    params:
+      placement_id: 12345678
+
+  rubicon:
+    enabled: true
+    params:
+      account_id: 1001
+      site_id: 2002
+      zone_id: 3003
+
+  pubmatic:
+    enabled: true
+    params:
+      publisher_id: "pub-12345"
+
+  openx:
+    enabled: true
+    params:
+      unit: "540123456"
+      del_domain: "example-pub.openx.net"
+
+  ix:
+    enabled: true
+    params:
+      site_id: "123456"
+
+# IDR Settings (optional overrides)
+idr:
+  # Maximum bidders to call per auction
+  max_bidders: 8
+
+  # Minimum score threshold (0.0 - 1.0)
+  min_score: 0.1
+
+  # Timeout for partner selection (ms)
+  timeout_ms: 50
+
+# Rate Limits (requests per second)
+rate_limits:
+  requests_per_second: 1000
+  burst: 100
+
+# Privacy settings
+privacy:
+  gdpr_applies: true
+  ccpa_applies: true
+  coppa_applies: false
