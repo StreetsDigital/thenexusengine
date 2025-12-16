@@ -1,6 +1,6 @@
 # Multi-Tenant Setup Guide
 
-Run multiple publishers on a single Nexus Engine instance.
+Run multiple publishers on a single TNE instance.
 
 ## Overview
 
@@ -235,7 +235,7 @@ privacy:
 Override config directory location:
 
 ```bash
-PUBLISHER_CONFIG_DIR=/etc/nexus-engine/publishers
+PUBLISHER_CONFIG_DIR=/etc/tne/publishers
 ```
 
 ## Monitoring
@@ -283,8 +283,8 @@ Run multiple instances behind a load balancer:
               ┌────────────┼────────────┐
               ▼            ▼            ▼
         ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │  Nexus   │ │  Nexus   │ │  Nexus   │
-        │ Engine 1 │ │ Engine 2 │ │ Engine 3 │
+        │   TNE    │ │   TNE    │ │   TNE    │
+        │ Server 1 │ │ Server 2 │ │ Server 3 │
         └────┬─────┘ └────┬─────┘ └────┬─────┘
              │            │            │
              └────────────┼────────────┘
