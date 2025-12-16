@@ -114,9 +114,38 @@ type DebugInfo struct {
 	AllowDebugOverride bool
 }
 
+// SyncType represents the type of user sync
+type SyncType string
+
+const (
+	// SyncTypeIFrame indicates an iframe-based sync
+	SyncTypeIFrame SyncType = "iframe"
+	// SyncTypeRedirect indicates a redirect/pixel-based sync
+	SyncTypeRedirect SyncType = "redirect"
+)
+
+// SyncURLTemplate contains a URL template with macro support
+type SyncURLTemplate struct {
+	// URL is the sync URL with macros like {{gdpr}}, {{gdpr_consent}}, {{us_privacy}}, {{redirect_url}}
+	URL string
+	// UserMacro is the macro the bidder uses for user ID injection (e.g., $UID, ${UID}, [UID])
+	UserMacro string
+}
+
 // SyncerInfo contains user sync configuration
 type SyncerInfo struct {
-	Supports []string
+	// Key is the unique syncer key (may differ from bidder code, e.g., "adnxs" for appnexus)
+	Key string
+	// Supports lists the supported sync types
+	Supports []SyncType
+	// Default is the preferred sync type
+	Default SyncType
+	// IFrame contains the iframe sync URL template
+	IFrame *SyncURLTemplate
+	// Redirect contains the redirect/pixel sync URL template
+	Redirect *SyncURLTemplate
+	// SupportCORS indicates if the syncer endpoint supports CORS
+	SupportCORS bool
 }
 
 // AdapterConfig holds runtime adapter configuration

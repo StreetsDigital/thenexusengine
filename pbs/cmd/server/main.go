@@ -19,6 +19,7 @@ import (
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/exchange"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/metrics"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/middleware"
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/usersync"
 	"github.com/StreetsDigital/thenexusengine/pbs/pkg/logger"
 	"github.com/rs/zerolog"
 )
@@ -29,6 +30,8 @@ func main() {
 	idrURL := flag.String("idr-url", "http://localhost:5050", "IDR service URL")
 	idrEnabled := flag.Bool("idr-enabled", true, "Enable IDR integration")
 	timeout := flag.Duration("timeout", 1000*time.Millisecond, "Default auction timeout")
+	externalURL := flag.String("external-url", "", "External URL for cookie sync redirects (e.g., https://pbs.example.com)")
+	cookieDomain := flag.String("cookie-domain", "", "Domain for the UID cookie")
 	flag.Parse()
 
 	// Initialize structured logger
@@ -83,12 +86,35 @@ func main() {
 	statusHandler := endpoints.NewStatusHandler()
 	biddersHandler := endpoints.NewInfoBiddersHandler(bidders)
 
+	// Setup cookie sync
+	cookieSyncConfig := usersync.DefaultCookieSyncConfig()
+	cookieSyncConfig.ExternalURL = *externalURL
+	cookieSyncConfig.CookieDomain = *cookieDomain
+
+	syncer := usersync.NewDefaultSyncer(cookieSyncConfig)
+	cookieManager := usersync.NewCookieManager(cookieSyncConfig)
+
+	cookieSyncHandler := endpoints.NewCookieSyncHandler(syncer, cookieManager, cookieSyncConfig)
+	setUIDHandler := endpoints.NewSetUIDHandler(syncer, cookieManager, cookieSyncConfig)
+	optOutHandler := endpoints.NewOptOutHandler(cookieManager)
+
+	log.Info().
+		Str("external_url", *externalURL).
+		Str("cookie_domain", *cookieDomain).
+		Int("supported_syncers", len(usersync.SupportedSyncBidders())).
+		Msg("Cookie sync initialized")
+
 	// Setup routes
 	mux := http.NewServeMux()
 	mux.Handle("/openrtb2/auction", auctionHandler)
 	mux.Handle("/status", statusHandler)
 	mux.Handle("/health", healthHandler())
 	mux.Handle("/info/bidders", biddersHandler)
+
+	// Cookie sync endpoints
+	mux.Handle("/cookie_sync", cookieSyncHandler)
+	mux.Handle("/setuid", setUIDHandler)
+	mux.Handle("/optout", optOutHandler)
 
 	// Prometheus metrics endpoint
 	mux.Handle("/metrics", metrics.Handler())
