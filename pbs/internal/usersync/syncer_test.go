@@ -238,6 +238,602 @@ func TestDefaultSyncerConfigs(t *testing.T) {
 	}
 }
 
+func TestNewDefaultSyncer(t *testing.T) {
+	config := DefaultCookieSyncConfig()
+	config.ExternalURL = "https://pbs.example.com"
+
+	syncer := NewDefaultSyncer(config)
+
+	// Should have all 22 bidders
+	bidders := syncer.SupportedBidders()
+	if len(bidders) != 22 {
+		t.Errorf("Expected 22 bidders, got %d", len(bidders))
+	}
+
+	// Test that appnexus maps to adnxs
+	if syncer.GetSyncerKey("appnexus") != "adnxs" {
+		t.Error("Expected appnexus to map to adnxs")
+	}
+}
+
+func TestGetSyncerConfigForBidder(t *testing.T) {
+	cfg, ok := GetSyncerConfigForBidder("appnexus")
+	if !ok {
+		t.Fatal("Expected to find config for appnexus")
+	}
+
+	if cfg.Key != "adnxs" {
+		t.Errorf("Expected key 'adnxs', got '%s'", cfg.Key)
+	}
+
+	_, ok = GetSyncerConfigForBidder("nonexistent")
+	if ok {
+		t.Error("Expected no config for nonexistent bidder")
+	}
+}
+
+func TestSupportedSyncBidders(t *testing.T) {
+	bidders := SupportedSyncBidders()
+
+	if len(bidders) != 22 {
+		t.Errorf("Expected 22 bidders, got %d", len(bidders))
+	}
+
+	// Check some expected bidders
+	found := make(map[string]bool)
+	for _, b := range bidders {
+		found[b] = true
+	}
+
+	expectedBidders := []string{"appnexus", "rubicon", "pubmatic", "criteo"}
+	for _, expected := range expectedBidders {
+		if !found[expected] {
+			t.Errorf("Expected %s in supported bidders", expected)
+		}
+	}
+}
+
+func TestGetBidderForSyncerKey(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"appnexus": {Key: "adnxs", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect},
+		"rubicon":  {Key: "rubicon", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	// Test reverse lookup
+	bidder := syncer.GetBidderForSyncerKey("adnxs")
+	if bidder != "appnexus" {
+		t.Errorf("Expected bidder 'appnexus' for key 'adnxs', got '%s'", bidder)
+	}
+
+	bidder = syncer.GetBidderForSyncerKey("rubicon")
+	if bidder != "rubicon" {
+		t.Errorf("Expected bidder 'rubicon' for key 'rubicon', got '%s'", bidder)
+	}
+
+	// Unknown key returns the key itself
+	bidder = syncer.GetBidderForSyncerKey("unknown")
+	if bidder != "unknown" {
+		t.Errorf("Expected 'unknown' for unknown key, got '%s'", bidder)
+	}
+}
+
+func TestGetSyncerConfig(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"appnexus": {Key: "adnxs", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	cfg, ok := syncer.GetSyncerConfig("appnexus")
+	if !ok {
+		t.Fatal("Expected to find config for appnexus")
+	}
+	if cfg.Key != "adnxs" {
+		t.Errorf("Expected key 'adnxs', got '%s'", cfg.Key)
+	}
+
+	_, ok = syncer.GetSyncerConfig("unknown")
+	if ok {
+		t.Error("Expected no config for unknown bidder")
+	}
+}
+
+func TestSupportedBidders(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"appnexus": {Key: "adnxs", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect},
+		"rubicon":  {Key: "rubicon", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	bidders := syncer.SupportedBidders()
+	if len(bidders) != 2 {
+		t.Errorf("Expected 2 bidders, got %d", len(bidders))
+	}
+}
+
+func TestBuildSyncs(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"appnexus": {
+			Key:      "adnxs",
+			Supports: []SyncType{SyncTypeRedirect},
+			Default:  SyncTypeRedirect,
+			Redirect: &SyncURLTemplate{URL: "https://example.com/sync?gdpr={{gdpr}}"},
+		},
+		"rubicon": {
+			Key:      "rubicon",
+			Supports: []SyncType{SyncTypeRedirect},
+			Default:  SyncTypeRedirect,
+			Redirect: &SyncURLTemplate{URL: "https://rubicon.com/sync"},
+		},
+	}
+
+	config := DefaultCookieSyncConfig()
+	config.ExternalURL = "https://pbs.example.com"
+	syncer := NewSyncer(configs, config)
+
+	privacy := &PrivacyInfo{GDPRApplies: true, GDPRConsent: "test"}
+	results := syncer.BuildSyncs([]string{"appnexus", "rubicon", "unknown"}, "", privacy)
+
+	if len(results) != 3 {
+		t.Errorf("Expected 3 results, got %d", len(results))
+	}
+
+	// First two should succeed
+	if results[0].Error != nil {
+		t.Errorf("Expected no error for appnexus: %v", results[0].Error)
+	}
+	if results[1].Error != nil {
+		t.Errorf("Expected no error for rubicon: %v", results[1].Error)
+	}
+
+	// Third should have error
+	if results[2].Error == nil {
+		t.Error("Expected error for unknown bidder")
+	}
+}
+
+func TestChooseBiddersWithGDPREnforcer(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"appnexus": {Key: "adnxs", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+		"rubicon":  {Key: "rubicon", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	// Create a mock enforcer that denies appnexus
+	enforcer := &mockGDPREnforcer{denied: map[string]bool{"appnexus": true}}
+
+	req := &ChooseBiddersRequest{
+		RequestedBidders: []string{"appnexus", "rubicon"},
+		Limit:            10,
+		Cookie:           NewPBSCookie(),
+		Privacy:          &PrivacyInfo{GDPRApplies: true, GDPRConsent: "test"},
+		GDPREnforcer:     enforcer,
+	}
+
+	result := syncer.ChooseBidders(req)
+
+	// Only rubicon should be in the list
+	if len(result.BiddersToSync) != 1 {
+		t.Errorf("Expected 1 bidder to sync, got %d", len(result.BiddersToSync))
+	}
+
+	if result.BiddersToSync[0] != "rubicon" {
+		t.Errorf("Expected rubicon, got %s", result.BiddersToSync[0])
+	}
+
+	// Check appnexus was rejected due to GDPR
+	if reason, ok := result.RejectedBidders["appnexus"]; !ok || reason != "GDPR consent denied" {
+		t.Errorf("Expected appnexus rejected for GDPR, got: %s", reason)
+	}
+}
+
+func TestChooseBiddersCooperativeSync(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"appnexus": {Key: "adnxs", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+		"rubicon":  {Key: "rubicon", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+	}
+
+	config := DefaultCookieSyncConfig()
+	config.DefaultLimit = 10
+	syncer := NewSyncer(configs, config)
+
+	// With cooperative sync and no requested bidders, should return all supported bidders
+	req := &ChooseBiddersRequest{
+		RequestedBidders: []string{}, // Empty
+		Limit:            10,
+		Cookie:           NewPBSCookie(),
+		CooperativeSync:  true,
+	}
+
+	result := syncer.ChooseBidders(req)
+
+	if len(result.BiddersToSync) != 2 {
+		t.Errorf("Expected 2 bidders with cooperative sync, got %d", len(result.BiddersToSync))
+	}
+}
+
+func TestChooseBiddersWithFilterSettings(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"appnexus": {Key: "adnxs", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+		"rubicon":  {Key: "rubicon", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+		"pubmatic": {Key: "pubmatic", Supports: []SyncType{SyncTypeIFrame}, Default: SyncTypeIFrame, IFrame: &SyncURLTemplate{URL: "https://example.com"}},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	// Exclude appnexus from redirect syncs
+	req := &ChooseBiddersRequest{
+		RequestedBidders: []string{"appnexus", "rubicon", "pubmatic"},
+		Limit:            10,
+		Cookie:           NewPBSCookie(),
+		FilterSettings: &FilterSettings{
+			Redirect: &SyncFilter{
+				Bidders: []string{"appnexus"},
+				Mode:    FilterModeExclude,
+			},
+		},
+	}
+
+	result := syncer.ChooseBidders(req)
+
+	// appnexus should be filtered out (redirect type, excluded)
+	for _, b := range result.BiddersToSync {
+		if b == "appnexus" {
+			t.Error("Expected appnexus to be filtered out")
+		}
+	}
+}
+
+func TestChooseBiddersWithFilterInclude(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"appnexus": {Key: "adnxs", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+		"rubicon":  {Key: "rubicon", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	// Only include appnexus for redirect syncs
+	req := &ChooseBiddersRequest{
+		RequestedBidders: []string{"appnexus", "rubicon"},
+		Limit:            10,
+		Cookie:           NewPBSCookie(),
+		FilterSettings: &FilterSettings{
+			Redirect: &SyncFilter{
+				Bidders: []string{"appnexus"},
+				Mode:    FilterModeInclude,
+			},
+		},
+	}
+
+	result := syncer.ChooseBidders(req)
+
+	// Only appnexus should be included
+	if len(result.BiddersToSync) != 1 || result.BiddersToSync[0] != "appnexus" {
+		t.Errorf("Expected only appnexus, got %v", result.BiddersToSync)
+	}
+}
+
+func TestBuildSyncURLWithIFrame(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"pubmatic": {
+			Key:      "pubmatic",
+			Supports: []SyncType{SyncTypeIFrame},
+			Default:  SyncTypeIFrame,
+			IFrame: &SyncURLTemplate{
+				URL:       "https://pubmatic.com/sync?gdpr={{gdpr}}",
+				UserMacro: "",
+			},
+		},
+	}
+
+	config := DefaultCookieSyncConfig()
+	config.ExternalURL = "https://pbs.example.com"
+	syncer := NewSyncer(configs, config)
+
+	privacy := &PrivacyInfo{GDPRApplies: false}
+	result, err := syncer.BuildSyncURL("pubmatic", SyncTypeIFrame, privacy)
+	if err != nil {
+		t.Fatalf("BuildSyncURL failed: %v", err)
+	}
+
+	if result.Type != SyncTypeIFrame {
+		t.Errorf("Expected iframe type, got %s", result.Type)
+	}
+
+	if !contains(result.URL, "gdpr=0") {
+		t.Error("Expected gdpr=0 in URL")
+	}
+}
+
+func TestBuildSyncURLFallbackType(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"bidder": {
+			Key:      "bidder",
+			Supports: []SyncType{SyncTypeRedirect}, // Only redirect
+			Default:  SyncTypeRedirect,
+			Redirect: &SyncURLTemplate{URL: "https://example.com/sync"},
+		},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	// Request iframe, but only redirect is supported - should fallback
+	result, err := syncer.BuildSyncURL("bidder", SyncTypeIFrame, nil)
+	if err != nil {
+		t.Fatalf("BuildSyncURL failed: %v", err)
+	}
+
+	// Should fallback to default (redirect)
+	if result.Type != SyncTypeRedirect {
+		t.Errorf("Expected redirect type (fallback), got %s", result.Type)
+	}
+}
+
+func TestBuildSyncURLNoTemplate(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"bidder": {
+			Key:      "bidder",
+			Supports: []SyncType{SyncTypeIFrame},
+			Default:  SyncTypeIFrame,
+			// No IFrame template set
+		},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	_, err := syncer.BuildSyncURL("bidder", SyncTypeIFrame, nil)
+	if err == nil {
+		t.Error("Expected error for missing template")
+	}
+}
+
+func TestBuildRedirectURLEmpty(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"bidder": {
+			Key:      "bidder",
+			Supports: []SyncType{SyncTypeRedirect},
+			Default:  SyncTypeRedirect,
+			Redirect: &SyncURLTemplate{URL: "https://example.com?redir={{redirect_url}}"},
+		},
+	}
+
+	config := DefaultCookieSyncConfig()
+	// No external URL set
+	syncer := NewSyncer(configs, config)
+
+	result, _ := syncer.BuildSyncURL("bidder", SyncTypeRedirect, nil)
+
+	// redirect_url should be empty (URL encoded)
+	if contains(result.URL, "{{redirect_url}}") {
+		t.Error("redirect_url macro should be replaced even if empty")
+	}
+}
+
+func TestGPPSIDString(t *testing.T) {
+	privacy := &PrivacyInfo{
+		GPPSID: []int{},
+	}
+
+	if privacy.GPPSIDString() != "" {
+		t.Error("Expected empty string for empty GPPSID")
+	}
+
+	privacy.GPPSID = []int{2}
+	result := privacy.GPPSIDString()
+	if result == "" {
+		t.Error("Expected non-empty string for GPPSID")
+	}
+
+	privacy.GPPSID = []int{2, 6, 11}
+	result = privacy.GPPSIDString()
+	if result == "" {
+		t.Error("Expected non-empty string for multiple GPPSIDs")
+	}
+}
+
+func TestReplaceMacrosWithNilPrivacy(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"bidder": {
+			Key:      "bidder",
+			Supports: []SyncType{SyncTypeRedirect},
+			Default:  SyncTypeRedirect,
+			Redirect: &SyncURLTemplate{URL: "https://example.com?gdpr={{gdpr}}&gpp={{gpp}}"},
+		},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	result, err := syncer.BuildSyncURL("bidder", SyncTypeRedirect, nil)
+	if err != nil {
+		t.Fatalf("BuildSyncURL failed: %v", err)
+	}
+
+	// Should have gdpr=0 (default)
+	if !contains(result.URL, "gdpr=0") {
+		t.Error("Expected gdpr=0 with nil privacy")
+	}
+}
+
+func TestSyncerWithEmptyKey(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"bidder": {
+			Key:      "", // Empty key - should use bidder code
+			Supports: []SyncType{SyncTypeRedirect},
+			Default:  SyncTypeRedirect,
+			Redirect: &SyncURLTemplate{URL: "https://example.com"},
+		},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	// With empty key, should use bidder code
+	key := syncer.GetSyncerKey("bidder")
+	if key != "bidder" {
+		t.Errorf("Expected 'bidder' as key, got '%s'", key)
+	}
+}
+
+func TestGetSyncerKeyUnknown(t *testing.T) {
+	configs := map[string]*SyncerConfig{}
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	// Unknown bidder returns the bidder code
+	key := syncer.GetSyncerKey("unknown")
+	if key != "unknown" {
+		t.Errorf("Expected 'unknown', got '%s'", key)
+	}
+}
+
+func TestChooseBiddersNoLimit(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"bidder1": {Key: "bidder1", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+		"bidder2": {Key: "bidder2", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+	}
+
+	config := DefaultCookieSyncConfig()
+	config.DefaultLimit = 5
+	config.MaxLimit = 10
+	syncer := NewSyncer(configs, config)
+
+	// Test with 0 limit - should use default
+	req := &ChooseBiddersRequest{
+		RequestedBidders: []string{"bidder1", "bidder2"},
+		Limit:            0,
+		Cookie:           NewPBSCookie(),
+	}
+
+	result := syncer.ChooseBidders(req)
+	if len(result.BiddersToSync) != 2 {
+		t.Errorf("Expected 2 bidders, got %d", len(result.BiddersToSync))
+	}
+}
+
+func TestChooseBiddersExceedsMaxLimit(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"bidder1": {Key: "bidder1", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+	}
+
+	config := DefaultCookieSyncConfig()
+	config.MaxLimit = 5
+	syncer := NewSyncer(configs, config)
+
+	// Request limit exceeds max - should be capped
+	req := &ChooseBiddersRequest{
+		RequestedBidders: []string{"bidder1"},
+		Limit:            100, // Exceeds max
+		Cookie:           NewPBSCookie(),
+	}
+
+	result := syncer.ChooseBidders(req)
+	// Should still work, just capped
+	if len(result.BiddersToSync) != 1 {
+		t.Errorf("Expected 1 bidder, got %d", len(result.BiddersToSync))
+	}
+}
+
+func TestPassesFilterWithIFrameType(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"pubmatic": {Key: "pubmatic", Supports: []SyncType{SyncTypeIFrame}, Default: SyncTypeIFrame, IFrame: &SyncURLTemplate{URL: "https://example.com"}},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	// Filter on iframe type
+	req := &ChooseBiddersRequest{
+		RequestedBidders: []string{"pubmatic"},
+		Limit:            10,
+		Cookie:           NewPBSCookie(),
+		FilterSettings: &FilterSettings{
+			IFrame: &SyncFilter{
+				Bidders: []string{"pubmatic"},
+				Mode:    FilterModeExclude,
+			},
+		},
+	}
+
+	result := syncer.ChooseBidders(req)
+
+	// pubmatic uses iframe and is excluded
+	if len(result.BiddersToSync) != 0 {
+		t.Errorf("Expected 0 bidders (pubmatic excluded), got %d", len(result.BiddersToSync))
+	}
+}
+
+func TestChooseBiddersUnknownBidder(t *testing.T) {
+	configs := map[string]*SyncerConfig{
+		"appnexus": {Key: "adnxs", Supports: []SyncType{SyncTypeRedirect}, Default: SyncTypeRedirect, Redirect: &SyncURLTemplate{URL: "https://example.com"}},
+	}
+
+	config := DefaultCookieSyncConfig()
+	syncer := NewSyncer(configs, config)
+
+	// Request includes unknown bidder
+	req := &ChooseBiddersRequest{
+		RequestedBidders: []string{"appnexus", "unknownbidder"},
+		Limit:            10,
+		Cookie:           NewPBSCookie(),
+	}
+
+	result := syncer.ChooseBidders(req)
+
+	// Only appnexus should be synced
+	if len(result.BiddersToSync) != 1 {
+		t.Errorf("Expected 1 bidder, got %d", len(result.BiddersToSync))
+	}
+
+	// Unknown should be rejected
+	if _, ok := result.RejectedBidders["unknownbidder"]; !ok {
+		t.Error("Expected unknownbidder to be rejected")
+	}
+}
+
+func TestGetUIDExpired(t *testing.T) {
+	cookie := NewPBSCookie()
+
+	// Add expired UID
+	expired := time.Now().Add(-time.Hour)
+	cookie.SetUID("appnexus", "user123", &expired)
+
+	uid, found := cookie.GetUID("appnexus")
+	if found || uid != "" {
+		t.Error("Expected empty result for expired UID")
+	}
+}
+
+func TestToJSONError(t *testing.T) {
+	// This is hard to trigger with PBSCookie, but we can test the success path
+	cookie := NewPBSCookie()
+	json := cookie.ToJSON()
+	if json == "" {
+		t.Error("Expected non-empty JSON")
+	}
+}
+
+// Mock GDPR enforcer for testing
+type mockGDPREnforcer struct {
+	denied map[string]bool
+}
+
+func (m *mockGDPREnforcer) CanSync(bidder string, consentString string) bool {
+	return !m.denied[bidder]
+}
+
 // Helper function
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr, 0))
