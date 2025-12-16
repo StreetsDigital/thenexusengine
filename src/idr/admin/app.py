@@ -1148,6 +1148,342 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
         """Legacy endpoint - redirects to new API."""
         return reload_publishers()
 
+    # =========================================
+    # API Key Management Endpoints
+    # =========================================
+
+    # Import API key manager
+    try:
+        from src.idr.auth.api_keys import get_api_key_manager, APIKeyManager
+        API_KEY_MANAGER_AVAILABLE = True
+    except ImportError:
+        API_KEY_MANAGER_AVAILABLE = False
+
+    @app.route('/api/keys', methods=['GET'])
+    @login_required
+    def list_api_keys():
+        """List all API keys."""
+        if not API_KEY_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'API key manager not available'
+            }), 500
+
+        try:
+            manager = get_api_key_manager()
+            keys = manager.list_keys()
+
+            return jsonify({
+                'keys': [
+                    {
+                        'key': k.masked_key,
+                        'publisher_id': k.publisher_id,
+                        'created_at': k.created_at,
+                        'last_used': k.last_used,
+                        'enabled': k.enabled,
+                        'request_count': k.request_count,
+                    }
+                    for k in keys
+                ],
+                'total': len(keys)
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to list API keys', 500))
+
+    @app.route('/api/keys', methods=['POST'])
+    @login_required
+    def generate_api_key():
+        """Generate a new API key for a publisher."""
+        if not API_KEY_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'API key manager not available'
+            }), 500
+
+        try:
+            data = request.json
+            publisher_id = data.get('publisher_id')
+            environment = data.get('environment', 'live')
+            replace_existing = data.get('replace_existing', False)
+
+            if not publisher_id:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'publisher_id is required'
+                }), 400
+
+            # Sanitize publisher_id
+            safe_publisher_id = _sanitize_publisher_id(publisher_id)
+            if not safe_publisher_id or safe_publisher_id != publisher_id:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Invalid publisher ID format'
+                }), 400
+
+            manager = get_api_key_manager()
+            api_key = manager.generate_key(
+                safe_publisher_id,
+                environment=environment,
+                replace_existing=replace_existing
+            )
+
+            if not api_key:
+                # Key might already exist
+                existing = manager.get_publisher_key(safe_publisher_id)
+                if existing and not replace_existing:
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'API key already exists for this publisher. Set replace_existing=true to regenerate.'
+                    }), 409
+
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Failed to generate API key. Check Redis connection.'
+                }), 500
+
+            return jsonify({
+                'status': 'success',
+                'api_key': api_key,
+                'publisher_id': safe_publisher_id,
+                'environment': environment,
+                'message': 'API key generated successfully. Store this key securely - it cannot be retrieved again.'
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to generate API key', 500))
+
+    @app.route('/api/keys/<api_key>', methods=['DELETE'])
+    @login_required
+    def revoke_api_key(api_key: str):
+        """Revoke an API key."""
+        if not API_KEY_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'API key manager not available'
+            }), 500
+
+        try:
+            manager = get_api_key_manager()
+            success = manager.revoke_key(api_key)
+
+            if not success:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'API key not found'
+                }), 404
+
+            return jsonify({
+                'status': 'success',
+                'message': 'API key revoked'
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to revoke API key', 500))
+
+    @app.route('/api/keys/<api_key>/disable', methods=['POST'])
+    @login_required
+    def disable_api_key(api_key: str):
+        """Disable an API key without revoking it."""
+        if not API_KEY_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'API key manager not available'
+            }), 500
+
+        try:
+            manager = get_api_key_manager()
+            success = manager.disable_key(api_key)
+
+            if not success:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'API key not found'
+                }), 404
+
+            return jsonify({
+                'status': 'success',
+                'message': 'API key disabled'
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to disable API key', 500))
+
+    @app.route('/api/keys/<api_key>/enable', methods=['POST'])
+    @login_required
+    def enable_api_key(api_key: str):
+        """Re-enable a disabled API key."""
+        if not API_KEY_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'API key manager not available'
+            }), 500
+
+        try:
+            manager = get_api_key_manager()
+            success = manager.enable_key(api_key)
+
+            if not success:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'API key not found'
+                }), 404
+
+            return jsonify({
+                'status': 'success',
+                'message': 'API key enabled'
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to enable API key', 500))
+
+    @app.route('/api/publishers/<publisher_id>/key', methods=['GET'])
+    @login_required
+    def get_publisher_api_key(publisher_id: str):
+        """Get the API key info for a publisher (masked)."""
+        if not API_KEY_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'API key manager not available'
+            }), 500
+
+        # Sanitize publisher_id
+        safe_publisher_id = _sanitize_publisher_id(publisher_id)
+        if not safe_publisher_id or safe_publisher_id != publisher_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid publisher ID format'
+            }), 400
+
+        try:
+            manager = get_api_key_manager()
+            api_key = manager.get_publisher_key(safe_publisher_id)
+
+            if not api_key:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'No API key found for this publisher'
+                }), 404
+
+            info = manager.get_key_info(api_key)
+            if not info:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'API key metadata not found'
+                }), 404
+
+            return jsonify({
+                'publisher_id': safe_publisher_id,
+                'key': info.masked_key,
+                'created_at': info.created_at,
+                'last_used': info.last_used,
+                'enabled': info.enabled,
+                'request_count': info.request_count,
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to get publisher API key', 500))
+
+    @app.route('/api/publishers/<publisher_id>/key', methods=['POST'])
+    @login_required
+    def create_publisher_api_key(publisher_id: str):
+        """Create or regenerate API key for a publisher."""
+        if not API_KEY_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'API key manager not available'
+            }), 500
+
+        # Sanitize publisher_id
+        safe_publisher_id = _sanitize_publisher_id(publisher_id)
+        if not safe_publisher_id or safe_publisher_id != publisher_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid publisher ID format'
+            }), 400
+
+        try:
+            data = request.json or {}
+            environment = data.get('environment', 'live')
+            regenerate = data.get('regenerate', False)
+
+            manager = get_api_key_manager()
+            api_key = manager.generate_key(
+                safe_publisher_id,
+                environment=environment,
+                replace_existing=regenerate
+            )
+
+            if not api_key:
+                existing = manager.get_publisher_key(safe_publisher_id)
+                if existing:
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'API key already exists. Set regenerate=true to create a new one.'
+                    }), 409
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Failed to generate API key'
+                }), 500
+
+            return jsonify({
+                'status': 'success',
+                'api_key': api_key,
+                'publisher_id': safe_publisher_id,
+                'message': 'Store this key securely - it cannot be retrieved again.'
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to create API key', 500))
+
+    # =========================================
+    # API Key Validation Endpoint (for PBS)
+    # =========================================
+
+    @app.route('/api/validate-key', methods=['POST'])
+    def validate_api_key():
+        """
+        Validate an API key (called by PBS).
+
+        This endpoint does NOT require admin authentication since
+        it's called by PBS on every request.
+        """
+        if not API_KEY_MANAGER_AVAILABLE:
+            return jsonify({
+                'valid': False,
+                'error': 'API key manager not available'
+            }), 500
+
+        try:
+            data = request.json
+            api_key = data.get('api_key', '')
+
+            if not api_key:
+                return jsonify({
+                    'valid': False,
+                    'error': 'api_key is required'
+                }), 400
+
+            manager = get_api_key_manager()
+            publisher_id = manager.validate_key(api_key)
+
+            if publisher_id:
+                return jsonify({
+                    'valid': True,
+                    'publisher_id': publisher_id
+                })
+            else:
+                return jsonify({
+                    'valid': False,
+                    'error': 'Invalid API key'
+                }), 401
+
+        except Exception as e:
+            return jsonify({
+                'valid': False,
+                'error': 'Validation failed'
+            }), 500
+
     return app
 
 
