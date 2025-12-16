@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -158,8 +159,10 @@ func TestAuthAddRemoveAPIKey(t *testing.T) {
 		HeaderName: "X-API-Key",
 	})
 
+	ctx := context.Background()
+
 	// Initially no keys
-	_, valid := auth.GetPublisherID("new-key")
+	_, valid := auth.GetPublisherID(ctx, "new-key")
 	if valid {
 		t.Error("expected key to be invalid before adding")
 	}
@@ -167,7 +170,7 @@ func TestAuthAddRemoveAPIKey(t *testing.T) {
 	// Add key
 	auth.AddAPIKey("new-key", "pub-new")
 
-	pubID, valid := auth.GetPublisherID("new-key")
+	pubID, valid := auth.GetPublisherID(ctx, "new-key")
 	if !valid {
 		t.Error("expected key to be valid after adding")
 	}
@@ -178,7 +181,7 @@ func TestAuthAddRemoveAPIKey(t *testing.T) {
 	// Remove key
 	auth.RemoveAPIKey("new-key")
 
-	_, valid = auth.GetPublisherID("new-key")
+	_, valid = auth.GetPublisherID(ctx, "new-key")
 	if valid {
 		t.Error("expected key to be invalid after removing")
 	}
