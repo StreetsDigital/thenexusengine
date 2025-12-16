@@ -5,11 +5,11 @@ import {
   registerContainerHook,
   unregisterContainerHook,
   clearContainerHooks
-} from 'modules/nexusBidAdapter.js';
+} from 'modules/tneBidAdapter.js';
 import { config } from 'src/config.js';
 import * as utils from 'src/utils.js';
 
-describe('Nexus Bid Adapter', function () {
+describe('TNE Bid Adapter', function () {
   let sandbox;
 
   beforeEach(function () {
@@ -23,11 +23,11 @@ describe('Nexus Bid Adapter', function () {
 
   describe('spec properties', function () {
     it('should have correct bidder code', function () {
-      expect(spec.code).to.equal('nexus');
+      expect(spec.code).to.equal('tne');
     });
 
     it('should have correct aliases', function () {
-      expect(spec.aliases).to.deep.equal(['nexusengine', 'tne']);
+      expect(spec.aliases).to.deep.equal(['thenexusengine', 'nexusengine']);
     });
 
     it('should support banner, video, and native media types', function () {
@@ -40,7 +40,7 @@ describe('Nexus Bid Adapter', function () {
   describe('isBidRequestValid', function () {
     it('should return true when accountId is present', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         params: {
           accountId: '12345'
         },
@@ -55,7 +55,7 @@ describe('Nexus Bid Adapter', function () {
 
     it('should return true when placementId is present', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         params: {
           placementId: 'my-placement'
         },
@@ -70,7 +70,7 @@ describe('Nexus Bid Adapter', function () {
 
     it('should return false when neither accountId nor placementId is present', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         params: {},
         mediaTypes: {
           banner: {
@@ -83,7 +83,7 @@ describe('Nexus Bid Adapter', function () {
 
     it('should return false when params is missing', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         mediaTypes: {
           banner: {
             sizes: [[300, 250]]
@@ -95,7 +95,7 @@ describe('Nexus Bid Adapter', function () {
 
     it('should return false when no valid media type is present', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         params: {
           accountId: '12345'
         },
@@ -106,7 +106,7 @@ describe('Nexus Bid Adapter', function () {
 
     it('should return true for video media type', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         params: {
           accountId: '12345'
         },
@@ -121,7 +121,7 @@ describe('Nexus Bid Adapter', function () {
 
     it('should return true for video with width', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         params: {
           accountId: '12345'
         },
@@ -137,7 +137,7 @@ describe('Nexus Bid Adapter', function () {
 
     it('should return true for native media type', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         params: {
           accountId: '12345'
         },
@@ -152,7 +152,7 @@ describe('Nexus Bid Adapter', function () {
 
     it('should return false for invalid native format', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         params: {
           accountId: '12345'
         },
@@ -167,7 +167,7 @@ describe('Nexus Bid Adapter', function () {
   describe('buildRequests', function () {
     const bidRequests = [
       {
-        bidder: 'nexus',
+        bidder: 'tne',
         bidId: 'bid-id-1',
         adUnitCode: 'ad-unit-1',
         transactionId: 'trans-1',
@@ -186,7 +186,7 @@ describe('Nexus Bid Adapter', function () {
     ];
 
     const bidderRequest = {
-      bidderCode: 'nexus',
+      bidderCode: 'tne',
       auctionId: 'auction-1',
       bidderRequestId: 'bidder-request-1',
       timeout: 1000,
@@ -216,11 +216,11 @@ describe('Nexus Bid Adapter', function () {
 
     it('should use default endpoint', function () {
       const result = spec.buildRequests(bidRequests, bidderRequest);
-      expect(result.url).to.equal('https://pbs.nexusengine.io/openrtb2/auction');
+      expect(result.url).to.equal('https://pbs.thenexusengine.io/openrtb2/auction');
     });
 
     it('should use custom endpoint from config', function () {
-      sandbox.stub(config, 'getConfig').withArgs('nexus').returns({
+      sandbox.stub(config, 'getConfig').withArgs('tne').returns({
         endpoint: 'https://custom.endpoint.com/auction'
       });
 
@@ -469,7 +469,7 @@ describe('Nexus Bid Adapter', function () {
   describe('onTimeout', function () {
     it('should handle timeout without error', function () {
       const timeoutData = {
-        bidder: 'nexus',
+        bidder: 'tne',
         bidId: 'bid-1',
         timeout: 1000,
         auctionId: 'auction-1'
@@ -480,12 +480,12 @@ describe('Nexus Bid Adapter', function () {
 
     it('should send timeout beacon when configured', function () {
       const sendBeaconStub = sandbox.stub(navigator, 'sendBeacon').returns(true);
-      sandbox.stub(config, 'getConfig').withArgs('nexus').returns({
+      sandbox.stub(config, 'getConfig').withArgs('tne').returns({
         timeoutBeacon: 'https://beacon.example.com/timeout'
       });
 
       const timeoutData = {
-        bidder: 'nexus',
+        bidder: 'tne',
         bidId: 'bid-1',
         timeout: 1000,
         auctionId: 'auction-1'
@@ -501,7 +501,7 @@ describe('Nexus Bid Adapter', function () {
   describe('onBidWon', function () {
     it('should handle bid won without error', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         cpm: 1.5,
         currency: 'USD',
         auctionId: 'auction-1',
@@ -513,7 +513,7 @@ describe('Nexus Bid Adapter', function () {
 
     it('should fire nurl pixel when present', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         cpm: 1.5,
         currency: 'USD',
         nurl: 'https://win.example.com?price=${AUCTION_PRICE}'
@@ -525,12 +525,12 @@ describe('Nexus Bid Adapter', function () {
 
     it('should send win beacon when configured', function () {
       const sendBeaconStub = sandbox.stub(navigator, 'sendBeacon').returns(true);
-      sandbox.stub(config, 'getConfig').withArgs('nexus').returns({
+      sandbox.stub(config, 'getConfig').withArgs('tne').returns({
         winBeacon: 'https://beacon.example.com/win'
       });
 
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         cpm: 1.5,
         currency: 'USD',
         auctionId: 'auction-1',
@@ -547,7 +547,7 @@ describe('Nexus Bid Adapter', function () {
   describe('onSetTargeting', function () {
     it('should handle set targeting without error', function () {
       const bid = {
-        bidder: 'nexus',
+        bidder: 'tne',
         adUnitCode: 'ad-unit-1'
       };
 
@@ -629,13 +629,13 @@ describe('Nexus Bid Adapter', function () {
         });
 
         const bidRequests = [{
-          bidder: 'nexus',
+          bidder: 'tne',
           bidId: 'bid-1',
           params: { accountId: '12345' },
           mediaTypes: { banner: { sizes: [[300, 250]] } }
         }];
 
-        spec.buildRequests(bidRequests, { bidderCode: 'nexus' });
+        spec.buildRequests(bidRequests, { bidderCode: 'tne' });
         expect(hookCalled).to.be.true;
       });
 
@@ -671,7 +671,7 @@ describe('Nexus Bid Adapter', function () {
           hookCalled = true;
         });
 
-        spec.onTimeout({ bidder: 'nexus', timeout: 1000 });
+        spec.onTimeout({ bidder: 'tne', timeout: 1000 });
         expect(hookCalled).to.be.true;
       });
 
@@ -681,7 +681,7 @@ describe('Nexus Bid Adapter', function () {
           hookCalled = true;
         });
 
-        spec.onBidWon({ bidder: 'nexus', cpm: 1.5 });
+        spec.onBidWon({ bidder: 'tne', cpm: 1.5 });
         expect(hookCalled).to.be.true;
       });
 
@@ -692,13 +692,13 @@ describe('Nexus Bid Adapter', function () {
         });
 
         const bidRequests = [{
-          bidder: 'nexus',
+          bidder: 'tne',
           bidId: 'bid-1',
           params: { accountId: '12345' },
           mediaTypes: { banner: { sizes: [[300, 250]] } }
         }];
 
-        expect(() => spec.buildRequests(bidRequests, { bidderCode: 'nexus' })).to.not.throw();
+        expect(() => spec.buildRequests(bidRequests, { bidderCode: 'tne' })).to.not.throw();
         expect(warnStub.called).to.be.true;
       });
 
@@ -714,13 +714,13 @@ describe('Nexus Bid Adapter', function () {
         });
 
         const bidRequests = [{
-          bidder: 'nexus',
+          bidder: 'tne',
           bidId: 'bid-1',
           params: { accountId: '12345' },
           mediaTypes: { banner: { sizes: [[300, 250]] } }
         }];
 
-        spec.buildRequests(bidRequests, { bidderCode: 'nexus' });
+        spec.buildRequests(bidRequests, { bidderCode: 'tne' });
         expect(order).to.deep.equal([1, 2]);
       });
 
@@ -741,13 +741,13 @@ describe('Nexus Bid Adapter', function () {
         });
 
         const bidRequests = [{
-          bidder: 'nexus',
+          bidder: 'tne',
           bidId: 'bid-1',
           params: { accountId: '12345' },
           mediaTypes: { banner: { sizes: [[300, 250]] } }
         }];
 
-        spec.buildRequests(bidRequests, { bidderCode: 'nexus' });
+        spec.buildRequests(bidRequests, { bidderCode: 'tne' });
         expect(capturedData.modified).to.be.true;
         expect(capturedData.secondModification).to.be.true;
       });

@@ -1,5 +1,5 @@
 /**
- * @module modules/nexusBidAdapter
+ * @module modules/tneBidAdapter
  * @description Bidder adapter for The Nexus Engine Prebid Server
  * @author StreetsDigital
  */
@@ -10,10 +10,10 @@ import { deepAccess, deepSetValue, isArray, isPlainObject, logWarn, logInfo, gen
 import { ortbConverter } from '../libraries/ortbConverter/converter.js';
 import { config } from '../src/config.js';
 
-const BIDDER_CODE = 'nexus';
-const ENDPOINT_URL = 'https://pbs.nexusengine.io/openrtb2/auction';
-const COOKIE_SYNC_URL = 'https://pbs.nexusengine.io/cookie_sync';
-const USER_SYNC_URL = 'https://pbs.nexusengine.io/setuid';
+const BIDDER_CODE = 'tne';
+const ENDPOINT_URL = 'https://pbs.thenexusengine.io/openrtb2/auction';
+const COOKIE_SYNC_URL = 'https://pbs.thenexusengine.io/cookie_sync';
+const USER_SYNC_URL = 'https://pbs.thenexusengine.io/setuid';
 const GVLID = null; // To be assigned by IAB upon registration
 const VERSION = '1.0.0';
 
@@ -28,7 +28,7 @@ const VERSION = '1.0.0';
  * - Custom analytics/logging
  *
  * Future implementations can register container functions via:
- * nexusBidAdapter.registerContainerHook('preRequest', containerFn)
+ * tneBidAdapter.registerContainerHook('preRequest', containerFn)
  */
 const containerHooks = {
   /**
@@ -149,7 +149,7 @@ const converter = ortbConverter({
   imp(buildImp, bidRequest, context) {
     const imp = buildImp(bidRequest, context);
 
-    // Add Nexus-specific extensions
+    // Add TNE-specific extensions
     const params = bidRequest.params || {};
 
     deepSetValue(imp, 'ext.bidder', {
@@ -160,7 +160,7 @@ const converter = ortbConverter({
     });
 
     // Container hook extension point for impression-level customization
-    deepSetValue(imp, 'ext.nexus', {
+    deepSetValue(imp, 'ext.tne', {
       containerEnabled: params.containerEnabled || false,
       containerConfig: params.containerConfig || {}
     });
@@ -177,11 +177,11 @@ const converter = ortbConverter({
       adapterVersion: VERSION
     });
 
-    // Add Nexus-specific request extensions
-    const nexusConfig = config.getConfig('nexus') || {};
-    deepSetValue(request, 'ext.nexus', {
+    // Add TNE-specific request extensions
+    const tneConfig = config.getConfig('tne') || {};
+    deepSetValue(request, 'ext.tne', {
       version: VERSION,
-      idrEnabled: nexusConfig.idrEnabled !== false, // Intelligent Demand Router
+      idrEnabled: tneConfig.idrEnabled !== false, // Intelligent Demand Router
       containerHooksEnabled: Object.values(containerHooks).some(h => h.length > 0)
     });
 
@@ -206,7 +206,7 @@ export const spec = {
   /**
    * Alias for the bidder (optional)
    */
-  aliases: ['nexusengine', 'tne'],
+  aliases: ['thenexusengine', 'nexusengine'],
 
   /**
    * Validate bid request parameters
@@ -267,9 +267,9 @@ export const spec = {
 
     // Determine endpoint URL
     let endpoint = ENDPOINT_URL;
-    const nexusConfig = config.getConfig('nexus') || {};
-    if (nexusConfig.endpoint) {
-      endpoint = nexusConfig.endpoint;
+    const tneConfig = config.getConfig('tne') || {};
+    if (tneConfig.endpoint) {
+      endpoint = tneConfig.endpoint;
     }
     // Allow per-request endpoint override
     const firstBid = processedBidRequests[0];
@@ -406,8 +406,8 @@ export const spec = {
     executeHooks('onTimeout', timeoutData);
 
     // Optional: Send timeout beacon
-    const nexusConfig = config.getConfig('nexus') || {};
-    if (nexusConfig.timeoutBeacon) {
+    const tneConfig = config.getConfig('tne') || {};
+    if (tneConfig.timeoutBeacon) {
       const beacon = {
         type: 'timeout',
         bidder: BIDDER_CODE,
@@ -418,7 +418,7 @@ export const spec = {
       };
 
       navigator.sendBeacon && navigator.sendBeacon(
-        nexusConfig.timeoutBeacon,
+        tneConfig.timeoutBeacon,
         JSON.stringify(beacon)
       );
     }
@@ -446,8 +446,8 @@ export const spec = {
     }
 
     // Optional: Send win beacon
-    const nexusConfig = config.getConfig('nexus') || {};
-    if (nexusConfig.winBeacon) {
+    const tneConfig = config.getConfig('tne') || {};
+    if (tneConfig.winBeacon) {
       const beacon = {
         type: 'win',
         bidder: BIDDER_CODE,
@@ -459,7 +459,7 @@ export const spec = {
       };
 
       navigator.sendBeacon && navigator.sendBeacon(
-        nexusConfig.winBeacon,
+        tneConfig.winBeacon,
         JSON.stringify(beacon)
       );
     }

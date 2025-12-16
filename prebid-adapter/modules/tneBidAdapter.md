@@ -1,14 +1,14 @@
 # Overview
 
 ```
-Module Name: Nexus Bid Adapter
+Module Name: TNE Bid Adapter
 Module Type: Bidder Adapter
 Maintainer: dev@streetsdigital.com
 ```
 
 # Description
 
-The Nexus Bid Adapter connects to The Nexus Engine Prebid Server (PBS), providing access to premium demand through a high-performance, ML-powered bidding infrastructure.
+The TNE Bid Adapter connects to The Nexus Engine Prebid Server (PBS), providing access to premium demand through a high-performance, ML-powered bidding infrastructure.
 
 ## Features
 
@@ -22,7 +22,7 @@ The Nexus Bid Adapter connects to The Nexus Engine Prebid Server (PBS), providin
 
 | Parameter | Scope | Type | Description | Example |
 |-----------|-------|------|-------------|---------|
-| `accountId` | required* | string | Your Nexus Engine account ID | `"12345"` |
+| `accountId` | required* | string | Your TNE account ID | `"12345"` |
 | `placementId` | required* | string | Placement identifier | `"homepage-banner"` |
 | `siteId` | optional | string | Site identifier for multi-site publishers | `"site-001"` |
 | `zoneId` | optional | string | Zone identifier for section targeting | `"sports"` |
@@ -38,8 +38,8 @@ The Nexus Bid Adapter connects to The Nexus Engine Prebid Server (PBS), providin
 
 ```javascript
 pbjs.setConfig({
-  nexus: {
-    endpoint: 'https://pbs.nexusengine.io/openrtb2/auction', // Optional: custom endpoint
+  tne: {
+    endpoint: 'https://pbs.thenexusengine.io/openrtb2/auction', // Optional: custom endpoint
     idrEnabled: true // Optional: enable Intelligent Demand Router (default: true)
   }
 });
@@ -52,11 +52,11 @@ pbjs.setConfig({
   userSync: {
     filterSettings: {
       iframe: {
-        bidders: ['nexus'],
+        bidders: ['tne'],
         filter: 'include'
       },
       image: {
-        bidders: ['nexus'],
+        bidders: ['tne'],
         filter: 'include'
       }
     }
@@ -77,7 +77,7 @@ var adUnits = [{
     }
   },
   bids: [{
-    bidder: 'nexus',
+    bidder: 'tne',
     params: {
       accountId: '12345',
       placementId: 'homepage-banner'
@@ -103,7 +103,7 @@ var adUnits = [{
     }
   },
   bids: [{
-    bidder: 'nexus',
+    bidder: 'tne',
     params: {
       accountId: '12345',
       placementId: 'video-preroll',
@@ -127,7 +127,7 @@ var adUnits = [{
     }
   },
   bids: [{
-    bidder: 'nexus',
+    bidder: 'tne',
     params: {
       accountId: '12345',
       placementId: 'outstream-unit'
@@ -164,7 +164,7 @@ var adUnits = [{
     }
   },
   bids: [{
-    bidder: 'nexus',
+    bidder: 'tne',
     params: {
       accountId: '12345',
       placementId: 'native-feed'
@@ -194,7 +194,7 @@ var adUnits = [{
     }
   },
   bids: [{
-    bidder: 'nexus',
+    bidder: 'tne',
     params: {
       accountId: '12345',
       placementId: 'multi-format-unit'
@@ -205,7 +205,7 @@ var adUnits = [{
 
 # Container Hooks (Beta)
 
-The Nexus adapter includes an extensible container hook system for advanced use cases. This allows you to inject custom logic at various points in the bid lifecycle.
+The TNE adapter includes an extensible container hook system for advanced use cases. This allows you to inject custom logic at various points in the bid lifecycle.
 
 ## Hook Types
 
@@ -221,7 +221,7 @@ The Nexus adapter includes an extensible container hook system for advanced use 
 
 ```javascript
 // Add custom audience data to all requests
-nexusBidAdapter.registerContainerHook('preRequest', function(data) {
+tneBidAdapter.registerContainerHook('preRequest', function(data) {
   data.bidRequests.forEach(function(bid) {
     bid.params.customAudience = getAudienceSegments();
   });
@@ -233,7 +233,7 @@ nexusBidAdapter.registerContainerHook('preRequest', function(data) {
 
 ```javascript
 // Apply custom floor logic
-nexusBidAdapter.registerContainerHook('bidTransform', function(bid) {
+tneBidAdapter.registerContainerHook('bidTransform', function(bid) {
   const floor = getCustomFloor(bid.adUnitCode);
   if (bid.cpm < floor) {
     bid.cpm = 0; // Reject bid below floor
@@ -246,9 +246,9 @@ nexusBidAdapter.registerContainerHook('bidTransform', function(bid) {
 
 ```javascript
 // Custom win analytics
-nexusBidAdapter.registerContainerHook('onWin', function(bid) {
+tneBidAdapter.registerContainerHook('onWin', function(bid) {
   analytics.track('bid_won', {
-    bidder: 'nexus',
+    bidder: 'tne',
     cpm: bid.cpm,
     adUnit: bid.adUnitCode
   });
@@ -346,7 +346,7 @@ pbjs.setConfig({
    ```javascript
    pbjs.setConfig({ bidderTimeout: 1500 });
    ```
-2. Check network latency to `pbs.nexusengine.io`
+2. Check network latency to `pbs.thenexusengine.io`
 
 ## Debug Mode
 
@@ -363,7 +363,7 @@ Or add `?pbjs_debug=true` to your page URL.
 For technical support or integration assistance:
 
 - Email: dev@streetsdigital.com
-- Documentation: https://docs.nexusengine.io
+- Documentation: https://docs.thenexusengine.io
 - GitHub: https://github.com/StreetsDigital/thenexusengine
 
 # Change Log
