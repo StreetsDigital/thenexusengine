@@ -1,5 +1,5 @@
 #!/bin/bash
-# Nexus Engine - Fly.io Deployment Script
+# The Nexus Engine - Fly.io Deployment Script
 #
 # Prerequisites:
 #   - flyctl installed: https://fly.io/docs/flyctl/install/
@@ -142,7 +142,7 @@ deploy_pbs() {
 
 show_status() {
     echo ""
-    log_info "=== Nexus Engine Status ==="
+    log_info "=== The Nexus Engine Status ==="
     echo ""
 
     echo "IDR Service ($IDR_APP):"
@@ -170,7 +170,7 @@ show_logs() {
 }
 
 run_setup() {
-    log_info "=== Nexus Engine - Fly.io Setup ==="
+    log_info "=== The Nexus Engine - Fly.io Setup ==="
     echo ""
 
     check_flyctl
@@ -187,7 +187,7 @@ run_setup() {
 }
 
 run_deploy() {
-    log_info "=== Deploying Nexus Engine ==="
+    log_info "=== Deploying The Nexus Engine ==="
     echo ""
 
     check_flyctl
@@ -219,7 +219,7 @@ case "${1:-help}" in
         deploy_pbs
         ;;
     *)
-        echo "Nexus Engine - Fly.io Deployment"
+        echo "The Nexus Engine - Fly.io Deployment"
         echo ""
         echo "Usage: $0 <command>"
         echo ""

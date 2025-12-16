@@ -1,5 +1,5 @@
 """
-API Key Management for Nexus Engine
+API Key Management for The Nexus Engine
 
 Provides unified API key management that syncs between IDR and PBS.
 Keys are stored in Redis for fast validation by both services.

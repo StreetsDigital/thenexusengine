@@ -1,5 +1,5 @@
 """
-Authentication module for Nexus Engine.
+Authentication module for The Nexus Engine.
 
 Provides API key management for publisher authentication across IDR and PBS.
 """

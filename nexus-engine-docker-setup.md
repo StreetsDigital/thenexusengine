@@ -525,7 +525,7 @@ price_floors:
 analytics:
   pubstack:
     enabled: false
-  # Custom Nexus analytics
+  # Custom TNE analytics
   nexus:
     enabled: true
     endpoint: "{{ .Env.IDR_ENDPOINT }}/analytics"
@@ -684,7 +684,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize app
 app = FastAPI(
-    title="Nexus Engine IDR",
+    title="The Nexus Engine IDR",
     description="Intelligent Demand Router for Prebid Server",
     version="1.0.0"
 )
