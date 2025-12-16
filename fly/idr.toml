@@ -10,7 +10,7 @@ app = "nexus-idr"
 primary_region = "iad"  # US East - change based on your users
 
 [build]
-  dockerfile = "docker/idr/Dockerfile"
+  dockerfile = "../docker/idr/Dockerfile"
 
 [env]
   IDR_PORT = "5050"

@@ -10,7 +10,7 @@ app = "nexus-pbs"
 primary_region = "iad"  # US East - change based on your users
 
 [build]
-  dockerfile = "docker/pbs/Dockerfile"
+  dockerfile = "../docker/pbs/Dockerfile"
 
 [env]
   PBS_PORT = "8000"
