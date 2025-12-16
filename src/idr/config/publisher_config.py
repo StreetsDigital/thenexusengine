@@ -52,6 +52,15 @@ class PrivacyConfig:
 
 
 @dataclass
+class APIKeyConfig:
+    """API key configuration for PBS authentication."""
+    key: str = ""
+    created_at: str = ""
+    last_used: str = ""
+    enabled: bool = True
+
+
+@dataclass
 class PublisherConfig:
     """Complete configuration for a publisher."""
     publisher_id: str
@@ -64,6 +73,7 @@ class PublisherConfig:
     idr: IDRConfig = field(default_factory=IDRConfig)
     rate_limits: RateLimitConfig = field(default_factory=RateLimitConfig)
     privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
+    api_key: APIKeyConfig = field(default_factory=APIKeyConfig)
 
     def get_enabled_bidders(self) -> list[str]:
         """Get list of enabled bidder codes."""
@@ -241,6 +251,15 @@ class PublisherConfigManager:
             # Parse contact
             contact = data.get("contact", {})
 
+            # Parse API key config
+            api_key_data = data.get("api_key", {})
+            api_key_config = APIKeyConfig(
+                key=api_key_data.get("key", ""),
+                created_at=api_key_data.get("created_at", ""),
+                last_used=api_key_data.get("last_used", ""),
+                enabled=api_key_data.get("enabled", True),
+            )
+
             return PublisherConfig(
                 publisher_id=data.get("publisher_id", path.stem),
                 name=data.get("name", ""),
@@ -252,6 +271,7 @@ class PublisherConfigManager:
                 idr=idr_config,
                 rate_limits=rate_config,
                 privacy=privacy_config,
+                api_key=api_key_config,
             )
 
         except yaml.YAMLError as e:

@@ -1137,6 +1137,11 @@
                             <li>Timeout: ${escapeHtml(data.idr?.timeout_ms || 50)}ms</li>
                         </ul>
 
+                        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">API Key (PBS Authentication)</h4>
+                        <div id="api-key-section-${safePublisherId}" style="margin-left: 1.5rem; color: var(--gray-700);">
+                            <span style="color: var(--gray-500);">Loading...</span>
+                        </div>
+
                         <div style="margin-top: 1rem;">
                             <button class="btn btn-secondary" onclick="loadPublishers()">Close</button>
                             <button class="btn btn-primary" onclick="editPublisher('${safePublisherId}')">Edit</button>
@@ -1146,9 +1151,160 @@
 
                 document.getElementById('publishers-container').innerHTML = html;
 
+                // Load API key info asynchronously
+                loadPublisherApiKey(publisherId);
+
             } catch (e) {
                 showAlert('Error loading publisher details', 'error');
                 console.error('Error loading publisher:', e);
+            }
+        }
+
+        // API Key Management Functions
+        async function loadPublisherApiKey(publisherId) {
+            const container = document.getElementById('api-key-section-' + publisherId);
+            if (!container) return;
+
+            try {
+                const response = await fetch('/api/publishers/' + encodeURIComponent(publisherId) + '/key');
+
+                if (response.status === 404) {
+                    // No key exists
+                    container.innerHTML = `
+                        <p style="margin-bottom: 0.5rem;">No API key generated yet.</p>
+                        <button class="btn btn-primary btn-sm" onclick="generateApiKey('${escapeAttr(publisherId)}')">
+                            Generate API Key
+                        </button>
+                    `;
+                    return;
+                }
+
+                if (!response.ok) {
+                    container.innerHTML = '<span style="color: var(--danger);">Error loading API key</span>';
+                    return;
+                }
+
+                const data = await response.json();
+                container.innerHTML = `
+                    <div style="background: var(--gray-100); padding: 0.75rem; border-radius: 0.375rem; margin-bottom: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <code style="font-size: 0.9rem;">${escapeHtml(data.key)}</code>
+                                <span style="margin-left: 0.5rem; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.7rem;
+                                    background: ${data.enabled ? 'var(--success)' : 'var(--danger)'}; color: white;">
+                                    ${data.enabled ? 'Active' : 'Disabled'}
+                                </span>
+                            </div>
+                        </div>
+                        <div style="margin-top: 0.5rem; font-size: 0.8rem; color: var(--gray-600);">
+                            Created: ${escapeHtml(data.created_at?.split('T')[0] || 'Unknown')}
+                            ${data.last_used ? ' | Last used: ' + escapeHtml(data.last_used.split('T')[0]) : ''}
+                            | Requests: ${escapeHtml(data.request_count || 0)}
+                        </div>
+                    </div>
+                    <button class="btn btn-warning btn-sm" onclick="regenerateApiKey('${escapeAttr(publisherId)}')">
+                        Regenerate Key
+                    </button>
+                `;
+            } catch (e) {
+                container.innerHTML = '<span style="color: var(--danger);">Error loading API key</span>';
+                console.error('Error loading API key:', e);
+            }
+        }
+
+        async function generateApiKey(publisherId) {
+            try {
+                const response = await fetch('/api/publishers/' + encodeURIComponent(publisherId) + '/key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ environment: 'live' })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showAlert(data.message || 'Error generating API key', 'error');
+                    return;
+                }
+
+                // Show the new key in a modal/alert (it can only be seen once!)
+                const keyDisplay = `
+                    <div style="background: var(--warning); color: var(--gray-900); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
+                        <strong>Important:</strong> Copy this key now! It will not be shown again.
+                    </div>
+                    <div style="background: var(--gray-900); color: var(--success); padding: 1rem; border-radius: 0.5rem; font-family: monospace; word-break: break-all;">
+                        ${escapeHtml(data.api_key)}
+                    </div>
+                    <p style="margin-top: 1rem; font-size: 0.9rem;">
+                        Use this key in the <code>X-API-Key</code> header or <code>Authorization: Bearer</code> header
+                        when making requests to PBS.
+                    </p>
+                `;
+
+                // Create a modal to show the key
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+                modal.innerHTML = `
+                    <div style="background: white; padding: 2rem; border-radius: 0.5rem; max-width: 600px; width: 90%;">
+                        <h3 style="margin-bottom: 1rem;">API Key Generated</h3>
+                        ${keyDisplay}
+                        <button class="btn btn-primary" onclick="this.closest('div').parentElement.remove(); loadPublisherApiKey('${escapeAttr(publisherId)}');" style="margin-top: 1rem;">
+                            I've Copied the Key
+                        </button>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+
+            } catch (e) {
+                showAlert('Error generating API key: ' + e.message, 'error');
+            }
+        }
+
+        async function regenerateApiKey(publisherId) {
+            if (!confirm('Regenerate API key for "' + publisherId + '"? The old key will stop working immediately.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/publishers/' + encodeURIComponent(publisherId) + '/key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ environment: 'live', regenerate: true })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showAlert(data.message || 'Error regenerating API key', 'error');
+                    return;
+                }
+
+                // Show the new key
+                generateApiKey.lastKey = data.api_key; // Reuse the display logic
+                const keyDisplay = `
+                    <div style="background: var(--warning); color: var(--gray-900); padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
+                        <strong>Important:</strong> Copy this key now! The old key has been revoked.
+                    </div>
+                    <div style="background: var(--gray-900); color: var(--success); padding: 1rem; border-radius: 0.5rem; font-family: monospace; word-break: break-all;">
+                        ${escapeHtml(data.api_key)}
+                    </div>
+                `;
+
+                const modal = document.createElement('div');
+                modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+                modal.innerHTML = `
+                    <div style="background: white; padding: 2rem; border-radius: 0.5rem; max-width: 600px; width: 90%;">
+                        <h3 style="margin-bottom: 1rem;">New API Key Generated</h3>
+                        ${keyDisplay}
+                        <button class="btn btn-primary" onclick="this.closest('div').parentElement.remove(); loadPublisherApiKey('${escapeAttr(publisherId)}');" style="margin-top: 1rem;">
+                            I've Copied the Key
+                        </button>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+
+            } catch (e) {
+                showAlert('Error regenerating API key: ' + e.message, 'error');
             }
         }
 
