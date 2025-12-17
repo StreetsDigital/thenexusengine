@@ -65,13 +65,23 @@ The Nexus Engine combines a high-performance **Go-based Prebid Server** with a *
               ┌────────────────────────┼────────────────────────┐
               ▼                        ▼                        ▼
         ┌──────────┐            ┌──────────┐            ┌──────────┐
-        │ Rubicon  │            │ AppNexus │            │ PubMatic │  ... (22 bidders)
+        │ Rubicon  │            │ AppNexus │            │ PubMatic │  ... (22 static)
         └──────────┘            └──────────┘            └──────────┘
+              │                        │                        │
+              └────────────────────────┼────────────────────────┘
+                                       │
+                        ┌──────────────┴──────────────┐
+                        ▼                             ▼
+                 ┌─────────────┐              ┌─────────────┐
+                 │  Dynamic    │              │  Dynamic    │  ... (custom OpenRTB)
+                 │  Bidder 1   │              │  Bidder N   │
+                 └─────────────┘              └─────────────┘
 ```
 
 ## Features
 
 - **22 Prebid Bidder Adapters** - Premium SSPs, video/native specialists, regional partners
+- **Dynamic OpenRTB Bidder Integration** - Add custom demand partners without code changes
 - **Intelligent Demand Routing** - ML-powered bidder selection for optimal yield
 - **Privacy Compliance** - GDPR/TCF, CCPA, COPPA filtering with GVL IDs
 - **Production Ready** - Auth, rate limiting, circuit breakers, structured logging
@@ -196,6 +206,11 @@ curl -X POST http://localhost:8000/openrtb2/auction \
 | `/api/select` | POST | Partner selection |
 | `/api/mode/bypass` | POST | Toggle bypass mode |
 | `/api/mode/shadow` | POST | Toggle shadow mode |
+| `/api/bidders` | GET/POST | List/create dynamic bidders |
+| `/api/bidders/<code>` | GET/PUT/DELETE | Manage specific bidder |
+| `/api/bidders/<code>/test` | POST | Test bidder endpoint |
+| `/api/bidders/<code>/enable` | POST | Enable bidder |
+| `/api/bidders/<code>/disable` | POST | Disable bidder |
 | `/health` | GET | Health check |
 
 ## Logging
@@ -343,7 +358,11 @@ thenexusengine/
 │   ├── internal/
 │   │   ├── openrtb/             # OpenRTB models
 │   │   ├── exchange/            # Auction engine
-│   │   ├── adapters/            # 22 Bidder adapters
+│   │   ├── adapters/            # Bidder adapters
+│   │   │   ├── ortb/            # Dynamic OpenRTB adapter
+│   │   │   │   ├── ortb.go      # Generic adapter implementation
+│   │   │   │   └── registry.go  # Dynamic registry with Redis refresh
+│   │   │   └── ...              # 22 static bidder adapters
 │   │   ├── endpoints/           # HTTP handlers
 │   │   ├── middleware/          # Auth, rate limiting, metrics
 │   │   ├── fpd/                 # First-party data
@@ -357,6 +376,10 @@ thenexusengine/
 │   ├── selector/                # Partner selection
 │   ├── privacy/                 # Privacy compliance
 │   ├── database/                # Redis + TimescaleDB
+│   ├── bidders/                 # Dynamic bidder management
+│   │   ├── models.py            # Bidder configuration models
+│   │   ├── storage.py           # Redis persistence layer
+│   │   └── manager.py           # CRUD operations
 │   ├── admin/                   # Admin dashboard
 │   ├── logging.py               # Structured logging (structlog)
 │   └── models/                  # Data models
@@ -385,6 +408,58 @@ thenexusengine/
 | **Regional (EMEA)** | adform, smartadserver, improvedigital | 50, 45, 253 |
 | **Additional** | medianet, conversant | 142, 24 |
 
+## Dynamic OpenRTB Bidder Integration
+
+Add custom demand partners without code changes using the dynamic bidder system.
+
+### Quick Start
+
+1. **Access the Admin UI**: Navigate to `http://localhost:5050/bidders`
+2. **Create a Bidder**: Click "Add Bidder" and configure the endpoint
+3. **Test Connection**: Use "Test Endpoint" to verify connectivity
+4. **Enable**: Set status to "Active" to include in auctions
+
+### Example: Create a Custom Bidder via API
+
+```bash
+curl -X POST http://localhost:5050/api/bidders \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Basic <credentials>" \
+  -d '{
+    "bidder_code": "mypartner",
+    "name": "My Demand Partner",
+    "endpoint": {
+      "url": "https://partner.example.com/rtb/bid",
+      "method": "POST",
+      "timeout_ms": 200,
+      "protocol_version": "2.5",
+      "auth_type": "bearer",
+      "auth_token": "your-api-token"
+    },
+    "capabilities": {
+      "media_types": ["banner", "video"],
+      "currencies": ["USD"],
+      "site_enabled": true,
+      "app_enabled": true,
+      "supports_gdpr": true,
+      "supports_ccpa": true
+    },
+    "status": "active"
+  }'
+```
+
+### Features
+
+- **OpenRTB 2.5/2.6 Support** - Full protocol compliance
+- **Multiple Auth Methods** - Bearer tokens, basic auth, custom headers
+- **Request Transformation** - Map fields for bidder-specific formats
+- **Response Transformation** - Price adjustments, field mapping
+- **Publisher/Geo Targeting** - Control bidder participation
+- **Real-time Updates** - No server restart required
+- **GVL Vendor IDs** - GDPR compliance support
+
+See [OpenRTB Bidder Integration Guide](docs/ortb-bidder-integration.md) for complete documentation.
+
 ## Development Roadmap
 
 ### Completed ✅
@@ -392,6 +467,7 @@ thenexusengine/
 - [x] Core IDR (classifier, scorer, selector)
 - [x] PBS Core (OpenRTB, auction, exchange)
 - [x] 22 Bidder adapters with GVL IDs
+- [x] Dynamic OpenRTB bidder integration (custom demand sources)
 - [x] Privacy compliance (GDPR/TCF, CCPA, COPPA)
 - [x] Database integration (Redis + TimescaleDB)
 - [x] Production hardening (auth, rate limiting, circuit breaker)
@@ -416,6 +492,8 @@ Proprietary - The Nexus Engine
 
 - [OpenAPI Documentation](docs/api/openapi.yaml)
 - [Docker Setup Guide](docs/docker-setup.md)
+- [OpenRTB Bidder Integration](docs/ortb-bidder-integration.md)
+- [Publisher Integration Guide](docs/publisher-integration.md)
 - [Prebid Server (Go)](https://github.com/prebid/prebid-server)
 - [OpenRTB 2.5 Spec](https://www.iab.com/wp-content/uploads/2016/03/OpenRTB-API-Specification-Version-2-5-FINAL.pdf)
 - [Prebid.js Documentation](https://docs.prebid.org/)
