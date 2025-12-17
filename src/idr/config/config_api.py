@@ -887,10 +887,10 @@ def create_config_api_blueprint() -> Blueprint:
     # Persistence Operations
     # =========================================
 
-    @bp.route("/sync/to-redis", methods=["POST"])
-    def sync_to_redis():
+    @bp.route("/sync/to-db", methods=["POST"])
+    def sync_to_db():
         """
-        Sync all in-memory configurations to Redis.
+        Sync all in-memory configurations to PostgreSQL.
 
         Use this to ensure all configs are persisted.
         """
@@ -899,7 +899,7 @@ def create_config_api_blueprint() -> Blueprint:
             if success:
                 return jsonify({
                     "status": "success",
-                    "message": "All configurations synced to Redis",
+                    "message": "All configurations synced to PostgreSQL",
                 })
             else:
                 return jsonify({
@@ -907,21 +907,21 @@ def create_config_api_blueprint() -> Blueprint:
                     "message": "Sync failed - persistence may be disabled",
                 }), 500
         except Exception as e:
-            return _safe_error_response(e, "Failed to sync to Redis", 500)
+            return _safe_error_response(e, "Failed to sync to PostgreSQL", 500)
 
-    @bp.route("/sync/from-redis", methods=["POST"])
-    def sync_from_redis():
+    @bp.route("/sync/from-db", methods=["POST"])
+    def sync_from_db():
         """
-        Reload all configurations from Redis.
+        Reload all configurations from PostgreSQL.
 
-        Use this to refresh in-memory configs from Redis.
+        Use this to refresh in-memory configs from database.
         """
         try:
             success = resolver.sync_from_store()
             if success:
                 return jsonify({
                     "status": "success",
-                    "message": "Configurations reloaded from Redis",
+                    "message": "Configurations reloaded from PostgreSQL",
                 })
             else:
                 return jsonify({
@@ -929,7 +929,7 @@ def create_config_api_blueprint() -> Blueprint:
                     "message": "Reload failed",
                 }), 500
         except Exception as e:
-            return _safe_error_response(e, "Failed to reload from Redis", 500)
+            return _safe_error_response(e, "Failed to reload from PostgreSQL", 500)
 
     @bp.route("/export", methods=["GET"])
     def export_configs():
@@ -982,7 +982,7 @@ def create_config_api_blueprint() -> Blueprint:
     @bp.route("/storage/status", methods=["GET"])
     def storage_status():
         """
-        Get the status of the configuration storage (Redis).
+        Get the status of the configuration storage (PostgreSQL).
         """
         try:
             from .config_store import get_config_store
@@ -990,7 +990,7 @@ def create_config_api_blueprint() -> Blueprint:
 
             return jsonify({
                 "status": "success",
-                "redis_connected": store.is_redis_connected,
+                "postgres_connected": store.is_connected,
                 "using_memory_fallback": store._use_memory,
                 "publishers_stored": len(store.list_publishers()),
             })

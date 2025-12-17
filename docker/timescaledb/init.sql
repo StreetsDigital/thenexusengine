@@ -194,6 +194,103 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ===========================================
+-- Configuration Tables (Hierarchical Config)
+-- ===========================================
+
+-- Global configuration
+CREATE TABLE IF NOT EXISTS config_global (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    config JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT single_global_config CHECK (id = 1)
+);
+
+-- Publisher configurations
+CREATE TABLE IF NOT EXISTS config_publishers (
+    publisher_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN DEFAULT TRUE,
+    contact_email TEXT DEFAULT '',
+    contact_name TEXT DEFAULT '',
+    bidders JSONB DEFAULT '{}',
+    api_key TEXT DEFAULT '',
+    api_key_enabled BOOLEAN DEFAULT TRUE,
+    features JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Site configurations
+CREATE TABLE IF NOT EXISTS config_sites (
+    site_id TEXT NOT NULL,
+    publisher_id TEXT NOT NULL REFERENCES config_publishers(publisher_id) ON DELETE CASCADE,
+    domain TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN DEFAULT TRUE,
+    features JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (publisher_id, site_id)
+);
+
+-- Ad unit configurations
+CREATE TABLE IF NOT EXISTS config_ad_units (
+    unit_id TEXT NOT NULL,
+    site_id TEXT NOT NULL,
+    publisher_id TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN DEFAULT TRUE,
+    sizes JSONB DEFAULT '[]',
+    media_type TEXT DEFAULT 'banner',
+    position TEXT DEFAULT 'unknown',
+    floor_price DECIMAL(10,4),
+    floor_currency TEXT DEFAULT 'USD',
+    video JSONB,
+    features JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (publisher_id, site_id, unit_id),
+    FOREIGN KEY (publisher_id, site_id) REFERENCES config_sites(publisher_id, site_id) ON DELETE CASCADE
+);
+
+-- Indexes for config tables
+CREATE INDEX IF NOT EXISTS idx_config_publishers_enabled ON config_publishers(enabled);
+CREATE INDEX IF NOT EXISTS idx_config_sites_publisher ON config_sites(publisher_id);
+CREATE INDEX IF NOT EXISTS idx_config_sites_domain ON config_sites(domain);
+CREATE INDEX IF NOT EXISTS idx_config_ad_units_site ON config_ad_units(publisher_id, site_id);
+
+-- Function to update timestamps
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Triggers for auto-updating timestamps
+DROP TRIGGER IF EXISTS update_config_global_updated_at ON config_global;
+CREATE TRIGGER update_config_global_updated_at
+    BEFORE UPDATE ON config_global
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_config_publishers_updated_at ON config_publishers;
+CREATE TRIGGER update_config_publishers_updated_at
+    BEFORE UPDATE ON config_publishers
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_config_sites_updated_at ON config_sites;
+CREATE TRIGGER update_config_sites_updated_at
+    BEFORE UPDATE ON config_sites
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_config_ad_units_updated_at ON config_ad_units;
+CREATE TRIGGER update_config_ad_units_updated_at
+    BEFORE UPDATE ON config_ad_units
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ===========================================
 -- Grant permissions
 -- ===========================================
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres;
