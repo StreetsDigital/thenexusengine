@@ -1149,6 +1149,35 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
         return reload_publishers()
 
     # =========================================
+    # Hierarchical Configuration API (v2)
+    # =========================================
+
+    try:
+        from src.idr.config.config_api import create_config_api_blueprint
+        config_api_bp = create_config_api_blueprint()
+        app.register_blueprint(config_api_bp)
+        CONFIG_API_AVAILABLE = True
+    except ImportError:
+        CONFIG_API_AVAILABLE = False
+
+    @app.route('/api/v2/status', methods=['GET'])
+    @login_required
+    def config_api_status():
+        """Check if the v2 configuration API is available."""
+        return jsonify({
+            'config_api_available': CONFIG_API_AVAILABLE,
+            'version': '2.0',
+            'features': [
+                'hierarchical_configuration',
+                'publisher_level_config',
+                'site_level_config',
+                'ad_unit_level_config',
+                'config_inheritance',
+                'bulk_operations',
+            ] if CONFIG_API_AVAILABLE else [],
+        })
+
+    # =========================================
     # API Key Management Endpoints
     # =========================================
 
