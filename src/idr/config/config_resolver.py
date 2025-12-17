@@ -314,8 +314,8 @@ class ConfigResolver:
 
     Walks the inheritance chain: Ad Unit → Site → Publisher → Global
 
-    Supports Redis persistence for configurations - all changes are
-    automatically saved to Redis when persist=True (default).
+    Supports PostgreSQL persistence for configurations - all changes are
+    automatically saved to PostgreSQL when persist=True (default).
     """
 
     def __init__(
@@ -331,8 +331,8 @@ class ConfigResolver:
         Args:
             global_config: Global default configuration
             config_dir: Directory containing publisher config files
-            persist: Whether to persist changes to Redis (default: True)
-            auto_load: Whether to load existing configs from Redis on init (default: True)
+            persist: Whether to persist changes to PostgreSQL (default: True)
+            auto_load: Whether to load existing configs from PostgreSQL on init (default: True)
         """
         self._global_config = global_config or get_default_global_config()
         self._config_dir = Path(config_dir) if config_dir else None
@@ -345,7 +345,7 @@ class ConfigResolver:
         # Config store for persistence
         self._store: Optional[Any] = None
 
-        # Auto-load from Redis if enabled
+        # Auto-load from PostgreSQL if enabled
         if auto_load and persist:
             self._load_from_store()
 
@@ -357,7 +357,7 @@ class ConfigResolver:
         return self._store
 
     def _load_from_store(self) -> None:
-        """Load all configurations from Redis."""
+        """Load all configurations from PostgreSQL."""
         try:
             store = self._get_store()
             self._global_config = store.load_global_config()
@@ -372,7 +372,7 @@ class ConfigResolver:
 
         Args:
             config: The new global configuration
-            save: Whether to persist to Redis (default: True)
+            save: Whether to persist to PostgreSQL (default: True)
         """
         self._global_config = config
         self._resolved_cache.clear()
@@ -390,7 +390,7 @@ class ConfigResolver:
 
         Args:
             config: The publisher configuration
-            save: Whether to persist to Redis (default: True)
+            save: Whether to persist to PostgreSQL (default: True)
         """
         self._publisher_configs[config.publisher_id] = config
         # Clear cache for this publisher
@@ -405,7 +405,7 @@ class ConfigResolver:
 
         Args:
             publisher_id: The publisher ID to delete
-            save: Whether to persist deletion to Redis (default: True)
+            save: Whether to persist deletion to PostgreSQL (default: True)
 
         Returns:
             True if deleted, False if not found
@@ -428,7 +428,7 @@ class ConfigResolver:
         Args:
             publisher_id: The publisher ID
             site: The site configuration
-            save: Whether to persist to Redis (default: True)
+            save: Whether to persist to PostgreSQL (default: True)
 
         Returns:
             True if saved successfully
@@ -479,7 +479,7 @@ class ConfigResolver:
             publisher_id: The publisher ID
             site_id: The site ID
             ad_unit: The ad unit configuration
-            save: Whether to persist to Redis (default: True)
+            save: Whether to persist to PostgreSQL (default: True)
 
         Returns:
             True if saved successfully
@@ -532,7 +532,7 @@ class ConfigResolver:
 
     def sync_to_store(self) -> bool:
         """
-        Sync all in-memory configurations to Redis.
+        Sync all in-memory configurations to PostgreSQL.
 
         Returns:
             True if sync successful
@@ -545,7 +545,7 @@ class ConfigResolver:
 
     def sync_from_store(self) -> bool:
         """
-        Reload all configurations from Redis.
+        Reload all configurations from PostgreSQL.
 
         Returns:
             True if sync successful
@@ -573,7 +573,7 @@ class ConfigResolver:
 
         Args:
             data: Configuration data with 'global' and 'publishers' keys
-            save: Whether to persist to Redis (default: True)
+            save: Whether to persist to PostgreSQL (default: True)
 
         Returns:
             True if import successful

@@ -90,7 +90,7 @@ __all__ = [
     "merge_configs",
     "to_resolved_config",
 
-    # Config persistence (Redis)
+    # Config persistence (PostgreSQL)
     "ConfigStore",
     "get_config_store",
     "init_config_store",
