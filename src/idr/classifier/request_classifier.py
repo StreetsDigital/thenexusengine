@@ -20,6 +20,7 @@ from ..utils.constants import (
     OPENRTB_DEVICE_TYPE_MAP,
     POSITION_MAP,
 )
+from ..utils.id_generator import generate_publisher_id
 from ..utils.user_agent import extract_browser, extract_os, parse_user_agent
 
 
@@ -232,9 +233,20 @@ class RequestClassifier:
         return 'unknown'
 
     def _extract_publisher_id(self, publisher_source: dict) -> str:
-        """Extract publisher ID from site or app object."""
+        """
+        Extract publisher ID from site or app object.
+
+        If no publisher ID is found in the request, auto-generates
+        a unique alphanumeric ID with the format: pub_{random_string}
+        """
         publisher = publisher_source.get('publisher', {})
-        return publisher.get('id', '') or publisher_source.get('id', '')
+        publisher_id = publisher.get('id', '') or publisher_source.get('id', '')
+
+        # Auto-populate if no publisher ID is provided
+        if not publisher_id:
+            publisher_id = generate_publisher_id()
+
+        return publisher_id
 
     def _extract_domain(self, site: dict, app: dict) -> str:
         """Extract domain from site or bundle from app."""

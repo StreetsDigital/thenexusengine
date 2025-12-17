@@ -298,3 +298,76 @@ class TestUserAgentParsing:
         assert result.browser == 'firefox'
         assert result.os == 'android'
         assert result.device_type == DeviceType.MOBILE
+
+
+class TestPublisherIdAutoPopulate:
+    """Test auto-population of publisher IDs."""
+
+    @pytest.fixture
+    def classifier(self):
+        return RequestClassifier()
+
+    def test_auto_populate_when_missing(self, classifier):
+        """Test that publisher ID is auto-generated when not provided."""
+        request = {
+            "imp": [{"id": "1", "banner": {"w": 300, "h": 250}}],
+            "site": {
+                "domain": "example.com"
+            }
+        }
+        result = classifier.classify(request)
+
+        # Should auto-generate with pub_ prefix
+        assert result.publisher_id.startswith("pub_")
+        # Should have alphanumeric random part
+        assert len(result.publisher_id) == 16  # "pub_" + 12 chars
+
+    def test_auto_populate_empty_publisher_object(self, classifier):
+        """Test auto-generate when publisher object exists but has no ID."""
+        request = {
+            "imp": [{"id": "1", "banner": {"w": 300, "h": 250}}],
+            "site": {
+                "domain": "example.com",
+                "publisher": {}
+            }
+        }
+        result = classifier.classify(request)
+
+        assert result.publisher_id.startswith("pub_")
+
+    def test_uses_provided_publisher_id(self, classifier):
+        """Test that provided publisher ID is used when available."""
+        request = {
+            "imp": [{"id": "1", "banner": {"w": 300, "h": 250}}],
+            "site": {
+                "domain": "example.com",
+                "publisher": {"id": "my-publisher-123"}
+            }
+        }
+        result = classifier.classify(request)
+
+        assert result.publisher_id == "my-publisher-123"
+
+    def test_uses_site_id_as_fallback(self, classifier):
+        """Test that site ID is used if publisher ID is missing."""
+        request = {
+            "imp": [{"id": "1", "banner": {"w": 300, "h": 250}}],
+            "site": {
+                "id": "site-id-456",
+                "domain": "example.com",
+                "publisher": {}
+            }
+        }
+        result = classifier.classify(request)
+
+        assert result.publisher_id == "site-id-456"
+
+    def test_auto_populate_uniqueness(self, classifier):
+        """Test that auto-generated IDs are unique across requests."""
+        request = {
+            "imp": [{"id": "1", "banner": {"w": 300, "h": 250}}],
+            "site": {"domain": "example.com"}
+        }
+
+        ids = [classifier.classify(request).publisher_id for _ in range(50)]
+        assert len(set(ids)) == 50  # All should be unique
