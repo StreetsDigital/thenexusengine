@@ -4,8 +4,10 @@ import pytest
 import re
 
 from src.idr.utils.id_generator import (
-    generate_publisher_id,
+    generate_ad_unit_id,
     generate_alphanumeric_id,
+    generate_publisher_id,
+    generate_site_id,
     ALPHANUMERIC_CHARS,
 )
 
@@ -107,4 +109,98 @@ class TestGenerateAlphanumericId:
         result = generate_alphanumeric_id()
 
         pattern = r"^[a-z0-9]{16}$"
+        assert re.match(pattern, result)
+
+
+class TestGenerateSiteId:
+    """Test suite for generate_site_id function."""
+
+    def test_default_format(self):
+        """Test default site ID format."""
+        result = generate_site_id()
+
+        assert result.startswith("site_")
+        # Default length is 12 chars after prefix
+        assert len(result) == 17  # "site_" (5) + 12
+
+    def test_custom_length(self):
+        """Test custom length parameter."""
+        result = generate_site_id(length=8)
+
+        assert result.startswith("site_")
+        assert len(result) == 13  # "site_" (5) + 8
+
+    def test_custom_prefix(self):
+        """Test custom prefix parameter."""
+        result = generate_site_id(prefix="s_")
+
+        assert result.startswith("s_")
+        assert len(result) == 14  # "s_" (2) + 12
+
+    def test_alphanumeric_only(self):
+        """Test that only alphanumeric chars are used."""
+        result = generate_site_id()
+
+        # Remove prefix and check random part
+        random_part = result[5:]  # Remove "site_"
+        for char in random_part:
+            assert char in ALPHANUMERIC_CHARS
+
+    def test_uniqueness(self):
+        """Test that generated IDs are unique."""
+        ids = [generate_site_id() for _ in range(100)]
+        assert len(set(ids)) == 100
+
+    def test_format_regex(self):
+        """Test ID matches expected format pattern."""
+        result = generate_site_id()
+
+        pattern = r"^site_[a-z0-9]{12}$"
+        assert re.match(pattern, result)
+
+
+class TestGenerateAdUnitId:
+    """Test suite for generate_ad_unit_id function."""
+
+    def test_default_format(self):
+        """Test default ad unit ID format."""
+        result = generate_ad_unit_id()
+
+        assert result.startswith("unit_")
+        # Default length is 12 chars after prefix
+        assert len(result) == 17  # "unit_" (5) + 12
+
+    def test_custom_length(self):
+        """Test custom length parameter."""
+        result = generate_ad_unit_id(length=8)
+
+        assert result.startswith("unit_")
+        assert len(result) == 13  # "unit_" (5) + 8
+
+    def test_custom_prefix(self):
+        """Test custom prefix parameter."""
+        result = generate_ad_unit_id(prefix="ad_")
+
+        assert result.startswith("ad_")
+        assert len(result) == 15  # "ad_" (3) + 12
+
+    def test_alphanumeric_only(self):
+        """Test that only alphanumeric chars are used."""
+        result = generate_ad_unit_id()
+
+        # Remove prefix and check random part
+        random_part = result[5:]  # Remove "unit_"
+        for char in random_part:
+            assert char in ALPHANUMERIC_CHARS
+
+    def test_uniqueness(self):
+        """Test that generated IDs are unique."""
+        ids = [generate_ad_unit_id() for _ in range(100)]
+        assert len(set(ids)) == 100
+
+    def test_format_regex(self):
+        """Test ID matches expected format pattern."""
+        result = generate_ad_unit_id()
+
+        pattern = r"^unit_[a-z0-9]{12}$"
         assert re.match(pattern, result)

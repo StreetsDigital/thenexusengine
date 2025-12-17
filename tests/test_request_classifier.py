@@ -371,3 +371,111 @@ class TestPublisherIdAutoPopulate:
 
         ids = [classifier.classify(request).publisher_id for _ in range(50)]
         assert len(set(ids)) == 50  # All should be unique
+
+
+class TestSiteIdAutoPopulate:
+    """Test auto-population of site IDs."""
+
+    @pytest.fixture
+    def classifier(self):
+        return RequestClassifier()
+
+    def test_auto_populate_when_missing(self, classifier):
+        """Test that site ID is auto-generated when not provided."""
+        request = {
+            "imp": [{"id": "1", "banner": {"w": 300, "h": 250}}],
+            "site": {
+                "domain": "example.com"
+            }
+        }
+        result = classifier.classify(request)
+
+        # Should auto-generate with site_ prefix
+        assert result.site_id.startswith("site_")
+        # Should have alphanumeric random part
+        assert len(result.site_id) == 17  # "site_" + 12 chars
+
+    def test_uses_provided_site_id(self, classifier):
+        """Test that provided site ID is used when available."""
+        request = {
+            "imp": [{"id": "1", "banner": {"w": 300, "h": 250}}],
+            "site": {
+                "id": "my-site-123",
+                "domain": "example.com"
+            }
+        }
+        result = classifier.classify(request)
+
+        assert result.site_id == "my-site-123"
+
+    def test_auto_populate_uniqueness(self, classifier):
+        """Test that auto-generated site IDs are unique across requests."""
+        request = {
+            "imp": [{"id": "1", "banner": {"w": 300, "h": 250}}],
+            "site": {"domain": "example.com"}
+        }
+
+        ids = [classifier.classify(request).site_id for _ in range(50)]
+        assert len(set(ids)) == 50  # All should be unique
+
+
+class TestAdUnitIdAutoPopulate:
+    """Test auto-population of ad unit IDs (from tagid field)."""
+
+    @pytest.fixture
+    def classifier(self):
+        return RequestClassifier()
+
+    def test_auto_populate_when_missing(self, classifier):
+        """Test that ad unit ID is auto-generated when tagid not provided."""
+        request = {
+            "imp": [{"id": "imp-1", "banner": {"w": 300, "h": 250}}],
+            "site": {"domain": "example.com"}
+        }
+        result = classifier.classify(request)
+
+        # Should auto-generate with unit_ prefix
+        assert result.ad_unit_id.startswith("unit_")
+        # Should have alphanumeric random part
+        assert len(result.ad_unit_id) == 17  # "unit_" + 12 chars
+
+    def test_uses_provided_tagid(self, classifier):
+        """Test that provided tagid is used for ad_unit_id."""
+        request = {
+            "imp": [{"id": "imp-1", "tagid": "header-banner-300x250", "banner": {"w": 300, "h": 250}}],
+            "site": {"domain": "example.com"}
+        }
+        result = classifier.classify(request)
+
+        assert result.ad_unit_id == "header-banner-300x250"
+
+    def test_auto_populate_empty_tagid(self, classifier):
+        """Test auto-generate when tagid is empty."""
+        request = {
+            "imp": [{"id": "imp-1", "tagid": "", "banner": {"w": 300, "h": 250}}],
+            "site": {"domain": "example.com"}
+        }
+        result = classifier.classify(request)
+
+        assert result.ad_unit_id.startswith("unit_")
+
+    def test_auto_populate_uniqueness(self, classifier):
+        """Test that auto-generated ad unit IDs are unique."""
+        request = {
+            "imp": [{"id": "imp-1", "banner": {"w": 300, "h": 250}}],
+            "site": {"domain": "example.com"}
+        }
+
+        ids = [classifier.classify(request).ad_unit_id for _ in range(50)]
+        assert len(set(ids)) == 50  # All should be unique
+
+    def test_impression_id_separate_from_ad_unit_id(self, classifier):
+        """Test that impression_id and ad_unit_id are separate fields."""
+        request = {
+            "imp": [{"id": "request-123", "tagid": "sidebar-ad", "banner": {"w": 300, "h": 250}}],
+            "site": {"domain": "example.com"}
+        }
+        result = classifier.classify(request)
+
+        assert result.impression_id == "request-123"
+        assert result.ad_unit_id == "sidebar-ad"
