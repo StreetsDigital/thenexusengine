@@ -313,12 +313,17 @@ class ConfigResolver:
     Resolves effective configuration for any entity.
 
     Walks the inheritance chain: Ad Unit → Site → Publisher → Global
+
+    Supports Redis persistence for configurations - all changes are
+    automatically saved to Redis when persist=True (default).
     """
 
     def __init__(
         self,
         global_config: Optional[FeatureConfig] = None,
         config_dir: Optional[str] = None,
+        persist: bool = True,
+        auto_load: bool = True,
     ):
         """
         Initialize the config resolver.
@@ -326,28 +331,269 @@ class ConfigResolver:
         Args:
             global_config: Global default configuration
             config_dir: Directory containing publisher config files
+            persist: Whether to persist changes to Redis (default: True)
+            auto_load: Whether to load existing configs from Redis on init (default: True)
         """
         self._global_config = global_config or get_default_global_config()
         self._config_dir = Path(config_dir) if config_dir else None
+        self._persist = persist
 
         # Caches
         self._publisher_configs: dict[str, PublisherConfigV2] = {}
         self._resolved_cache: dict[str, ResolvedConfig] = {}
 
-    def set_global_config(self, config: FeatureConfig) -> None:
-        """Set the global configuration."""
+        # Config store for persistence
+        self._store: Optional[Any] = None
+
+        # Auto-load from Redis if enabled
+        if auto_load and persist:
+            self._load_from_store()
+
+    def _get_store(self) -> Any:
+        """Get or create the config store."""
+        if self._store is None:
+            from .config_store import get_config_store
+            self._store = get_config_store()
+        return self._store
+
+    def _load_from_store(self) -> None:
+        """Load all configurations from Redis."""
+        try:
+            store = self._get_store()
+            self._global_config = store.load_global_config()
+            self._publisher_configs = store.load_all_publishers()
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to load configs from store: {e}")
+
+    def set_global_config(self, config: FeatureConfig, save: bool = True) -> None:
+        """
+        Set the global configuration.
+
+        Args:
+            config: The new global configuration
+            save: Whether to persist to Redis (default: True)
+        """
         self._global_config = config
         self._resolved_cache.clear()
+
+        if save and self._persist:
+            self._get_store().save_global_config(config)
 
     def get_global_config(self) -> FeatureConfig:
         """Get the global configuration."""
         return self._global_config
 
-    def register_publisher(self, config: PublisherConfigV2) -> None:
-        """Register a publisher configuration."""
+    def register_publisher(self, config: PublisherConfigV2, save: bool = True) -> None:
+        """
+        Register a publisher configuration.
+
+        Args:
+            config: The publisher configuration
+            save: Whether to persist to Redis (default: True)
+        """
         self._publisher_configs[config.publisher_id] = config
         # Clear cache for this publisher
         self._clear_publisher_cache(config.publisher_id)
+
+        if save and self._persist:
+            self._get_store().save_publisher(config)
+
+    def delete_publisher(self, publisher_id: str, save: bool = True) -> bool:
+        """
+        Delete a publisher configuration.
+
+        Args:
+            publisher_id: The publisher ID to delete
+            save: Whether to persist deletion to Redis (default: True)
+
+        Returns:
+            True if deleted, False if not found
+        """
+        if publisher_id not in self._publisher_configs:
+            return False
+
+        del self._publisher_configs[publisher_id]
+        self._clear_publisher_cache(publisher_id)
+
+        if save and self._persist:
+            self._get_store().delete_publisher(publisher_id)
+
+        return True
+
+    def save_site(self, publisher_id: str, site: SiteConfig, save: bool = True) -> bool:
+        """
+        Save a site configuration.
+
+        Args:
+            publisher_id: The publisher ID
+            site: The site configuration
+            save: Whether to persist to Redis (default: True)
+
+        Returns:
+            True if saved successfully
+        """
+        publisher = self._publisher_configs.get(publisher_id)
+        if not publisher:
+            return False
+
+        # Update or add site
+        site_found = False
+        for i, s in enumerate(publisher.sites):
+            if s.site_id == site.site_id:
+                publisher.sites[i] = site
+                site_found = True
+                break
+
+        if not site_found:
+            publisher.sites.append(site)
+
+        self._clear_publisher_cache(publisher_id)
+
+        if save and self._persist:
+            self._get_store().save_site(publisher_id, site)
+
+        return True
+
+    def delete_site(self, publisher_id: str, site_id: str, save: bool = True) -> bool:
+        """Delete a site configuration."""
+        publisher = self._publisher_configs.get(publisher_id)
+        if not publisher:
+            return False
+
+        publisher.sites = [s for s in publisher.sites if s.site_id != site_id]
+        self._clear_publisher_cache(publisher_id)
+
+        if save and self._persist:
+            self._get_store().delete_site(publisher_id, site_id)
+
+        return True
+
+    def save_ad_unit(
+        self, publisher_id: str, site_id: str, ad_unit: AdUnitConfig, save: bool = True
+    ) -> bool:
+        """
+        Save an ad unit configuration.
+
+        Args:
+            publisher_id: The publisher ID
+            site_id: The site ID
+            ad_unit: The ad unit configuration
+            save: Whether to persist to Redis (default: True)
+
+        Returns:
+            True if saved successfully
+        """
+        publisher = self._publisher_configs.get(publisher_id)
+        if not publisher:
+            return False
+
+        site = publisher.get_site(site_id)
+        if not site:
+            return False
+
+        # Update or add ad unit
+        unit_found = False
+        for i, u in enumerate(site.ad_units):
+            if u.unit_id == ad_unit.unit_id:
+                site.ad_units[i] = ad_unit
+                unit_found = True
+                break
+
+        if not unit_found:
+            site.ad_units.append(ad_unit)
+
+        self._clear_publisher_cache(publisher_id)
+
+        if save and self._persist:
+            self._get_store().save_ad_unit(publisher_id, site_id, ad_unit)
+
+        return True
+
+    def delete_ad_unit(
+        self, publisher_id: str, site_id: str, unit_id: str, save: bool = True
+    ) -> bool:
+        """Delete an ad unit configuration."""
+        publisher = self._publisher_configs.get(publisher_id)
+        if not publisher:
+            return False
+
+        site = publisher.get_site(site_id)
+        if not site:
+            return False
+
+        site.ad_units = [u for u in site.ad_units if u.unit_id != unit_id]
+        self._clear_publisher_cache(publisher_id)
+
+        if save and self._persist:
+            self._get_store().delete_ad_unit(publisher_id, site_id, unit_id)
+
+        return True
+
+    def sync_to_store(self) -> bool:
+        """
+        Sync all in-memory configurations to Redis.
+
+        Returns:
+            True if sync successful
+        """
+        if not self._persist:
+            return False
+
+        store = self._get_store()
+        return store.save_all(self._global_config, self._publisher_configs)
+
+    def sync_from_store(self) -> bool:
+        """
+        Reload all configurations from Redis.
+
+        Returns:
+            True if sync successful
+        """
+        try:
+            self._load_from_store()
+            self._resolved_cache.clear()
+            return True
+        except Exception:
+            return False
+
+    def export_configs(self) -> dict[str, Any]:
+        """Export all configurations to a dictionary."""
+        return {
+            "global": self._global_config.to_dict(),
+            "publishers": {
+                pub_id: config.to_dict()
+                for pub_id, config in self._publisher_configs.items()
+            },
+        }
+
+    def import_configs(self, data: dict[str, Any], save: bool = True) -> bool:
+        """
+        Import configurations from a dictionary.
+
+        Args:
+            data: Configuration data with 'global' and 'publishers' keys
+            save: Whether to persist to Redis (default: True)
+
+        Returns:
+            True if import successful
+        """
+        try:
+            if "global" in data:
+                self._global_config = FeatureConfig.from_dict(data["global"])
+
+            for pub_id, pub_data in data.get("publishers", {}).items():
+                config = self._parse_publisher_config(pub_data)
+                self._publisher_configs[pub_id] = config
+
+            self._resolved_cache.clear()
+
+            if save and self._persist:
+                self._get_store().save_all(self._global_config, self._publisher_configs)
+
+            return True
+        except Exception:
+            return False
 
     def get_publisher_config(self, publisher_id: str) -> Optional[PublisherConfigV2]:
         """Get a publisher configuration."""

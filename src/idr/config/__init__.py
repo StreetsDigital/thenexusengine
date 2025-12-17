@@ -50,6 +50,12 @@ from .config_resolver import (
     to_resolved_config,
 )
 
+from .config_store import (
+    ConfigStore,
+    get_config_store,
+    init_config_store,
+)
+
 __all__ = [
     # Legacy (v1)
     "PublisherConfig",
@@ -83,4 +89,9 @@ __all__ = [
     "resolve_config",
     "merge_configs",
     "to_resolved_config",
+
+    # Config persistence (Redis)
+    "ConfigStore",
+    "get_config_store",
+    "init_config_store",
 ]

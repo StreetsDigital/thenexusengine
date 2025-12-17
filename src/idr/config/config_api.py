@@ -883,6 +883,120 @@ def create_config_api_blueprint() -> Blueprint:
             "message": "Configuration cache cleared",
         })
 
+    # =========================================
+    # Persistence Operations
+    # =========================================
+
+    @bp.route("/sync/to-redis", methods=["POST"])
+    def sync_to_redis():
+        """
+        Sync all in-memory configurations to Redis.
+
+        Use this to ensure all configs are persisted.
+        """
+        try:
+            success = resolver.sync_to_store()
+            if success:
+                return jsonify({
+                    "status": "success",
+                    "message": "All configurations synced to Redis",
+                })
+            else:
+                return jsonify({
+                    "status": "error",
+                    "message": "Sync failed - persistence may be disabled",
+                }), 500
+        except Exception as e:
+            return _safe_error_response(e, "Failed to sync to Redis", 500)
+
+    @bp.route("/sync/from-redis", methods=["POST"])
+    def sync_from_redis():
+        """
+        Reload all configurations from Redis.
+
+        Use this to refresh in-memory configs from Redis.
+        """
+        try:
+            success = resolver.sync_from_store()
+            if success:
+                return jsonify({
+                    "status": "success",
+                    "message": "Configurations reloaded from Redis",
+                })
+            else:
+                return jsonify({
+                    "status": "error",
+                    "message": "Reload failed",
+                }), 500
+        except Exception as e:
+            return _safe_error_response(e, "Failed to reload from Redis", 500)
+
+    @bp.route("/export", methods=["GET"])
+    def export_configs():
+        """
+        Export all configurations as JSON.
+
+        Returns all global, publisher, site, and ad unit configurations.
+        """
+        try:
+            data = resolver.export_configs()
+            return jsonify({
+                "status": "success",
+                "data": data,
+                "publishers_count": len(data.get("publishers", {})),
+            })
+        except Exception as e:
+            return _safe_error_response(e, "Failed to export configurations", 500)
+
+    @bp.route("/import", methods=["POST"])
+    def import_configs():
+        """
+        Import configurations from JSON.
+
+        Request body should contain 'global' and 'publishers' keys.
+        This will overwrite existing configurations.
+        """
+        try:
+            data = request.json
+            if not data:
+                return jsonify({
+                    "status": "error",
+                    "message": "No data provided",
+                }), 400
+
+            success = resolver.import_configs(data)
+            if success:
+                return jsonify({
+                    "status": "success",
+                    "message": "Configurations imported successfully",
+                    "publishers_imported": len(data.get("publishers", {})),
+                })
+            else:
+                return jsonify({
+                    "status": "error",
+                    "message": "Import failed",
+                }), 500
+        except Exception as e:
+            return _safe_error_response(e, "Failed to import configurations", 400)
+
+    @bp.route("/storage/status", methods=["GET"])
+    def storage_status():
+        """
+        Get the status of the configuration storage (Redis).
+        """
+        try:
+            from .config_store import get_config_store
+            store = get_config_store()
+
+            return jsonify({
+                "status": "success",
+                "redis_connected": store.is_redis_connected,
+                "using_memory_fallback": store._use_memory,
+                "publishers_stored": len(store.list_publishers()),
+            })
+        except Exception as e:
+            return _safe_error_response(e, "Failed to get storage status", 500)
+
     return bp
 
 
