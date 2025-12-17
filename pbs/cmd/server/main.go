@@ -19,6 +19,7 @@ import (
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/exchange"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/metrics"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/middleware"
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/usersync"
 	"github.com/StreetsDigital/thenexusengine/pbs/pkg/logger"
 	"github.com/rs/zerolog"
 )
@@ -29,6 +30,8 @@ func main() {
 	idrURL := flag.String("idr-url", "http://localhost:5050", "IDR service URL")
 	idrEnabled := flag.Bool("idr-enabled", true, "Enable IDR integration")
 	timeout := flag.Duration("timeout", 1000*time.Millisecond, "Default auction timeout")
+	externalURL := flag.String("external-url", "https://pbs.nexusengine.io", "External URL for cookie sync redirects")
+	cookieDomain := flag.String("cookie-domain", "", "Domain for sync cookies (empty = auto)")
 	flag.Parse()
 
 	// Initialize structured logger
@@ -78,14 +81,42 @@ func main() {
 		Strs("bidders", bidders).
 		Msg("Bidders registered")
 
+	// Initialize user sync registry
+	syncerRegistry, err := usersync.NewDynamicSyncerRegistry(*externalURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize syncer registry")
+	}
+
+	log.Info().
+		Int("syncer_count", len(syncerRegistry.Keys())).
+		Msg("User sync registry initialized")
+
 	// Create handlers
 	auctionHandler := endpoints.NewAuctionHandler(ex)
 	statusHandler := endpoints.NewStatusHandler()
 	biddersHandler := endpoints.NewInfoBiddersHandler(bidders)
 
+	// Cookie sync handlers
+	cookieSyncConfig := &endpoints.CookieSyncConfig{
+		ExternalURL:     *externalURL,
+		DefaultLimit:    0,
+		MaxLimit:        100,
+		DefaultCoopSync: true,
+		CookieDomain:    *cookieDomain,
+	}
+	cookieSyncHandler := endpoints.NewCookieSyncHandler(cookieSyncConfig, syncerRegistry.SyncerRegistry, bidders)
+
+	setUIDConfig := &endpoints.SetUIDConfig{
+		CookieDomain: *cookieDomain,
+		CookieTTL:    usersync.DefaultCookieTTL,
+	}
+	setUIDHandler := endpoints.NewSetUIDHandler(setUIDConfig, syncerRegistry.SyncerRegistry)
+
 	// Setup routes
 	mux := http.NewServeMux()
 	mux.Handle("/openrtb2/auction", auctionHandler)
+	mux.Handle("/cookie_sync", cookieSyncHandler)
+	mux.Handle("/setuid", setUIDHandler)
 	mux.Handle("/status", statusHandler)
 	mux.Handle("/health", healthHandler())
 	mux.Handle("/info/bidders", biddersHandler)

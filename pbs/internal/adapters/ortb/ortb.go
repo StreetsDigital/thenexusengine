@@ -29,6 +29,7 @@ type BidderConfig struct {
 	RateLimits  RateLimitsConfig  `json:"rate_limits"`
 	RequestTransform  RequestTransformConfig  `json:"request_transform"`
 	ResponseTransform ResponseTransformConfig `json:"response_transform"`
+	UserSync    UserSyncConfig  `json:"user_sync"`
 	Status      string          `json:"status"`
 	GVLVendorID *int            `json:"gvl_vendor_id"`
 	Priority    int             `json:"priority"`
@@ -37,6 +38,15 @@ type BidderConfig struct {
 	BlockedPublishers []string  `json:"blocked_publishers"`
 	AllowedCountries  []string  `json:"allowed_countries"`
 	BlockedCountries  []string  `json:"blocked_countries"`
+}
+
+// UserSyncConfig holds user sync configuration for cookie syncing
+type UserSyncConfig struct {
+	Enabled     bool   `json:"enabled"`
+	IFrameURL   string `json:"iframe_url"`
+	RedirectURL string `json:"redirect_url"`
+	SupportCORS bool   `json:"support_cors"`
+	UserMacro   string `json:"user_macro"` // Macro to replace with PBS callback URL (default: $UID)
 }
 
 // EndpointConfig holds endpoint configuration
