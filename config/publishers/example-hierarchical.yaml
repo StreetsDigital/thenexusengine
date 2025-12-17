@@ -1,0 +1,416 @@
+# Example Publisher Configuration with Hierarchical Feature Settings
+# =====================================================================
+#
+# This file demonstrates the hierarchical configuration system:
+#   Global → Publisher → Site → Ad Unit
+#
+# Each level can override settings from its parent.
+# Settings not specified at a level inherit from the parent.
+#
+# Copy this file and rename to your-publisher-id.yaml
+#
+
+# =============================================
+# PUBLISHER INFORMATION
+# =============================================
+publisher_id: "example-hierarchical"
+name: "Example Publisher with Hierarchical Config"
+enabled: true
+
+contact:
+  email: "adops@example.com"
+  name: "Ad Operations Team"
+
+# =============================================
+# PUBLISHER-LEVEL FEATURE CONFIGURATION
+# =============================================
+# These settings apply to ALL sites and ad units for this publisher
+# unless overridden at a lower level.
+features:
+  config_id: "publisher:example-hierarchical"
+  config_level: "publisher"
+  name: "Publisher Default Settings"
+  description: "Default configuration for all sites under this publisher"
+
+  # IDR Settings at Publisher Level
+  idr:
+    enabled: true
+    bypass_enabled: false
+    shadow_mode: false
+    max_bidders: 12              # Publisher default: 12 bidders
+    min_score_threshold: 20.0    # Publisher default: 20
+    exploration_enabled: true
+    exploration_rate: 0.15       # Publisher default: 15% exploration
+    exploration_slots: 2
+    low_confidence_threshold: 0.5
+    exploration_confidence_threshold: 0.3
+    anchor_bidders_enabled: true
+    anchor_bidder_count: 3
+    custom_anchor_bidders: ["rubicon", "appnexus", "pubmatic"]
+    diversity_enabled: true
+    diversity_categories:
+      - premium
+      - mid_tier
+      - video_specialist
+    scoring_weights:
+      win_rate: 0.25
+      bid_rate: 0.20
+      cpm: 0.15
+      floor_clearance: 0.15
+      latency: 0.10
+      recency: 0.10
+      id_match: 0.05
+    latency_excellent_ms: 100
+    latency_poor_ms: 500
+    selection_timeout_ms: 50
+
+  # Privacy Settings at Publisher Level
+  privacy:
+    privacy_enabled: true
+    privacy_strict_mode: false
+    gdpr_applies: true
+    ccpa_applies: true
+    coppa_applies: false
+    require_consent: true
+    allow_legitimate_interest: true
+
+  # Bidder Settings at Publisher Level
+  bidders:
+    enabled_bidders:
+      - appnexus
+      - rubicon
+      - pubmatic
+      - openx
+      - ix
+      - triplelift
+    disabled_bidders: []
+    bidder_allowlist: []
+    bidder_blocklist: []
+
+  # Floor Settings at Publisher Level
+  floors:
+    floor_enabled: true
+    default_floor_price: 0.50
+    floor_currency: "USD"
+    dynamic_floors_enabled: false
+    floor_adjustment_factor: 1.0
+    banner_floor: 0.50
+    video_floor: 2.00
+    native_floor: 0.75
+    audio_floor: 1.00
+
+  # Rate Limit Settings at Publisher Level
+  rate_limits:
+    rate_limit_enabled: true
+    requests_per_second: 2000
+    burst: 200
+
+  # Feature Flags at Publisher Level
+  features:
+    prebid_enabled: true
+    header_bidding_enabled: true
+    lazy_loading_enabled: false
+    refresh_enabled: true
+    refresh_interval_seconds: 30
+    analytics_enabled: true
+    detailed_logging_enabled: false
+    ab_testing_enabled: false
+    ab_test_group: ""
+
+# =============================================
+# SITES
+# =============================================
+sites:
+  # ---------------------------------------------
+  # Main Site - Uses Publisher Defaults (mostly)
+  # ---------------------------------------------
+  - site_id: "main-site"
+    domain: "www.example.com"
+    name: "Example Main Site"
+    enabled: true
+
+    # Site-level feature overrides (optional)
+    # Only specified settings override publisher defaults
+    features:
+      config_id: "site:main-site"
+      config_level: "site"
+      name: "Main Site Settings"
+
+      # Main site has slightly higher floors
+      floors:
+        default_floor_price: 0.75
+        banner_floor: 0.75
+        video_floor: 3.00
+
+    # Ad Units for Main Site
+    ad_units:
+      - unit_id: "leaderboard-top"
+        name: "Top Leaderboard"
+        sizes: [[728, 90], [970, 90], [970, 250]]
+        media_type: "banner"
+        position: "atf"
+        floor_price: 1.50
+        floor_currency: "USD"
+        # No feature overrides - inherits from site → publisher → global
+
+      - unit_id: "sidebar-mrec"
+        name: "Sidebar Medium Rectangle"
+        sizes: [[300, 250], [300, 600]]
+        media_type: "banner"
+        position: "atf"
+        floor_price: 0.75
+        floor_currency: "USD"
+        # No feature overrides
+
+      - unit_id: "outstream-video"
+        name: "Outstream Video"
+        sizes: [[640, 480]]
+        media_type: "video"
+        position: "btf"
+        floor_price: 5.00
+        floor_currency: "USD"
+        video:
+          context: "outstream"
+          mimes: ["video/mp4", "video/webm"]
+          protocols: [2, 3, 5, 6]
+          playback_method: [1, 2]
+          max_duration: 30
+        # Video ad unit with specific IDR overrides
+        features:
+          config_id: "ad_unit:outstream-video"
+          config_level: "ad_unit"
+          name: "Video Unit Settings"
+          idr:
+            # Video units get more bidders and different anchor bidders
+            max_bidders: 8
+            custom_anchor_bidders: ["spotx", "rubicon", "ix"]
+            diversity_categories:
+              - premium
+              - video_specialist
+          bidders:
+            # Only video-capable bidders for this unit
+            enabled_bidders:
+              - spotx
+              - rubicon
+              - ix
+              - pubmatic
+
+  # ---------------------------------------------
+  # Mobile Site - Optimized for Speed
+  # ---------------------------------------------
+  - site_id: "mobile-site"
+    domain: "m.example.com"
+    name: "Example Mobile Site"
+    enabled: true
+
+    # Mobile site needs fewer bidders for speed
+    features:
+      config_id: "site:mobile-site"
+      config_level: "site"
+      name: "Mobile Site Settings"
+      description: "Optimized for mobile performance"
+
+      idr:
+        # Mobile gets fewer bidders for faster auctions
+        max_bidders: 6
+        selection_timeout_ms: 30
+        # Lower exploration on mobile
+        exploration_rate: 0.05
+        exploration_slots: 1
+        # Fewer anchor bidders
+        anchor_bidder_count: 2
+
+      rate_limits:
+        # Higher rate limits for mobile traffic
+        requests_per_second: 5000
+        burst: 500
+
+      features:
+        # Enable lazy loading on mobile
+        lazy_loading_enabled: true
+        refresh_enabled: false   # No refresh on mobile
+
+    ad_units:
+      - unit_id: "mobile-banner"
+        name: "Mobile Banner"
+        sizes: [[320, 50], [300, 50]]
+        media_type: "banner"
+        position: "atf"
+        floor_price: 0.50
+        floor_currency: "USD"
+        # Inherits mobile site settings
+
+      - unit_id: "mobile-interstitial"
+        name: "Mobile Interstitial"
+        sizes: [[320, 480], [300, 250]]
+        media_type: "banner"
+        position: "interstitial"
+        floor_price: 3.00
+        floor_currency: "USD"
+        # Interstitials get more aggressive bidding
+        features:
+          config_id: "ad_unit:mobile-interstitial"
+          config_level: "ad_unit"
+          idr:
+            # Interstitials are high value - use more bidders
+            max_bidders: 10
+            min_score_threshold: 15.0
+          floors:
+            default_floor_price: 3.00
+
+  # ---------------------------------------------
+  # Premium Site - High-Value Inventory
+  # ---------------------------------------------
+  - site_id: "premium-site"
+    domain: "premium.example.com"
+    name: "Premium Content Site"
+    enabled: true
+
+    # Premium site with strict quality controls
+    features:
+      config_id: "site:premium-site"
+      config_level: "site"
+      name: "Premium Site Settings"
+
+      idr:
+        # Premium gets all bidders but higher score threshold
+        max_bidders: 15
+        min_score_threshold: 40.0   # Higher quality threshold
+        # Less exploration - we know what works
+        exploration_rate: 0.05
+        # Strict latency requirements
+        latency_excellent_ms: 80
+        latency_poor_ms: 300
+
+      privacy:
+        # Premium site is stricter on privacy
+        privacy_strict_mode: true
+
+      floors:
+        # Premium inventory has higher floors
+        default_floor_price: 2.00
+        banner_floor: 2.00
+        video_floor: 8.00
+        native_floor: 3.00
+
+      features:
+        # Enable detailed logging for premium
+        detailed_logging_enabled: true
+        # A/B testing enabled
+        ab_testing_enabled: true
+        ab_test_group: "premium_optimization"
+
+    ad_units:
+      - unit_id: "premium-hero"
+        name: "Premium Hero Unit"
+        sizes: [[970, 250], [728, 90]]
+        media_type: "banner"
+        position: "atf"
+        floor_price: 5.00
+        floor_currency: "USD"
+        # Hero unit with maximum bidder participation
+        features:
+          config_id: "ad_unit:premium-hero"
+          config_level: "ad_unit"
+          idr:
+            max_bidders: 15
+            # Hero gets specific anchor bidders
+            custom_anchor_bidders: ["rubicon", "appnexus", "pubmatic", "ix"]
+
+      - unit_id: "premium-native"
+        name: "Premium Native"
+        sizes: [[1, 1]]
+        media_type: "native"
+        position: "btf"
+        floor_price: 3.00
+        floor_currency: "USD"
+        features:
+          config_id: "ad_unit:premium-native"
+          config_level: "ad_unit"
+          idr:
+            # Native-specialist bidders
+            custom_anchor_bidders: ["triplelift", "sharethrough", "outbrain"]
+            diversity_categories:
+              - native
+              - premium
+
+# =============================================
+# LEGACY BIDDER CONFIGURATIONS
+# =============================================
+# These are still supported for backwards compatibility
+bidders:
+  appnexus:
+    enabled: true
+    params:
+      placement_id: 12345678
+    site_overrides:
+      mobile-site:
+        placement_id: 87654321
+
+  rubicon:
+    enabled: true
+    params:
+      account_id: 1001
+      site_id: 2002
+      zone_id: 3003
+
+  pubmatic:
+    enabled: true
+    params:
+      publisher_id: "pub-12345"
+
+  openx:
+    enabled: true
+    params:
+      unit: "540123456"
+      del_domain: "example-pub.openx.net"
+
+  ix:
+    enabled: true
+    params:
+      site_id: "123456"
+
+  triplelift:
+    enabled: true
+    params:
+      inventory_code: "example_main"
+
+  spotx:
+    enabled: true
+    params:
+      channel_id: "123456"
+
+# =============================================
+# LEGACY IDR SETTINGS (backwards compatible)
+# =============================================
+# These are migrated to features.idr automatically
+idr:
+  max_bidders: 12
+  min_score: 0.2
+  timeout_ms: 50
+
+# =============================================
+# LEGACY RATE LIMITS
+# =============================================
+rate_limits:
+  requests_per_second: 2000
+  burst: 200
+
+# =============================================
+# LEGACY PRIVACY SETTINGS
+# =============================================
+privacy:
+  gdpr_applies: true
+  ccpa_applies: true
+  coppa_applies: false
+
+# =============================================
+# TARGETING RULES (Optional)
+# =============================================
+targeting:
+  blocked:
+    - bidder: "spotx"
+      ad_units: ["sidebar-mrec", "leaderboard-top"]
+  allowed:
+    - bidder: "spotx"
+      ad_units: ["outstream-video"]

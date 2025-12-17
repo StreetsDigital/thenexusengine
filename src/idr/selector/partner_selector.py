@@ -5,18 +5,25 @@ Selects which bidders to include in the auction based on scores,
 ensuring optimal partner selection with diversity and exploration.
 
 Includes privacy filtering to ensure compliance with GDPR, CCPA, etc.
+
+Supports hierarchical configuration resolution:
+- Global defaults
+- Publisher-level overrides
+- Site-level overrides
+- Ad unit-level overrides
 """
 
 import random
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Optional, Protocol
 
 from ..models.bidder_score import BidderScore
 from ..models.classified_request import AdFormat, ClassifiedRequest
 from ..utils.constants import BIDDER_CATEGORIES
 
 if TYPE_CHECKING:
+    from ..config.config_resolver import ResolvedConfig
     from ..privacy.privacy_filter import PrivacyFilter, PrivacyFilterResult
 
 
@@ -99,6 +106,30 @@ class SelectorConfig:
         )
 
     @classmethod
+    def from_resolved_config(cls, resolved: "ResolvedConfig") -> 'SelectorConfig':
+        """
+        Create config from a hierarchically resolved configuration.
+
+        This allows the selector to use configuration that has been
+        resolved through the Global → Publisher → Site → Ad Unit chain.
+        """
+        return cls(
+            bypass_enabled=resolved.bypass_enabled,
+            shadow_mode=resolved.shadow_mode,
+            privacy_enabled=resolved.privacy_enabled,
+            privacy_strict_mode=resolved.privacy_strict_mode,
+            max_bidders=resolved.max_bidders,
+            min_score_threshold=resolved.min_score_threshold,
+            exploration_rate=resolved.exploration_rate if resolved.exploration_enabled else 0.0,
+            exploration_slots=resolved.exploration_slots if resolved.exploration_enabled else 0,
+            anchor_bidder_count=resolved.anchor_bidder_count if resolved.anchor_bidders_enabled else 0,
+            low_confidence_threshold=resolved.low_confidence_threshold,
+            exploration_confidence_threshold=resolved.exploration_confidence_threshold,
+            diversity_enabled=resolved.diversity_enabled,
+            diversity_categories=resolved.diversity_categories,
+        )
+
+    @classmethod
     def bypass(cls) -> 'SelectorConfig':
         """Create a bypass configuration that selects all bidders."""
         return cls(bypass_enabled=True)
@@ -107,6 +138,24 @@ class SelectorConfig:
     def shadow(cls) -> 'SelectorConfig':
         """Create a shadow mode configuration for testing."""
         return cls(shadow_mode=True)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            'bypass_enabled': self.bypass_enabled,
+            'shadow_mode': self.shadow_mode,
+            'privacy_enabled': self.privacy_enabled,
+            'privacy_strict_mode': self.privacy_strict_mode,
+            'max_bidders': self.max_bidders,
+            'min_score_threshold': self.min_score_threshold,
+            'exploration_rate': self.exploration_rate,
+            'exploration_slots': self.exploration_slots,
+            'anchor_bidder_count': self.anchor_bidder_count,
+            'low_confidence_threshold': self.low_confidence_threshold,
+            'exploration_confidence_threshold': self.exploration_confidence_threshold,
+            'diversity_enabled': self.diversity_enabled,
+            'diversity_categories': self.diversity_categories,
+        }
 
 
 @dataclass
@@ -676,3 +725,112 @@ class MockAnchorProvider:
         """Get anchor bidders for publisher."""
         bidders = self._anchors.get(publisher_id, self._default)
         return bidders[:limit]
+
+
+def create_selector_for_context(
+    publisher_id: Optional[str] = None,
+    site_id: Optional[str] = None,
+    unit_id: Optional[str] = None,
+    anchor_provider: Optional[AnchorBidderProvider] = None,
+    privacy_filter: Optional["PrivacyFilter"] = None,
+    random_seed: Optional[int] = None,
+) -> PartnerSelector:
+    """
+    Create a PartnerSelector with hierarchically resolved configuration.
+
+    This is the recommended way to create a selector when you need
+    configuration to be resolved through the hierarchy:
+    Global → Publisher → Site → Ad Unit
+
+    Args:
+        publisher_id: Publisher ID for config resolution
+        site_id: Site ID for config resolution (requires publisher_id)
+        unit_id: Ad unit ID for config resolution (requires site_id)
+        anchor_provider: Provider for anchor bidder data
+        privacy_filter: Privacy filter for GDPR/CCPA compliance
+        random_seed: Optional seed for reproducible selection
+
+    Returns:
+        PartnerSelector configured with resolved settings
+
+    Example:
+        # Get selector with global defaults
+        selector = create_selector_for_context()
+
+        # Get selector with publisher-specific settings
+        selector = create_selector_for_context(publisher_id="pub123")
+
+        # Get selector with site-specific settings
+        selector = create_selector_for_context(
+            publisher_id="pub123",
+            site_id="site456"
+        )
+
+        # Get selector with ad unit-specific settings
+        selector = create_selector_for_context(
+            publisher_id="pub123",
+            site_id="site456",
+            unit_id="unit789"
+        )
+    """
+    from ..config.config_resolver import resolve_config
+
+    resolved = resolve_config(publisher_id, site_id, unit_id)
+    config = SelectorConfig.from_resolved_config(resolved)
+
+    # Use custom anchor bidders if specified in config
+    effective_anchor_provider = anchor_provider
+    if resolved.custom_anchor_bidders:
+        effective_anchor_provider = MockAnchorProvider({
+            publisher_id or "default": resolved.custom_anchor_bidders
+        })
+
+    return PartnerSelector(
+        config=config,
+        anchor_provider=effective_anchor_provider,
+        privacy_filter=privacy_filter,
+        random_seed=random_seed,
+    )
+
+
+def select_partners_for_request(
+    scores: list[BidderScore],
+    request: ClassifiedRequest,
+    anchor_provider: Optional[AnchorBidderProvider] = None,
+    privacy_filter: Optional["PrivacyFilter"] = None,
+) -> SelectionResult:
+    """
+    Select partners using hierarchically resolved configuration.
+
+    This convenience function automatically resolves configuration based
+    on the request's publisher_id, site_id, and ad unit information.
+
+    Args:
+        scores: List of bidder scores
+        request: Classified bid request
+        anchor_provider: Provider for anchor bidder data
+        privacy_filter: Privacy filter for GDPR/CCPA compliance
+
+    Returns:
+        SelectionResult with selected bidders and metadata
+    """
+    # Extract context from request
+    publisher_id = request.publisher_id if hasattr(request, 'publisher_id') else None
+    site_id = request.site_id if hasattr(request, 'site_id') else None
+
+    # Ad unit ID might be in different places depending on request structure
+    unit_id = None
+    if hasattr(request, 'ad_unit_id'):
+        unit_id = request.ad_unit_id
+    elif hasattr(request, 'impression_id'):
+        unit_id = request.impression_id
+
+    selector = create_selector_for_context(
+        publisher_id=publisher_id,
+        site_id=site_id,
+        unit_id=unit_id,
+        anchor_provider=anchor_provider,
+        privacy_filter=privacy_filter,
+    )
+
+    return selector.select_partners(scores, request)
