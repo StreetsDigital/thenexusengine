@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters"
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/ortb"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/fpd"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 	"github.com/StreetsDigital/thenexusengine/pbs/pkg/idr"
@@ -16,13 +17,14 @@ import (
 
 // Exchange orchestrates the auction process
 type Exchange struct {
-	registry      *adapters.Registry
-	httpClient    adapters.HTTPClient
-	idrClient     *idr.Client
-	eventRecorder *idr.EventRecorder
-	config        *Config
-	fpdProcessor  *fpd.Processor
-	eidFilter     *fpd.EIDFilter
+	registry         *adapters.Registry
+	dynamicRegistry  *ortb.DynamicRegistry
+	httpClient       adapters.HTTPClient
+	idrClient        *idr.Client
+	eventRecorder    *idr.EventRecorder
+	config           *Config
+	fpdProcessor     *fpd.Processor
+	eidFilter        *fpd.EIDFilter
 }
 
 // Config holds exchange configuration
@@ -36,20 +38,25 @@ type Config struct {
 	CurrencyConv       bool
 	DefaultCurrency    string
 	FPD                *fpd.Config
+	// Dynamic bidder configuration
+	DynamicBiddersEnabled bool
+	DynamicRefreshPeriod  time.Duration
 }
 
 // DefaultConfig returns default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		DefaultTimeout:     1000 * time.Millisecond,
-		MaxBidders:         50,
-		IDREnabled:         true,
-		IDRServiceURL:      "http://localhost:5050",
-		EventRecordEnabled: true,
-		EventBufferSize:    100,
-		CurrencyConv:       false,
-		DefaultCurrency:    "USD",
-		FPD:                fpd.DefaultConfig(),
+		DefaultTimeout:        1000 * time.Millisecond,
+		MaxBidders:            50,
+		IDREnabled:            true,
+		IDRServiceURL:         "http://localhost:5050",
+		EventRecordEnabled:    true,
+		EventBufferSize:       100,
+		CurrencyConv:          false,
+		DefaultCurrency:       "USD",
+		FPD:                   fpd.DefaultConfig(),
+		DynamicBiddersEnabled: true,
+		DynamicRefreshPeriod:  30 * time.Second,
 	}
 }
 
@@ -82,6 +89,16 @@ func New(registry *adapters.Registry, config *Config) *Exchange {
 	}
 
 	return ex
+}
+
+// SetDynamicRegistry sets the dynamic bidder registry
+func (e *Exchange) SetDynamicRegistry(dr *ortb.DynamicRegistry) {
+	e.dynamicRegistry = dr
+}
+
+// GetDynamicRegistry returns the dynamic registry
+func (e *Exchange) GetDynamicRegistry() *ortb.DynamicRegistry {
+	return e.dynamicRegistry
 }
 
 // AuctionRequest contains auction parameters
@@ -147,8 +164,15 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Get available bidders
+	// Get available bidders from static registry
 	availableBidders := e.registry.ListEnabledBidders()
+
+	// Add dynamic bidders if enabled
+	if e.config.DynamicBiddersEnabled && e.dynamicRegistry != nil {
+		dynamicCodes := e.dynamicRegistry.ListEnabledBidderCodes()
+		availableBidders = append(availableBidders, dynamicCodes...)
+	}
+
 	if len(availableBidders) == 0 {
 		response.BidResponse = e.buildEmptyResponse(req.BidRequest)
 		return response, nil
@@ -316,24 +340,50 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 	var wg sync.WaitGroup
 
 	for _, bidderCode := range bidders {
+		// Try static registry first
 		adapterWithInfo, ok := e.registry.Get(bidderCode)
-		if !ok {
+		if ok {
+			wg.Add(1)
+			go func(code string, awi adapters.AdapterWithInfo) {
+				defer wg.Done()
+
+				// Clone request and apply bidder-specific FPD
+				bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
+
+				result := e.callBidder(ctx, bidderReq, code, awi.Adapter, timeout)
+
+				mu.Lock()
+				results[code] = result
+				mu.Unlock()
+			}(bidderCode, adapterWithInfo)
 			continue
 		}
 
-		wg.Add(1)
-		go func(code string, awi adapters.AdapterWithInfo) {
-			defer wg.Done()
+		// Try dynamic registry
+		if e.dynamicRegistry != nil {
+			dynamicAdapter, found := e.dynamicRegistry.Get(bidderCode)
+			if found {
+				wg.Add(1)
+				go func(code string, da *ortb.GenericAdapter) {
+					defer wg.Done()
 
-			// Clone request and apply bidder-specific FPD
-			bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
+					// Clone request and apply bidder-specific FPD
+					bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
 
-			result := e.callBidder(ctx, bidderReq, code, awi.Adapter, timeout)
+					// Use dynamic adapter's timeout if smaller
+					bidderTimeout := timeout
+					if da.GetTimeout() > 0 && da.GetTimeout() < timeout {
+						bidderTimeout = da.GetTimeout()
+					}
 
-			mu.Lock()
-			results[code] = result
-			mu.Unlock()
-		}(bidderCode, adapterWithInfo)
+					result := e.callBidder(ctx, bidderReq, code, da, bidderTimeout)
+
+					mu.Lock()
+					results[code] = result
+					mu.Unlock()
+				}(bidderCode, dynamicAdapter)
+			}
+		}
 	}
 
 	wg.Wait()

@@ -369,6 +369,12 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
         config = load_config(app.config['CONFIG_PATH'])
         return render_template('index.html', config=config, user=getattr(g, 'user', None), auth_enabled=auth_enabled)
 
+    @app.route('/bidders')
+    @login_required
+    def bidders_page():
+        """OpenRTB Bidders management page."""
+        return render_template('bidders.html', user=getattr(g, 'user', None), auth_enabled=auth_enabled)
+
     @app.route('/api/config', methods=['GET'])
     @login_required
     def get_config():
@@ -1482,6 +1488,737 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
             return jsonify({
                 'valid': False,
                 'error': 'Validation failed'
+            }), 500
+
+    # =========================================
+    # OpenRTB Bidder Management Endpoints
+    # =========================================
+
+    # Import bidder manager
+    try:
+        from src.idr.bidders import (
+            BidderManager,
+            get_bidder_manager,
+            BidderConfig,
+            BidderStatus,
+            BidderNotFoundError,
+            BidderAlreadyExistsError,
+            InvalidBidderConfigError,
+        )
+        BIDDER_MANAGER_AVAILABLE = True
+    except ImportError:
+        BIDDER_MANAGER_AVAILABLE = False
+
+    def _sanitize_bidder_code(bidder_code: str) -> str:
+        """Sanitize bidder code to prevent injection attacks."""
+        if not bidder_code:
+            return ''
+        # Only allow lowercase alphanumeric and hyphens
+        sanitized = re.sub(r'[^a-z0-9-]', '', bidder_code.lower())
+        return sanitized[:64]
+
+    @app.route('/api/bidders', methods=['GET'])
+    @login_required
+    def list_bidders():
+        """
+        List all configured OpenRTB bidders.
+
+        Query parameters:
+            include_disabled: Include disabled bidders (default: true)
+            publisher_id: Filter by publisher access (optional)
+        """
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        try:
+            manager = get_bidder_manager()
+            include_disabled = request.args.get('include_disabled', 'true').lower() == 'true'
+            publisher_id = request.args.get('publisher_id')
+
+            if publisher_id:
+                safe_publisher_id = _sanitize_publisher_id(publisher_id)
+                bidders = manager.get_bidders_for_publisher(safe_publisher_id)
+            else:
+                bidders = manager.list_bidders(include_disabled=include_disabled)
+
+            return jsonify({
+                'bidders': [
+                    {
+                        'bidder_code': b.bidder_code,
+                        'name': b.name,
+                        'description': b.description,
+                        'endpoint_url': b.endpoint.url,
+                        'status': b.status.value,
+                        'media_types': b.capabilities.media_types,
+                        'priority': b.priority,
+                        'gvl_vendor_id': b.gvl_vendor_id,
+                        'created_at': b.created_at,
+                        'updated_at': b.updated_at,
+                        'stats': {
+                            'total_requests': b.total_requests,
+                            'total_bids': b.total_bids,
+                            'total_wins': b.total_wins,
+                            'bid_rate': b.bid_rate,
+                            'win_rate': b.win_rate,
+                            'avg_latency_ms': b.avg_latency_ms,
+                            'avg_bid_cpm': b.avg_bid_cpm,
+                        },
+                    }
+                    for b in bidders
+                ],
+                'total': len(bidders)
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to list bidders', 500))
+
+    @app.route('/api/bidders', methods=['POST'])
+    @login_required
+    def create_bidder():
+        """
+        Create a new OpenRTB bidder.
+
+        Request body:
+        {
+            "name": "My DSP",
+            "endpoint_url": "https://dsp.example.com/bid",
+            "media_types": ["banner", "video"],
+            "bidder_code": "my-dsp",  // Optional, generated from name
+            "description": "My demand source",
+            "timeout_ms": 200,
+            "protocol_version": "2.6",
+            "auth_type": "bearer",
+            "auth_token": "secret",
+            "gvl_vendor_id": 123,
+            "priority": 50,
+            "capabilities": {...},
+            "request_transform": {...},
+            "response_transform": {...}
+        }
+        """
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        try:
+            data = request.json
+
+            # Validate required fields
+            if not data.get('name'):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'name is required'
+                }), 400
+
+            if not data.get('endpoint_url'):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'endpoint_url is required'
+                }), 400
+
+            manager = get_bidder_manager()
+
+            # Extract parameters
+            kwargs = {}
+            if 'maintainer_email' in data:
+                kwargs['maintainer_email'] = data['maintainer_email']
+            if 'maintainer_name' in data:
+                kwargs['maintainer_name'] = data['maintainer_name']
+            if 'allowed_publishers' in data:
+                kwargs['allowed_publishers'] = data['allowed_publishers']
+            if 'blocked_publishers' in data:
+                kwargs['blocked_publishers'] = data['blocked_publishers']
+            if 'allowed_countries' in data:
+                kwargs['allowed_countries'] = data['allowed_countries']
+            if 'blocked_countries' in data:
+                kwargs['blocked_countries'] = data['blocked_countries']
+
+            bidder = manager.create_bidder(
+                name=data['name'],
+                endpoint_url=data['endpoint_url'],
+                media_types=data.get('media_types', ['banner']),
+                bidder_code=data.get('bidder_code'),
+                description=data.get('description', ''),
+                timeout_ms=data.get('timeout_ms', 200),
+                protocol_version=data.get('protocol_version', '2.6'),
+                auth_type=data.get('auth_type'),
+                auth_token=data.get('auth_token'),
+                gvl_vendor_id=data.get('gvl_vendor_id'),
+                priority=data.get('priority', 50),
+                custom_headers=data.get('custom_headers'),
+                **kwargs
+            )
+
+            return jsonify({
+                'status': 'success',
+                'bidder_code': bidder.bidder_code,
+                'message': f'Bidder {bidder.name} created successfully',
+                'bidder': bidder.to_dict()
+            }), 201
+
+        except BidderAlreadyExistsError as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 409
+        except InvalidBidderConfigError as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 400
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to create bidder', 500))
+
+    @app.route('/api/bidders/<bidder_code>', methods=['GET'])
+    @login_required
+    def get_bidder(bidder_code: str):
+        """Get a specific bidder configuration."""
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code or safe_code != bidder_code.lower():
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code format'
+            }), 400
+
+        try:
+            manager = get_bidder_manager()
+            bidder = manager.get_bidder(safe_code)
+            stats = manager.get_stats(safe_code)
+
+            response_data = bidder.to_dict()
+            response_data['realtime_stats'] = stats
+
+            return jsonify(response_data)
+
+        except BidderNotFoundError:
+            return jsonify({
+                'status': 'error',
+                'message': f'Bidder not found: {safe_code}'
+            }), 404
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to get bidder', 500))
+
+    @app.route('/api/bidders/<bidder_code>', methods=['PUT', 'PATCH'])
+    @login_required
+    def update_bidder(bidder_code: str):
+        """
+        Update a bidder configuration.
+
+        PUT replaces the entire config, PATCH updates specific fields.
+        """
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code or safe_code != bidder_code.lower():
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code format'
+            }), 400
+
+        try:
+            manager = get_bidder_manager()
+            data = request.json
+
+            # Map nested fields for endpoint updates
+            if 'endpoint_url' in data:
+                data['endpoint_url'] = data['endpoint_url']
+            if 'endpoint' in data:
+                endpoint = data.pop('endpoint')
+                for k, v in endpoint.items():
+                    data[f'endpoint_{k}'] = v
+
+            # Map nested fields for capabilities
+            if 'capabilities' in data:
+                caps = data.pop('capabilities')
+                for k, v in caps.items():
+                    data[f'capabilities_{k}'] = v
+
+            bidder = manager.update_bidder(safe_code, **data)
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Bidder {safe_code} updated',
+                'bidder': bidder.to_dict()
+            })
+
+        except BidderNotFoundError:
+            return jsonify({
+                'status': 'error',
+                'message': f'Bidder not found: {safe_code}'
+            }), 404
+        except InvalidBidderConfigError as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 400
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to update bidder', 500))
+
+    @app.route('/api/bidders/<bidder_code>', methods=['DELETE'])
+    @login_required
+    def delete_bidder(bidder_code: str):
+        """Delete a bidder."""
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code or safe_code != bidder_code.lower():
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code format'
+            }), 400
+
+        try:
+            manager = get_bidder_manager()
+            manager.delete_bidder(safe_code)
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Bidder {safe_code} deleted'
+            })
+
+        except BidderNotFoundError:
+            return jsonify({
+                'status': 'error',
+                'message': f'Bidder not found: {safe_code}'
+            }), 404
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to delete bidder', 500))
+
+    @app.route('/api/bidders/<bidder_code>/enable', methods=['POST'])
+    @login_required
+    def enable_bidder(bidder_code: str):
+        """Enable a bidder (set status to active)."""
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code'
+            }), 400
+
+        try:
+            manager = get_bidder_manager()
+            bidder = manager.enable_bidder(safe_code)
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Bidder {safe_code} enabled',
+                'bidder_status': bidder.status.value
+            })
+
+        except BidderNotFoundError:
+            return jsonify({
+                'status': 'error',
+                'message': f'Bidder not found: {safe_code}'
+            }), 404
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to enable bidder', 500))
+
+    @app.route('/api/bidders/<bidder_code>/disable', methods=['POST'])
+    @login_required
+    def disable_bidder(bidder_code: str):
+        """Disable a bidder."""
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code'
+            }), 400
+
+        try:
+            manager = get_bidder_manager()
+            bidder = manager.disable_bidder(safe_code)
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Bidder {safe_code} disabled',
+                'bidder_status': bidder.status.value
+            })
+
+        except BidderNotFoundError:
+            return jsonify({
+                'status': 'error',
+                'message': f'Bidder not found: {safe_code}'
+            }), 404
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to disable bidder', 500))
+
+    @app.route('/api/bidders/<bidder_code>/pause', methods=['POST'])
+    @login_required
+    def pause_bidder(bidder_code: str):
+        """Pause a bidder temporarily."""
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code'
+            }), 400
+
+        try:
+            manager = get_bidder_manager()
+            bidder = manager.pause_bidder(safe_code)
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Bidder {safe_code} paused',
+                'bidder_status': bidder.status.value
+            })
+
+        except BidderNotFoundError:
+            return jsonify({
+                'status': 'error',
+                'message': f'Bidder not found: {safe_code}'
+            }), 404
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to pause bidder', 500))
+
+    @app.route('/api/bidders/<bidder_code>/test', methods=['POST'])
+    @login_required
+    def test_bidder(bidder_code: str):
+        """
+        Test a bidder's endpoint with a sample OpenRTB request.
+
+        Returns connection status, latency, and sample response.
+        """
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code'
+            }), 400
+
+        try:
+            manager = get_bidder_manager()
+            result = manager.test_endpoint(safe_code)
+
+            return jsonify({
+                'status': 'success' if result.get('success') else 'error',
+                'test_result': result
+            })
+
+        except BidderNotFoundError:
+            return jsonify({
+                'status': 'error',
+                'message': f'Bidder not found: {safe_code}'
+            }), 404
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to test bidder', 500))
+
+    @app.route('/api/bidders/<bidder_code>/stats', methods=['GET'])
+    @login_required
+    def get_bidder_stats(bidder_code: str):
+        """Get real-time statistics for a bidder."""
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code'
+            }), 400
+
+        try:
+            manager = get_bidder_manager()
+            stats = manager.get_stats(safe_code)
+
+            if not stats:
+                return jsonify({
+                    'bidder_code': safe_code,
+                    'message': 'No statistics available yet',
+                    'stats': {}
+                })
+
+            return jsonify({
+                'bidder_code': safe_code,
+                'stats': stats
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to get bidder stats', 500))
+
+    @app.route('/api/bidders/<bidder_code>/stats/reset', methods=['POST'])
+    @login_required
+    def reset_bidder_stats(bidder_code: str):
+        """Reset statistics for a bidder."""
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code'
+            }), 400
+
+        try:
+            manager = get_bidder_manager()
+            manager.reset_stats(safe_code)
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Statistics reset for {safe_code}'
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to reset bidder stats', 500))
+
+    @app.route('/api/bidders/<bidder_code>/duplicate', methods=['POST'])
+    @login_required
+    def duplicate_bidder(bidder_code: str):
+        """
+        Create a copy of an existing bidder.
+
+        Request body:
+        {
+            "new_name": "My DSP Copy",
+            "new_endpoint_url": "https://new-endpoint.example.com/bid"  // Optional
+        }
+        """
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        safe_code = _sanitize_bidder_code(bidder_code)
+        if not safe_code:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid bidder code'
+            }), 400
+
+        try:
+            data = request.json
+            new_name = data.get('new_name')
+
+            if not new_name:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'new_name is required'
+                }), 400
+
+            manager = get_bidder_manager()
+            new_bidder = manager.duplicate_bidder(
+                source_code=safe_code,
+                new_name=new_name,
+                new_endpoint_url=data.get('new_endpoint_url')
+            )
+
+            return jsonify({
+                'status': 'success',
+                'message': f'Bidder duplicated as {new_bidder.bidder_code}',
+                'bidder': new_bidder.to_dict()
+            }), 201
+
+        except BidderNotFoundError:
+            return jsonify({
+                'status': 'error',
+                'message': f'Source bidder not found: {safe_code}'
+            }), 404
+        except BidderAlreadyExistsError as e:
+            return jsonify({
+                'status': 'error',
+                'message': str(e)
+            }), 409
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to duplicate bidder', 500))
+
+    @app.route('/api/bidders/export', methods=['GET'])
+    @login_required
+    def export_bidders():
+        """Export all bidder configurations as JSON."""
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        try:
+            manager = get_bidder_manager()
+            bidders = manager.list_bidders(include_disabled=True)
+
+            return jsonify({
+                'bidders': [b.to_dict() for b in bidders],
+                'exported_at': datetime.now().isoformat(),
+                'count': len(bidders)
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to export bidders', 500))
+
+    @app.route('/api/bidders/import', methods=['POST'])
+    @login_required
+    def import_bidders():
+        """
+        Import bidder configurations from JSON.
+
+        Request body:
+        {
+            "bidders": [{...}, {...}],
+            "overwrite": false  // If true, overwrite existing bidders
+        }
+        """
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'status': 'error',
+                'message': 'Bidder manager not available'
+            }), 500
+
+        try:
+            data = request.json
+            bidders_data = data.get('bidders', [])
+            overwrite = data.get('overwrite', False)
+
+            if not bidders_data:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'No bidders to import'
+                }), 400
+
+            manager = get_bidder_manager()
+            imported = []
+            skipped = []
+            errors = []
+
+            for bidder_dict in bidders_data:
+                try:
+                    code = bidder_dict.get('bidder_code', '')
+
+                    # Check if exists
+                    try:
+                        existing = manager.get_bidder(code)
+                        if not overwrite:
+                            skipped.append(code)
+                            continue
+                        # Delete existing if overwrite
+                        manager.delete_bidder(code)
+                    except BidderNotFoundError:
+                        pass
+
+                    # Import
+                    bidder = manager.import_bidder(bidder_dict)
+                    imported.append(bidder.bidder_code)
+
+                except Exception as e:
+                    errors.append({
+                        'bidder_code': bidder_dict.get('bidder_code', 'unknown'),
+                        'error': str(e)
+                    })
+
+            return jsonify({
+                'status': 'success',
+                'imported': imported,
+                'skipped': skipped,
+                'errors': errors,
+                'summary': {
+                    'total': len(bidders_data),
+                    'imported': len(imported),
+                    'skipped': len(skipped),
+                    'failed': len(errors)
+                }
+            })
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to import bidders', 500))
+
+    # =========================================
+    # Bidder Listing for PBS (No Auth Required)
+    # =========================================
+
+    @app.route('/api/bidders/active', methods=['GET'])
+    def list_active_bidders():
+        """
+        List active bidders for PBS.
+
+        This endpoint does NOT require admin authentication since
+        it's called by PBS to get available bidders.
+        """
+        if not BIDDER_MANAGER_AVAILABLE:
+            return jsonify({
+                'bidders': [],
+                'error': 'Bidder manager not available'
+            }), 500
+
+        try:
+            manager = get_bidder_manager()
+            publisher_id = request.args.get('publisher_id')
+            country = request.args.get('country')
+
+            if publisher_id:
+                safe_pub_id = _sanitize_publisher_id(publisher_id)
+                bidders = manager.get_bidders_for_publisher(safe_pub_id, country)
+            else:
+                bidders = manager.get_active_bidders()
+
+            return jsonify({
+                'bidders': [
+                    {
+                        'bidder_code': b.bidder_code,
+                        'endpoint': b.endpoint.to_dict(),
+                        'capabilities': b.capabilities.to_dict(),
+                        'request_transform': b.request_transform.to_dict(),
+                        'response_transform': b.response_transform.to_dict(),
+                        'gvl_vendor_id': b.gvl_vendor_id,
+                        'priority': b.priority,
+                    }
+                    for b in bidders
+                ],
+                'count': len(bidders)
+            })
+
+        except Exception as e:
+            return jsonify({
+                'bidders': [],
+                'error': 'Failed to list active bidders'
             }), 500
 
     return app

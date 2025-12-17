@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenRTB Bidders - The Nexus Engine</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--gray-100);
+            color: var(--gray-800);
+            line-height: 1.5;
+        }
+
+        .header {
+            background: var(--gray-900);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 { font-size: 1.5rem; font-weight: 600; }
+        .header .subtitle { color: var(--gray-300); font-size: 0.875rem; }
+
+        .header-right { display: flex; align-items: center; gap: 1rem; }
+
+        .nav-link {
+            color: var(--gray-300);
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            transition: all 0.15s;
+        }
+        .nav-link:hover { background: var(--gray-700); color: white; }
+        .nav-link.active { background: var(--primary); color: white; }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .page-title { font-size: 1.75rem; font-weight: 700; }
+        .page-subtitle { color: var(--gray-600); margin-top: 0.25rem; }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.625rem 1.25rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            border-radius: 0.375rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-decoration: none;
+        }
+
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-success { background: var(--success); color: white; }
+        .btn-success:hover { background: #059669; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-secondary { background: var(--gray-200); color: var(--gray-700); }
+        .btn-secondary:hover { background: var(--gray-300); }
+        .btn-sm { padding: 0.375rem 0.75rem; font-size: 0.8125rem; }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+        .alert.success { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+        .alert.error { background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; }
+        .alert.show { display: block; }
+
+        .card {
+            background: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-header h2 { font-size: 1.125rem; font-weight: 600; }
+        .card-body { padding: 1.5rem; }
+
+        .bidders-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .bidders-table th,
+        .bidders-table td {
+            padding: 0.875rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .bidders-table th {
+            background: var(--gray-50);
+            font-weight: 600;
+            font-size: 0.8125rem;
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+            color: var(--gray-600);
+        }
+
+        .bidders-table tr:hover { background: var(--gray-50); }
+        .bidders-table tr:last-child td { border-bottom: none; }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-active { background: #d1fae5; color: #065f46; }
+        .status-testing { background: #dbeafe; color: #1e40af; }
+        .status-paused { background: #fef3c7; color: #92400e; }
+        .status-disabled { background: #f3f4f6; color: #6b7280; }
+
+        .media-type-badge {
+            display: inline-block;
+            padding: 0.125rem 0.5rem;
+            background: var(--gray-100);
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            margin-right: 0.25rem;
+            color: var(--gray-700);
+        }
+
+        .stat-value { font-weight: 600; font-size: 0.875rem; }
+        .stat-label { font-size: 0.75rem; color: var(--gray-600); }
+
+        .actions { display: flex; gap: 0.5rem; }
+
+        /* Modal Styles */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-backdrop.show { display: flex; }
+
+        .modal {
+            background: white;
+            border-radius: 0.75rem;
+            width: 100%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+        }
+
+        .modal-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 { font-size: 1.25rem; font-weight: 600; }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            color: var(--gray-600);
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        .modal-body { padding: 1.5rem; }
+
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+        }
+
+        .form-group { margin-bottom: 1.25rem; }
+        .form-group:last-child { margin-bottom: 0; }
+
+        .form-group label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--gray-700);
+            margin-bottom: 0.5rem;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.625rem 0.875rem;
+            border: 1px solid var(--gray-300);
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            transition: border-color 0.15s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .form-group .help-text {
+            font-size: 0.75rem;
+            color: var(--gray-600);
+            margin-top: 0.25rem;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .checkbox-item input[type="checkbox"] { width: auto; }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--gray-600);
+        }
+
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .loading { opacity: 0.6; pointer-events: none; }
+
+        .code { font-family: monospace; font-size: 0.8125rem; color: var(--gray-700); }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div>
+            <h1>The Nexus Engine</h1>
+            <p class="subtitle">OpenRTB Bidder Management</p>
+        </div>
+        <div class="header-right">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/bidders" class="nav-link active">Bidders</a>
+            {% if user %}
+            <a href="/logout" class="nav-link">Logout</a>
+            {% endif %}
+        </div>
+    </header>
+
+    <div class="container">
+        <div id="alert" class="alert"></div>
+
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">OpenRTB Bidders</h1>
+                <p class="page-subtitle">Manage custom OpenRTB demand integrations</p>
+            </div>
+            <div style="display: flex; gap: 0.75rem;">
+                <button class="btn btn-secondary" onclick="exportBidders()">Export All</button>
+                <button class="btn btn-primary" onclick="openCreateModal()">+ Add Bidder</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>Configured Bidders</h2>
+                <span id="bidder-count" class="stat-label">Loading...</span>
+            </div>
+            <div class="card-body" style="padding: 0;">
+                <table class="bidders-table" id="bidders-table">
+                    <thead>
+                        <tr>
+                            <th>Bidder</th>
+                            <th>Endpoint</th>
+                            <th>Media Types</th>
+                            <th>Status</th>
+                            <th>Performance</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bidders-tbody">
+                        <tr>
+                            <td colspan="6" class="empty-state">
+                                <div class="empty-state-icon">&#128640;</div>
+                                <p>Loading bidders...</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal-backdrop" id="bidder-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-title">Add New Bidder</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <form id="bidder-form" onsubmit="saveBidder(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="bidder-name">Bidder Name *</label>
+                        <input type="text" id="bidder-name" name="name" required placeholder="e.g., My DSP">
+                        <p class="help-text">A friendly name for this bidder</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="bidder-code">Bidder Code</label>
+                        <input type="text" id="bidder-code" name="bidder_code" placeholder="auto-generated from name">
+                        <p class="help-text">Unique identifier (lowercase, hyphens allowed). Leave blank to auto-generate.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="endpoint-url">Endpoint URL *</label>
+                        <input type="url" id="endpoint-url" name="endpoint_url" required placeholder="https://dsp.example.com/bid">
+                        <p class="help-text">The OpenRTB bid request endpoint</p>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="timeout-ms">Timeout (ms)</label>
+                            <input type="number" id="timeout-ms" name="timeout_ms" value="200" min="50" max="2000">
+                        </div>
+                        <div class="form-group">
+                            <label for="protocol-version">Protocol Version</label>
+                            <select id="protocol-version" name="protocol_version">
+                                <option value="2.6">OpenRTB 2.6</option>
+                                <option value="2.5">OpenRTB 2.5</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Supported Media Types *</label>
+                        <div class="checkbox-group">
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="media_types" value="banner" checked> Banner
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="media_types" value="video"> Video
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="media_types" value="native"> Native
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" name="media_types" value="audio"> Audio
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="auth-type">Authentication</label>
+                            <select id="auth-type" name="auth_type" onchange="toggleAuthFields()">
+                                <option value="">None</option>
+                                <option value="bearer">Bearer Token</option>
+                                <option value="header">Custom Header</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="priority">Priority (0-100)</label>
+                            <input type="number" id="priority" name="priority" value="50" min="0" max="100">
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="auth-token-group" style="display: none;">
+                        <label for="auth-token">Auth Token</label>
+                        <input type="text" id="auth-token" name="auth_token" placeholder="Bearer token value">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="gvl-vendor-id">GVL Vendor ID (optional)</label>
+                        <input type="number" id="gvl-vendor-id" name="gvl_vendor_id" placeholder="IAB Global Vendor List ID">
+                        <p class="help-text">Required for GDPR compliance</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="description">Description</label>
+                        <textarea id="description" name="description" rows="2" placeholder="Optional description"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="save-btn">Create Bidder</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Test Result Modal -->
+    <div class="modal-backdrop" id="test-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Test Results</h3>
+                <button class="modal-close" onclick="closeTestModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="test-result-body">
+                <p>Running test...</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeTestModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let editingBidderCode = null;
+
+        // Load bidders on page load
+        document.addEventListener('DOMContentLoaded', loadBidders);
+
+        async function loadBidders() {
+            try {
+                const response = await fetch('/api/bidders');
+                const data = await response.json();
+
+                const tbody = document.getElementById('bidders-tbody');
+                const countEl = document.getElementById('bidder-count');
+
+                if (!data.bidders || data.bidders.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" class="empty-state">
+                                <div class="empty-state-icon">&#128640;</div>
+                                <p>No bidders configured yet</p>
+                                <p style="margin-top: 0.5rem;">
+                                    <button class="btn btn-primary" onclick="openCreateModal()">Add Your First Bidder</button>
+                                </p>
+                            </td>
+                        </tr>
+                    `;
+                    countEl.textContent = '0 bidders';
+                    return;
+                }
+
+                countEl.textContent = `${data.bidders.length} bidder${data.bidders.length > 1 ? 's' : ''}`;
+
+                tbody.innerHTML = data.bidders.map(b => `
+                    <tr>
+                        <td>
+                            <div style="font-weight: 600;">${escapeHtml(b.name)}</div>
+                            <div class="code">${escapeHtml(b.bidder_code)}</div>
+                        </td>
+                        <td>
+                            <div class="code" style="max-width: 250px; overflow: hidden; text-overflow: ellipsis;">
+                                ${escapeHtml(b.endpoint_url)}
+                            </div>
+                        </td>
+                        <td>
+                            ${b.media_types.map(mt => `<span class="media-type-badge">${mt}</span>`).join('')}
+                        </td>
+                        <td>
+                            <span class="status-badge status-${b.status}">${b.status}</span>
+                        </td>
+                        <td>
+                            <div class="stat-value">${(b.stats.bid_rate * 100).toFixed(1)}%</div>
+                            <div class="stat-label">bid rate</div>
+                        </td>
+                        <td>
+                            <div class="actions">
+                                <button class="btn btn-sm btn-secondary" onclick="testBidder('${b.bidder_code}')" title="Test">Test</button>
+                                <button class="btn btn-sm btn-secondary" onclick="editBidder('${b.bidder_code}')" title="Edit">Edit</button>
+                                ${b.status === 'active'
+                                    ? `<button class="btn btn-sm btn-secondary" onclick="pauseBidder('${b.bidder_code}')" title="Pause">Pause</button>`
+                                    : `<button class="btn btn-sm btn-success" onclick="enableBidder('${b.bidder_code}')" title="Enable">Enable</button>`
+                                }
+                                <button class="btn btn-sm btn-danger" onclick="deleteBidder('${b.bidder_code}')" title="Delete">Delete</button>
+                            </div>
+                        </td>
+                    </tr>
+                `).join('');
+
+            } catch (error) {
+                console.error('Failed to load bidders:', error);
+                showAlert('Failed to load bidders: ' + error.message, 'error');
+            }
+        }
+
+        function openCreateModal() {
+            editingBidderCode = null;
+            document.getElementById('modal-title').textContent = 'Add New Bidder';
+            document.getElementById('save-btn').textContent = 'Create Bidder';
+            document.getElementById('bidder-form').reset();
+            document.getElementById('bidder-code').disabled = false;
+            document.getElementById('bidder-modal').classList.add('show');
+        }
+
+        async function editBidder(code) {
+            try {
+                const response = await fetch(`/api/bidders/${code}`);
+                const bidder = await response.json();
+
+                editingBidderCode = code;
+                document.getElementById('modal-title').textContent = 'Edit Bidder';
+                document.getElementById('save-btn').textContent = 'Save Changes';
+
+                // Populate form
+                document.getElementById('bidder-name').value = bidder.name || '';
+                document.getElementById('bidder-code').value = bidder.bidder_code || '';
+                document.getElementById('bidder-code').disabled = true;
+                document.getElementById('endpoint-url').value = bidder.endpoint?.url || '';
+                document.getElementById('timeout-ms').value = bidder.endpoint?.timeout_ms || 200;
+                document.getElementById('protocol-version').value = bidder.endpoint?.protocol_version || '2.6';
+                document.getElementById('auth-type').value = bidder.endpoint?.auth_type || '';
+                document.getElementById('auth-token').value = bidder.endpoint?.auth_token || '';
+                document.getElementById('priority').value = bidder.priority || 50;
+                document.getElementById('gvl-vendor-id').value = bidder.gvl_vendor_id || '';
+                document.getElementById('description').value = bidder.description || '';
+
+                // Media types
+                document.querySelectorAll('input[name="media_types"]').forEach(cb => {
+                    cb.checked = bidder.capabilities?.media_types?.includes(cb.value) || false;
+                });
+
+                toggleAuthFields();
+                document.getElementById('bidder-modal').classList.add('show');
+
+            } catch (error) {
+                showAlert('Failed to load bidder: ' + error.message, 'error');
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('bidder-modal').classList.remove('show');
+            editingBidderCode = null;
+        }
+
+        function toggleAuthFields() {
+            const authType = document.getElementById('auth-type').value;
+            document.getElementById('auth-token-group').style.display =
+                authType === 'bearer' || authType === 'header' ? 'block' : 'none';
+        }
+
+        async function saveBidder(event) {
+            event.preventDefault();
+
+            const form = document.getElementById('bidder-form');
+            const formData = new FormData(form);
+
+            // Collect media types
+            const mediaTypes = [];
+            document.querySelectorAll('input[name="media_types"]:checked').forEach(cb => {
+                mediaTypes.push(cb.value);
+            });
+
+            if (mediaTypes.length === 0) {
+                showAlert('Please select at least one media type', 'error');
+                return;
+            }
+
+            const data = {
+                name: formData.get('name'),
+                endpoint_url: formData.get('endpoint_url'),
+                media_types: mediaTypes,
+                timeout_ms: parseInt(formData.get('timeout_ms')),
+                protocol_version: formData.get('protocol_version'),
+                priority: parseInt(formData.get('priority')),
+                description: formData.get('description'),
+            };
+
+            if (formData.get('bidder_code')) {
+                data.bidder_code = formData.get('bidder_code');
+            }
+
+            if (formData.get('auth_type')) {
+                data.auth_type = formData.get('auth_type');
+                data.auth_token = formData.get('auth_token');
+            }
+
+            if (formData.get('gvl_vendor_id')) {
+                data.gvl_vendor_id = parseInt(formData.get('gvl_vendor_id'));
+            }
+
+            try {
+                const url = editingBidderCode
+                    ? `/api/bidders/${editingBidderCode}`
+                    : '/api/bidders';
+                const method = editingBidderCode ? 'PATCH' : 'POST';
+
+                const response = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.message || 'Failed to save bidder');
+                }
+
+                showAlert(editingBidderCode ? 'Bidder updated successfully' : 'Bidder created successfully', 'success');
+                closeModal();
+                loadBidders();
+
+            } catch (error) {
+                showAlert(error.message, 'error');
+            }
+        }
+
+        async function enableBidder(code) {
+            try {
+                const response = await fetch(`/api/bidders/${code}/enable`, { method: 'POST' });
+                const result = await response.json();
+
+                if (!response.ok) throw new Error(result.message);
+
+                showAlert(`Bidder ${code} enabled`, 'success');
+                loadBidders();
+            } catch (error) {
+                showAlert(error.message, 'error');
+            }
+        }
+
+        async function pauseBidder(code) {
+            try {
+                const response = await fetch(`/api/bidders/${code}/pause`, { method: 'POST' });
+                const result = await response.json();
+
+                if (!response.ok) throw new Error(result.message);
+
+                showAlert(`Bidder ${code} paused`, 'success');
+                loadBidders();
+            } catch (error) {
+                showAlert(error.message, 'error');
+            }
+        }
+
+        async function deleteBidder(code) {
+            if (!confirm(`Are you sure you want to delete bidder "${code}"? This cannot be undone.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/bidders/${code}`, { method: 'DELETE' });
+                const result = await response.json();
+
+                if (!response.ok) throw new Error(result.message);
+
+                showAlert(`Bidder ${code} deleted`, 'success');
+                loadBidders();
+            } catch (error) {
+                showAlert(error.message, 'error');
+            }
+        }
+
+        async function testBidder(code) {
+            document.getElementById('test-modal').classList.add('show');
+            document.getElementById('test-result-body').innerHTML = '<p>Running test request...</p>';
+
+            try {
+                const response = await fetch(`/api/bidders/${code}/test`, { method: 'POST' });
+                const result = await response.json();
+
+                let html = '';
+                if (result.test_result?.success) {
+                    html = `
+                        <div style="color: var(--success); font-weight: 600; margin-bottom: 1rem;">
+                            &#10003; Connection Successful
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;">
+                            <div>
+                                <div class="stat-label">Status Code</div>
+                                <div class="stat-value">${result.test_result.status_code}</div>
+                            </div>
+                            <div>
+                                <div class="stat-label">Latency</div>
+                                <div class="stat-value">${result.test_result.latency_ms}ms</div>
+                            </div>
+                            <div>
+                                <div class="stat-label">Has Bids</div>
+                                <div class="stat-value">${result.test_result.has_bids ? 'Yes' : 'No'}</div>
+                            </div>
+                            <div>
+                                <div class="stat-label">Bid Count</div>
+                                <div class="stat-value">${result.test_result.bid_count || 0}</div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    html = `
+                        <div style="color: var(--danger); font-weight: 600; margin-bottom: 1rem;">
+                            &#10007; Connection Failed
+                        </div>
+                        <p>${escapeHtml(result.test_result?.error || 'Unknown error')}</p>
+                    `;
+                }
+
+                document.getElementById('test-result-body').innerHTML = html;
+
+            } catch (error) {
+                document.getElementById('test-result-body').innerHTML = `
+                    <div style="color: var(--danger);">
+                        &#10007; Test failed: ${escapeHtml(error.message)}
+                    </div>
+                `;
+            }
+        }
+
+        function closeTestModal() {
+            document.getElementById('test-modal').classList.remove('show');
+        }
+
+        async function exportBidders() {
+            try {
+                const response = await fetch('/api/bidders/export');
+                const data = await response.json();
+
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `bidders-export-${new Date().toISOString().split('T')[0]}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+
+            } catch (error) {
+                showAlert('Failed to export bidders: ' + error.message, 'error');
+            }
+        }
+
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = `alert ${type} show`;
+            setTimeout(() => alert.classList.remove('show'), 5000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
