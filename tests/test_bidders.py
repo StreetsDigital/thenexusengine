@@ -221,11 +221,11 @@ class TestBidderStorage:
     @pytest.fixture
     def storage(self, mock_redis):
         """Create storage with mocked Redis."""
-        with patch('src.idr.bidders.storage.redis') as mock_redis_module:
-            mock_redis_module.from_url.return_value = mock_redis
-            storage = BidderStorage()
-            storage._redis = mock_redis
-            return storage
+        # Create storage without connecting to real Redis
+        storage = BidderStorage.__new__(BidderStorage)
+        storage._redis_url = "redis://localhost:6379"
+        storage._redis = mock_redis
+        return storage
 
     def test_storage_connection(self, storage, mock_redis):
         """Test storage Redis connection."""
