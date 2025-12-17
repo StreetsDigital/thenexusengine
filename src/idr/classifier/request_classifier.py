@@ -20,6 +20,11 @@ from ..utils.constants import (
     OPENRTB_DEVICE_TYPE_MAP,
     POSITION_MAP,
 )
+from ..utils.id_generator import (
+    generate_ad_unit_id,
+    generate_publisher_id,
+    generate_site_id,
+)
 from ..utils.user_agent import extract_browser, extract_os, parse_user_agent
 
 
@@ -76,6 +81,7 @@ class RequestClassifier:
         return ClassifiedRequest(
             # Impression attributes
             impression_id=imp.get('id', ''),
+            ad_unit_id=self._extract_ad_unit_id(imp),
             ad_format=self._determine_format(imp),
             ad_sizes=self._extract_sizes(imp),
             position=self._determine_position(imp),
@@ -93,7 +99,7 @@ class RequestClassifier:
 
             # Publisher
             publisher_id=self._extract_publisher_id(publisher_source),
-            site_id=publisher_source.get('id', ''),
+            site_id=self._extract_site_id(publisher_source),
             domain=self._extract_domain(site, app),
             page_type=self._extract_page_type(site),
             categories=self._extract_categories(site, app),
@@ -118,6 +124,36 @@ class RequestClassifier:
         """Get the first impression from the request."""
         imps = ortb_request.get('imp', [])
         return imps[0] if imps else {}
+
+    def _extract_ad_unit_id(self, imp: dict) -> str:
+        """
+        Extract ad unit ID from impression object (tagid field).
+
+        If no tagid is found, auto-generates a unique
+        alphanumeric ID with the format: unit_{random_string}
+        """
+        ad_unit_id = imp.get('tagid', '')
+
+        # Auto-populate if no ad unit ID is provided
+        if not ad_unit_id:
+            ad_unit_id = generate_ad_unit_id()
+
+        return ad_unit_id
+
+    def _extract_site_id(self, publisher_source: dict) -> str:
+        """
+        Extract site ID from site or app object.
+
+        If no site ID is found, auto-generates a unique
+        alphanumeric ID with the format: site_{random_string}
+        """
+        site_id = publisher_source.get('id', '')
+
+        # Auto-populate if no site ID is provided
+        if not site_id:
+            site_id = generate_site_id()
+
+        return site_id
 
     def _determine_format(self, imp: dict) -> AdFormat:
         """
@@ -232,9 +268,20 @@ class RequestClassifier:
         return 'unknown'
 
     def _extract_publisher_id(self, publisher_source: dict) -> str:
-        """Extract publisher ID from site or app object."""
+        """
+        Extract publisher ID from site or app object.
+
+        If no publisher ID is found in the request, auto-generates
+        a unique alphanumeric ID with the format: pub_{random_string}
+        """
         publisher = publisher_source.get('publisher', {})
-        return publisher.get('id', '') or publisher_source.get('id', '')
+        publisher_id = publisher.get('id', '') or publisher_source.get('id', '')
+
+        # Auto-populate if no publisher ID is provided
+        if not publisher_id:
+            publisher_id = generate_publisher_id()
+
+        return publisher_id
 
     def _extract_domain(self, site: dict, app: dict) -> str:
         """Extract domain from site or bundle from app."""

@@ -44,6 +44,7 @@ class ClassifiedRequest:
     # Impression attributes
     impression_id: str
     ad_format: AdFormat
+    ad_unit_id: str = ''  # Static ad unit identifier (from tagid)
     ad_sizes: list[str] = field(default_factory=list)  # e.g., ['300x250', '320x50']
     position: AdPosition = AdPosition.UNKNOWN
 
@@ -135,6 +136,7 @@ class ClassifiedRequest:
         """Convert to dictionary representation."""
         return {
             'impression_id': self.impression_id,
+            'ad_unit_id': self.ad_unit_id,
             'ad_format': self.ad_format.value,
             'ad_sizes': self.ad_sizes,
             'position': self.position.value,
