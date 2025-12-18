@@ -546,6 +546,10 @@
             <span class="subtitle">The Nexus Engine - Intelligent Demand Router</span>
         </div>
         <div class="header-right">
+            <nav style="display: flex; gap: 0.5rem; margin-right: 1rem;">
+                <a href="{{ url_for('admin_dashboard') }}" class="btn-logout" style="background: var(--primary); border-color: var(--primary); color: white;">Dashboard</a>
+                <a href="{{ url_for('bidders_page') }}" class="btn-logout">OpenRTB Connections</a>
+            </nav>
             {% if user %}
             <div class="user-info">
                 <div class="user-icon">{{ user[0]|upper }}</div>
@@ -902,6 +906,85 @@
                     </div>
                     <div class="btn-group">
                         <button class="btn btn-primary" onclick="saveFpd()">Save Changes</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cookie Syncing -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>Cookie Syncing</h2>
+                </div>
+                <div class="card-body">
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Cookie Sync Enabled</div>
+                            <div class="toggle-description">Enable user ID synchronization with demand partners</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="cookie_sync_enabled" {% if config.cookie_sync and config.cookie_sync.enabled %}checked{% elif not config.cookie_sync %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <hr style="margin: 1rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 0.75rem; color: var(--gray-700);">Sync Settings</h4>
+                    <div class="form-group">
+                        <label>Default Sync Type</label>
+                        <select id="cookie_sync_type">
+                            <option value="iframe" {% if config.cookie_sync and config.cookie_sync.default_type == 'iframe' %}selected{% endif %}>iFrame</option>
+                            <option value="redirect" {% if config.cookie_sync and config.cookie_sync.default_type == 'redirect' %}selected{% endif %}>Redirect</option>
+                        </select>
+                        <span class="help-text">iFrame is less intrusive, redirect is more reliable</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Max Syncs Per Page</label>
+                        <input type="number" id="cookie_sync_limit" value="{{ config.cookie_sync.limit if config.cookie_sync and config.cookie_sync.limit else 5 }}" min="1" max="20">
+                        <span class="help-text">Limit concurrent syncs to reduce page load impact</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Sync Interval (hours)</label>
+                        <input type="number" id="cookie_sync_interval" value="{{ config.cookie_sync.interval_hours if config.cookie_sync and config.cookie_sync.interval_hours else 24 }}" min="1" max="168">
+                        <span class="help-text">How often to re-sync with partners (default: 24 hours)</span>
+                    </div>
+                    <hr style="margin: 1rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 0.75rem; color: var(--gray-700);">Sync Endpoints</h4>
+                    <div class="form-group">
+                        <label>Sync URL Base</label>
+                        <input type="text" id="cookie_sync_url" value="{{ config.cookie_sync.sync_url if config.cookie_sync and config.cookie_sync.sync_url else '/setuid' }}" placeholder="/setuid">
+                        <span class="help-text">Base URL for the cookie sync endpoint</span>
+                    </div>
+                    <div class="form-group">
+                        <label>GDPR Vendor Consent URL</label>
+                        <input type="text" id="cookie_sync_gdpr_url" value="{{ config.cookie_sync.gdpr_url if config.cookie_sync and config.cookie_sync.gdpr_url else '' }}" placeholder="https://example.com/gdpr-consent">
+                        <span class="help-text">Optional: URL to check GDPR vendor consent before syncing</span>
+                    </div>
+                    <hr style="margin: 1rem 0; border: none; border-top: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 0.75rem; color: var(--gray-700);">Bidder-Specific Sync</h4>
+                    <p style="font-size: 0.875rem; color: var(--gray-600); margin-bottom: 1rem;">
+                        Configure cookie sync settings per bidder in the <a href="{{ url_for('bidders_page') }}" style="color: var(--primary);">OpenRTB Connections</a> page.
+                    </p>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Coop Sync</div>
+                            <div class="toggle-description">Share user IDs across all configured bidders</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="cookie_sync_coop" {% if config.cookie_sync and config.cookie_sync.coop_sync %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="toggle-group">
+                        <div>
+                            <div class="toggle-label">Priority Sync</div>
+                            <div class="toggle-description">Prioritize syncing with high-value bidders first</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="cookie_sync_priority" {% if config.cookie_sync and config.cookie_sync.priority_sync %}checked{% elif not config.cookie_sync %}checked{% endif %}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="saveCookieSync()">Save Cookie Sync Settings</button>
                     </div>
                 </div>
             </div>
@@ -1308,6 +1391,38 @@
             }
         }
 
+        // ID Generation Functions
+        function generatePublisherId() {
+            const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+            let result = 'pub_';
+            for (let i = 0; i < 12; i++) {
+                result += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return result;
+        }
+
+        function generateSiteId() {
+            const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+            let result = 'site_';
+            for (let i = 0; i < 12; i++) {
+                result += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return result;
+        }
+
+        function generateAdUnitId() {
+            const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+            let result = 'unit_';
+            for (let i = 0; i < 12; i++) {
+                result += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return result;
+        }
+
+        function autoGeneratePublisherId() {
+            document.getElementById('new-pub-id').value = generatePublisherId();
+        }
+
         function showAddPublisher() {
             const html = `
                 <div style="padding: 1rem; background: var(--gray-50); border-radius: 0.5rem;">
@@ -1315,7 +1430,11 @@
 
                     <div class="form-group">
                         <label>Publisher ID (lowercase, no spaces)</label>
-                        <input type="text" id="new-pub-id" placeholder="my-publisher" pattern="[a-z0-9-]+">
+                        <div style="display: flex; gap: 0.5rem;">
+                            <input type="text" id="new-pub-id" placeholder="my-publisher or auto-generate" pattern="[a-z0-9_-]+" style="flex: 1;">
+                            <button type="button" class="btn btn-secondary" onclick="autoGeneratePublisherId()" style="white-space: nowrap;">Auto-Generate</button>
+                        </div>
+                        <span class="help-text">Click Auto-Generate for a unique ID like pub_a7b3x9k2m4n1</span>
                     </div>
 
                     <div class="form-group">
@@ -1352,8 +1471,8 @@
                 return;
             }
 
-            if (!/^[a-z0-9-]+$/.test(publisherId)) {
-                showAlert('Publisher ID must be lowercase letters, numbers, and hyphens only', 'error');
+            if (!/^[a-z0-9_-]+$/.test(publisherId)) {
+                showAlert('Publisher ID must be lowercase letters, numbers, hyphens, and underscores only', 'error');
                 return;
             }
 
@@ -1735,13 +1854,52 @@
         }
 
         function addSite() {
-            const siteId = prompt('Enter Site ID (lowercase, no spaces):', 'new-site');
-            if (!siteId) return;
+            // Create a modal for adding site with auto-generate option
+            const modal = document.createElement('div');
+            modal.id = 'add-site-modal';
+            modal.innerHTML = `
+                <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;">
+                    <div style="background: white; padding: 1.5rem; border-radius: 0.5rem; width: 450px; max-width: 90%;">
+                        <h3 style="margin-bottom: 1rem;">Add New Site</h3>
 
-            const domain = prompt('Enter domain (e.g., www.example.com):');
-            if (!domain) return;
+                        <div class="form-group">
+                            <label>Site ID</label>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <input type="text" id="add-site-id" placeholder="my-site or auto-generate" style="flex: 1;">
+                                <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-site-id').value = generateSiteId();" style="white-space: nowrap;">Auto-Generate</button>
+                            </div>
+                            <span class="help-text">e.g., site_a7b3x9k2m4n1</span>
+                        </div>
 
-            const name = prompt('Enter site name:', domain);
+                        <div class="form-group">
+                            <label>Domain *</label>
+                            <input type="text" id="add-site-domain" placeholder="www.example.com" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Site Name</label>
+                            <input type="text" id="add-site-name" placeholder="My Website">
+                        </div>
+
+                        <div class="btn-group" style="justify-content: flex-end;">
+                            <button class="btn btn-secondary" onclick="document.getElementById('add-site-modal').remove();">Cancel</button>
+                            <button class="btn btn-primary" onclick="confirmAddSite()">Add Site</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function confirmAddSite() {
+            const siteId = document.getElementById('add-site-id').value.trim() || generateSiteId();
+            const domain = document.getElementById('add-site-domain').value.trim();
+            const name = document.getElementById('add-site-name').value.trim();
+
+            if (!domain) {
+                showAlert('Domain is required', 'error');
+                return;
+            }
 
             if (!currentPublisherData.sites) {
                 currentPublisherData.sites = [];
@@ -1755,6 +1913,7 @@
                 ad_units: []
             });
 
+            document.getElementById('add-site-modal').remove();
             showPublisherEditor(currentPublisherData);
             showTab('sites');
             showAlert('Site added. Now add ad units.', 'success');
@@ -1850,13 +2009,64 @@
         function addAdUnit(siteIdx) {
             closeSiteModal();
 
-            const unitId = prompt('Enter Ad Unit ID (e.g., leaderboard-top):');
-            if (!unitId) { editSite(siteIdx); return; }
+            // Create a modal for adding ad unit with auto-generate option
+            const modal = document.createElement('div');
+            modal.id = 'add-adunit-modal';
+            modal.innerHTML = `
+                <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;">
+                    <div style="background: white; padding: 1.5rem; border-radius: 0.5rem; width: 500px; max-width: 90%;">
+                        <h3 style="margin-bottom: 1rem;">Add New Ad Unit</h3>
 
-            const name = prompt('Enter Ad Unit Name:', unitId);
-            const mediaType = prompt('Media Type (banner/video/native):', 'banner');
-            const sizesStr = prompt('Sizes as JSON (e.g., [[300,250],[728,90]]):', '[[300,250]]');
-            const floorPrice = prompt('Floor Price (USD):', '0.50');
+                        <div class="form-group">
+                            <label>Ad Unit ID</label>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <input type="text" id="add-adunit-id" placeholder="leaderboard-top or auto-generate" style="flex: 1;">
+                                <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-adunit-id').value = generateAdUnitId();" style="white-space: nowrap;">Auto-Generate</button>
+                            </div>
+                            <span class="help-text">e.g., unit_a7b3x9k2m4n1</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Ad Unit Name</label>
+                            <input type="text" id="add-adunit-name" placeholder="Leaderboard Top">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Media Type</label>
+                            <select id="add-adunit-mediatype">
+                                <option value="banner" selected>Banner</option>
+                                <option value="video">Video</option>
+                                <option value="native">Native</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Sizes (JSON array)</label>
+                            <input type="text" id="add-adunit-sizes" value="[[300,250]]" placeholder="[[300,250],[728,90]]">
+                            <span class="help-text">Common sizes: [[300,250]], [[728,90]], [[160,600]]</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Floor Price (USD)</label>
+                            <input type="number" id="add-adunit-floor" value="0.50" step="0.01" min="0">
+                        </div>
+
+                        <div class="btn-group" style="justify-content: flex-end;">
+                            <button class="btn btn-secondary" onclick="document.getElementById('add-adunit-modal').remove(); editSite(${siteIdx});">Cancel</button>
+                            <button class="btn btn-primary" onclick="confirmAddAdUnit(${siteIdx})">Add Ad Unit</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function confirmAddAdUnit(siteIdx) {
+            const unitId = document.getElementById('add-adunit-id').value.trim() || generateAdUnitId();
+            const name = document.getElementById('add-adunit-name').value.trim();
+            const mediaType = document.getElementById('add-adunit-mediatype').value;
+            const sizesStr = document.getElementById('add-adunit-sizes').value;
+            const floorPrice = document.getElementById('add-adunit-floor').value;
 
             let sizes = [[300, 250]];
             try {
@@ -1877,6 +2087,7 @@
                 floor_currency: 'USD'
             });
 
+            document.getElementById('add-adunit-modal').remove();
             editSite(siteIdx);
             showAlert('Ad unit added', 'success');
         }
@@ -2158,6 +2369,36 @@
                 const result = await response.json();
                 if (result.status === 'success') {
                     showAlert('FPD settings saved!', 'success');
+                } else {
+                    showAlert(result.message, 'error');
+                }
+            } catch (e) {
+                showAlert('Error saving: ' + e.message, 'error');
+            }
+        }
+
+        async function saveCookieSync() {
+            try {
+                const data = {
+                    enabled: document.getElementById('cookie_sync_enabled').checked,
+                    default_type: document.getElementById('cookie_sync_type').value,
+                    limit: parseInt(document.getElementById('cookie_sync_limit').value),
+                    interval_hours: parseInt(document.getElementById('cookie_sync_interval').value),
+                    sync_url: document.getElementById('cookie_sync_url').value,
+                    gdpr_url: document.getElementById('cookie_sync_gdpr_url').value,
+                    coop_sync: document.getElementById('cookie_sync_coop').checked,
+                    priority_sync: document.getElementById('cookie_sync_priority').checked,
+                };
+
+                const response = await fetch('/api/config/cookie_sync', {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('Cookie sync settings saved!', 'success');
                 } else {
                     showAlert(result.message, 'error');
                 }
