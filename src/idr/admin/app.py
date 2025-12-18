@@ -162,7 +162,8 @@ def _safe_error_response(error: Exception, generic_message: str, status_code: in
 
 
 # Default config path
-DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent.parent.parent / "config" / "idr_config.yaml"
+# Path: src/idr/admin/app.py -> need 4 parents to reach thenexusengine root
+DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "config" / "idr_config.yaml"
 
 
 def load_config(config_path: Optional[Path] = None) -> dict[str, Any]:
@@ -206,7 +207,8 @@ def get_default_config() -> dict[str, Any]:
             }
         },
         'selector': {
-            'bypass_enabled': False,
+            # Default to bypass (IDR off) during early development
+            'bypass_enabled': True,
             'shadow_mode': False,
             'max_bidders': 15,
             'min_score_threshold': 25,
