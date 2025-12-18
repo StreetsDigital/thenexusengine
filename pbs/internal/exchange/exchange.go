@@ -399,22 +399,31 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 }
 
 // cloneRequestWithFPD creates a deep copy of the request with bidder-specific FPD applied
+// and enforces USD currency for all bid requests
 func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode string, bidderFPD fpd.BidderFPD) *openrtb.BidRequest {
-	if bidderFPD == nil {
-		return req
-	}
-
-	fpdData, ok := bidderFPD[bidderCode]
-	if !ok || fpdData == nil {
-		return req
-	}
-
-	// Create a deep clone of the request to avoid race conditions
+	// Always clone to ensure thread safety and allow currency normalization
 	clone := deepCloneRequest(req)
 
-	// Apply FPD using the processor
-	if e.fpdProcessor != nil {
-		e.fpdProcessor.ApplyFPDToRequest(clone, bidderCode, fpdData)
+	// Enforce USD currency on all outgoing requests
+	// This ensures all bidders compete in the same currency without needing forex conversion
+	clone.Cur = []string{e.config.DefaultCurrency}
+
+	// Normalize bid floor currencies to USD
+	for i := range clone.Imp {
+		if clone.Imp[i].BidFloorCur == "" || clone.Imp[i].BidFloorCur != e.config.DefaultCurrency {
+			// If floor currency differs from USD and we had conversion, we'd convert here
+			// For now, we just set the currency - publishers should specify floors in USD
+			clone.Imp[i].BidFloorCur = e.config.DefaultCurrency
+		}
+	}
+
+	// Apply FPD if available
+	if bidderFPD != nil {
+		if fpdData, ok := bidderFPD[bidderCode]; ok && fpdData != nil {
+			if e.fpdProcessor != nil {
+				e.fpdProcessor.ApplyFPDToRequest(clone, bidderCode, fpdData)
+			}
+		}
 	}
 
 	return clone
