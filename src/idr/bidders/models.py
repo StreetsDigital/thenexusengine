@@ -253,6 +253,103 @@ class BidderRateLimits:
 
 
 @dataclass
+class SChainNode:
+    """
+    Supply Chain node for schain augmentation.
+
+    Per IAB OpenRTB Supply Chain spec:
+    https://iabtechlab.com/standards/openrtb-supply-chain/
+
+    Attributes:
+        asi: Canonical domain name of the SSP, Exchange, Header Wrapper, etc.
+        sid: Identifier associated with the seller or reseller account.
+        hp: Indicates if this node is involved in payment flow (1=yes, 0=no).
+        rid: Optional request ID for tracking (typically omitted).
+        name: Optional human-readable name of the entity.
+        domain: Optional domain of the entity (may differ from asi).
+        ext: Optional extension object for custom data.
+    """
+    asi: str
+    sid: str
+    hp: int = 1  # 1 = direct/payment flow, 0 = indirect
+    rid: Optional[str] = None
+    name: Optional[str] = None
+    domain: Optional[str] = None
+    ext: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        result = {
+            "asi": self.asi,
+            "sid": self.sid,
+            "hp": self.hp,
+        }
+        if self.rid:
+            result["rid"] = self.rid
+        if self.name:
+            result["name"] = self.name
+        if self.domain:
+            result["domain"] = self.domain
+        if self.ext:
+            result["ext"] = self.ext
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SChainNode":
+        """Create from dictionary."""
+        return cls(
+            asi=data.get("asi", ""),
+            sid=data.get("sid", ""),
+            hp=data.get("hp", 1),
+            rid=data.get("rid"),
+            name=data.get("name"),
+            domain=data.get("domain"),
+            ext=data.get("ext", {}),
+        )
+
+
+@dataclass
+class SChainAugmentation:
+    """
+    Supply Chain augmentation configuration for per-bidder schain modification.
+
+    This allows adding supply chain nodes to bid requests sent to specific bidders,
+    enabling proper transparency and ads.txt/sellers.json compliance.
+
+    Attributes:
+        enabled: Whether schain augmentation is enabled for this bidder.
+        nodes: List of supply chain nodes to append to the request's schain.
+        complete: Override the schain complete flag (None = preserve original).
+        version: SChain version string (default "1.0").
+    """
+    enabled: bool = False
+    nodes: list[SChainNode] = field(default_factory=list)
+    complete: Optional[int] = None  # None = preserve, 0 = incomplete, 1 = complete
+    version: str = "1.0"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "enabled": self.enabled,
+            "nodes": [node.to_dict() for node in self.nodes],
+            "complete": self.complete,
+            "version": self.version,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SChainAugmentation":
+        """Create from dictionary."""
+        nodes_data = data.get("nodes", [])
+        nodes = [SChainNode.from_dict(n) for n in nodes_data]
+        return cls(
+            enabled=data.get("enabled", False),
+            nodes=nodes,
+            complete=data.get("complete"),
+            version=data.get("version", "1.0"),
+        )
+
+
+@dataclass
 class RequestTransform:
     """
     Request transformation rules to adapt the OpenRTB request
@@ -264,6 +361,7 @@ class RequestTransform:
         field_removals: Fields to remove from the request
         imp_ext_template: Template for imp.ext object
         request_ext_template: Template for request.ext object
+        schain_augment: Supply chain augmentation configuration
     """
     field_mappings: dict[str, str] = field(default_factory=dict)
     field_additions: dict[str, Any] = field(default_factory=dict)
@@ -278,6 +376,9 @@ class RequestTransform:
     # Bidder-specific seat ID
     seat_id: Optional[str] = None
 
+    # Supply chain augmentation
+    schain_augment: SChainAugmentation = field(default_factory=SChainAugmentation)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
@@ -289,6 +390,7 @@ class RequestTransform:
             "site_ext_template": self.site_ext_template,
             "user_ext_template": self.user_ext_template,
             "seat_id": self.seat_id,
+            "schain_augment": self.schain_augment.to_dict(),
         }
 
     @classmethod
@@ -303,6 +405,7 @@ class RequestTransform:
             site_ext_template=data.get("site_ext_template", {}),
             user_ext_template=data.get("user_ext_template", {}),
             seat_id=data.get("seat_id"),
+            schain_augment=SChainAugmentation.from_dict(data.get("schain_augment", {})),
         )
 
 

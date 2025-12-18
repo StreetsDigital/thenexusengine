@@ -249,6 +249,90 @@ Transform the OpenRTB request before sending to the partner:
 | `site_ext_template` | object | Template merged into site ext |
 | `user_ext_template` | object | Template merged into user ext |
 | `seat_id` | string | Seat ID to include in request |
+| `schain_augment` | object | Supply chain augmentation configuration |
+
+### Supply Chain (SChain) Augmentation
+
+The supply chain augmentation feature allows you to append supply chain nodes to bid requests on a per-bidder basis. This enables proper transparency documentation for programmatic transactions per [IAB OpenRTB Supply Chain spec](https://iabtechlab.com/standards/openrtb-supply-chain/).
+
+**Use cases:**
+- Document The Nexus Engine as an intermediary in the supply chain
+- Add bidder-specific seller IDs for different partnerships
+- Ensure ads.txt/sellers.json compliance
+- Provide transparency for header bidding integrations
+
+```json
+{
+  "request_transform": {
+    "schain_augment": {
+      "enabled": true,
+      "nodes": [
+        {
+          "asi": "nexusengine.com",
+          "sid": "nexus-publisher-123",
+          "hp": 1,
+          "name": "The Nexus Engine",
+          "domain": "nexusengine.com"
+        }
+      ],
+      "complete": 1,
+      "version": "1.0"
+    }
+  }
+}
+```
+
+**SChain Augment Configuration:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `enabled` | bool | Yes | Enable/disable schain augmentation for this bidder |
+| `nodes` | array | Yes | List of supply chain nodes to append |
+| `complete` | int | No | Override the complete flag (1=complete, 0=incomplete, null=preserve original) |
+| `version` | string | No | SChain version (default "1.0") |
+
+**SChain Node Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `asi` | string | Yes | Canonical domain name of the SSP/Exchange (e.g., "nexusengine.com") |
+| `sid` | string | Yes | Seller ID representing the bidder's relationship with this entity |
+| `hp` | int | No | Header bidding partner flag: 1=direct/payment, 0=indirect (default 1) |
+| `rid` | string | No | Request ID for tracking (optional, typically omitted) |
+| `name` | string | No | Human-readable name of the entity |
+| `domain` | string | No | Domain of the entity (may differ from ASI) |
+| `ext` | object | No | Custom extension data |
+
+**How It Works:**
+
+1. When a bid request arrives, the existing supply chain (if any) is preserved
+2. If `schain_augment.enabled` is true, configured nodes are appended to the existing chain
+3. If no supply chain exists, one is created with the configured nodes
+4. The modified request is sent to the bidder
+
+```
+Original Request:                    Augmented Request to Bidder:
+┌────────────────────────┐          ┌────────────────────────────────────┐
+│ source.schain.nodes:   │   ──►    │ source.schain.nodes:               │
+│ [{asi: "publisher.com" │          │ [{asi: "publisher.com"             │
+│   sid: "pub-123"}]     │          │   sid: "pub-123"},                 │
+└────────────────────────┘          │  {asi: "nexusengine.com"           │
+                                    │   sid: "nexus-seat-001",           │
+                                    │   hp: 1,                           │
+                                    │   name: "The Nexus Engine"}]       │
+                                    └────────────────────────────────────┘
+```
+
+**Admin UI Configuration:**
+
+You can configure schain augmentation through the Admin UI:
+
+1. Open the bidder edit modal
+2. Expand the "Supply Chain (SChain) Augmentation" section
+3. Check "Enable SChain Augmentation"
+4. Add one or more nodes with the required fields
+5. Optionally set the chain completeness flag
+6. Save the bidder configuration
 
 ### Response Transform Configuration
 
@@ -555,6 +639,98 @@ GET /api/bidders/active
   },
   "status": "active",
   "priority": 80
+}
+```
+
+### Partner with Supply Chain Augmentation
+
+```json
+{
+  "bidder_code": "transparentpartner",
+  "name": "Transparent Partner with SChain",
+  "description": "Partner requiring supply chain transparency",
+  "endpoint": {
+    "url": "https://transparent.partner.com/bid",
+    "method": "POST",
+    "timeout_ms": 200,
+    "protocol_version": "2.6",
+    "auth_type": "bearer",
+    "auth_token": "partner-token-xyz"
+  },
+  "capabilities": {
+    "media_types": ["banner", "video"],
+    "currencies": ["USD"],
+    "site_enabled": true,
+    "app_enabled": true,
+    "supports_gdpr": true,
+    "supports_ccpa": true,
+    "supports_coppa": true,
+    "supports_schain": true
+  },
+  "request_transform": {
+    "schain_augment": {
+      "enabled": true,
+      "nodes": [
+        {
+          "asi": "nexusengine.com",
+          "sid": "nexus-transparent-seat",
+          "hp": 1,
+          "name": "The Nexus Engine",
+          "domain": "nexusengine.com"
+        }
+      ],
+      "complete": 1,
+      "version": "1.0"
+    }
+  },
+  "status": "active",
+  "gvl_vendor_id": 777,
+  "priority": 70
+}
+```
+
+### Multi-hop Reseller Configuration
+
+For complex supply chain scenarios with multiple intermediaries:
+
+```json
+{
+  "bidder_code": "resellerpartner",
+  "name": "Reseller Partner",
+  "endpoint": {
+    "url": "https://reseller.partner.com/rtb/bid",
+    "method": "POST",
+    "timeout_ms": 250,
+    "protocol_version": "2.5"
+  },
+  "capabilities": {
+    "media_types": ["banner"],
+    "currencies": ["USD"],
+    "supports_schain": true
+  },
+  "request_transform": {
+    "schain_augment": {
+      "enabled": true,
+      "nodes": [
+        {
+          "asi": "nexusengine.com",
+          "sid": "nexus-main",
+          "hp": 1,
+          "name": "The Nexus Engine"
+        },
+        {
+          "asi": "reseller.partner.com",
+          "sid": "reseller-seat-001",
+          "hp": 0,
+          "name": "Reseller Partner",
+          "rid": "resell-tracking-id"
+        }
+      ],
+      "complete": 1
+    }
+  },
+  "status": "active",
+  "priority": 50
 }
 ```
 

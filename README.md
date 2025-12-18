@@ -454,9 +454,50 @@ curl -X POST http://localhost:5050/api/bidders \
 - **Multiple Auth Methods** - Bearer tokens, basic auth, custom headers
 - **Request Transformation** - Map fields for bidder-specific formats
 - **Response Transformation** - Price adjustments, field mapping
+- **Supply Chain (SChain) Augmentation** - Per-bidder supply chain node configuration
 - **Publisher/Geo Targeting** - Control bidder participation
 - **Real-time Updates** - No server restart required
 - **GVL Vendor IDs** - GDPR compliance support
+
+### Supply Chain Augmentation
+
+The Nexus Engine supports per-bidder supply chain augmentation, allowing you to add schain nodes to bid requests for specific bidders. This enables proper ads.txt/sellers.json compliance and transparency documentation.
+
+```bash
+# Create a bidder with schain augmentation via API
+curl -X POST http://localhost:5050/api/bidders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bidder_code": "transparentpartner",
+    "name": "Transparent Partner",
+    "endpoint": {
+      "url": "https://partner.example.com/bid",
+      "timeout_ms": 200
+    },
+    "capabilities": {
+      "media_types": ["banner"],
+      "supports_schain": true
+    },
+    "request_transform": {
+      "schain_augment": {
+        "enabled": true,
+        "nodes": [{
+          "asi": "nexusengine.com",
+          "sid": "nexus-seat-001",
+          "hp": 1,
+          "name": "The Nexus Engine"
+        }],
+        "complete": 1
+      }
+    }
+  }'
+```
+
+You can also configure schain augmentation through the Admin UI:
+1. Edit a bidder at `http://localhost:5050/bidders`
+2. Expand "Supply Chain (SChain) Augmentation"
+3. Enable augmentation and add nodes
+4. Save the configuration
 
 See [OpenRTB Bidder Integration Guide](docs/ortb-bidder-integration.md) for complete documentation.
 
@@ -468,6 +509,7 @@ See [OpenRTB Bidder Integration Guide](docs/ortb-bidder-integration.md) for comp
 - [x] PBS Core (OpenRTB, auction, exchange)
 - [x] 22 Bidder adapters with GVL IDs
 - [x] Dynamic OpenRTB bidder integration (custom demand sources)
+- [x] Supply Chain (SChain) augmentation per bidder
 - [x] Privacy compliance (GDPR/TCF, CCPA, COPPA)
 - [x] Database integration (Redis + TimescaleDB)
 - [x] Production hardening (auth, rate limiting, circuit breaker)
