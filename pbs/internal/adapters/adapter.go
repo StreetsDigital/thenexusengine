@@ -3,12 +3,16 @@ package adapters
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 )
+
+// maxResponseSize limits bidder response size to prevent OOM attacks
+const maxResponseSize = 1024 * 1024 // 1MB
 
 // Adapter defines the interface for bidder adapters
 type Adapter interface {
@@ -160,8 +164,15 @@ func NewHTTPClient(timeout time.Duration) *DefaultHTTPClient {
 	}
 }
 
-// Do executes an HTTP request
+// Do executes an HTTP request with proper timeout handling
 func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout time.Duration) (*ResponseData, error) {
+	// Create timeout context for this specific request if timeout is provided
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URI, nil)
 	if err != nil {
 		return nil, err
@@ -182,10 +193,37 @@ func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout ti
 	}
 	defer resp.Body.Close()
 
-	// Use io.ReadAll for proper error handling
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	// Read body with size limit to prevent OOM from malicious bidders
+	body := make([]byte, 0, 4096) // Pre-allocate reasonable initial capacity
+	buf := make([]byte, 4096)
+	totalRead := 0
+
+	for {
+		// Check context before each read to avoid blocking on slow responses
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			totalRead += n
+			if totalRead > maxResponseSize {
+				return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
+			}
+			body = append(body, buf[:n]...)
+		}
+		if err != nil {
+			if err == io.EOF {
+				break // Normal end of response
+			}
+			// For other errors, return what we have if we got some data
+			if totalRead > 0 {
+				break
+			}
+			return nil, err
+		}
 	}
 
 	return &ResponseData{
@@ -201,15 +239,21 @@ type bodyReader struct {
 	pos  int
 }
 
+// Read implements io.Reader with proper EOF handling
 func (r *bodyReader) Read(p []byte) (n int, err error) {
 	if r.pos >= len(r.data) {
 		return 0, io.EOF
 	}
 	n = copy(p, r.data[r.pos:])
 	r.pos += n
+	// Return io.EOF along with the final bytes if we've reached the end
+	if r.pos >= len(r.data) {
+		return n, io.EOF
+	}
 	return n, nil
 }
 
+// Close implements io.Closer
 func (r *bodyReader) Close() error {
 	return nil
 }

@@ -144,6 +144,21 @@ type DebugInfo struct {
 	SelectedBidders   []string
 	ExcludedBidders   []string
 	Errors            map[string][]string
+	errorsMu          sync.Mutex // Protects concurrent access to Errors map
+}
+
+// AddError safely adds errors to the Errors map with mutex protection
+func (d *DebugInfo) AddError(key string, errors []string) {
+	d.errorsMu.Lock()
+	defer d.errorsMu.Unlock()
+	d.Errors[key] = errors
+}
+
+// AppendError safely appends an error to the Errors map with mutex protection
+func (d *DebugInfo) AppendError(key string, errMsg string) {
+	d.errorsMu.Lock()
+	defer d.errorsMu.Unlock()
+	d.Errors[key] = append(d.Errors[key], errMsg)
 }
 
 // RunAuction executes the auction
@@ -225,7 +240,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 		bidderFPD, err = e.fpdProcessor.ProcessRequest(req.BidRequest, selectedBidders)
 		if err != nil {
 			// Log error but continue - FPD is not critical
-			response.DebugInfo.Errors["fpd"] = []string{err.Error()}
+			response.DebugInfo.AddError("fpd", []string{err.Error()})
 		}
 	}
 
@@ -277,7 +292,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			for i, err := range result.Errors {
 				errStrs[i] = err.Error()
 			}
-			response.DebugInfo.Errors[bidderCode] = errStrs
+			response.DebugInfo.AddError(bidderCode, errStrs)
 		}
 
 		// Record event to IDR
@@ -574,6 +589,16 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 	// Execute requests (could parallelize for multi-request adapters)
 	allBids := make([]*adapters.TypedBid, 0)
 	for _, reqData := range requests {
+		// Check if context has expired before each request to avoid wasted work
+		select {
+		case <-ctx.Done():
+			result.Errors = append(result.Errors, ctx.Err())
+			result.Latency = time.Since(start)
+			return result
+		default:
+			// Context still valid, proceed with request
+		}
+
 		resp, err := e.httpClient.Do(ctx, reqData, timeout)
 		if err != nil {
 			result.Errors = append(result.Errors, err)
