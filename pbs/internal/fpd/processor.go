@@ -2,15 +2,15 @@ package fpd
 
 import (
 	"encoding/json"
-	"sync"
+	"sync/atomic"
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 )
 
 // Processor handles First Party Data processing for bid requests
+// P0-2: Uses atomic.Value for lock-free, race-safe config access
 type Processor struct {
-	config *Config
-	mu     sync.RWMutex
+	config atomic.Value // Stores *Config
 }
 
 // NewProcessor creates a new FPD processor with the given configuration
@@ -18,15 +18,22 @@ func NewProcessor(config *Config) *Processor {
 	if config == nil {
 		config = DefaultConfig()
 	}
-	return &Processor{config: config}
+	p := &Processor{}
+	p.config.Store(config)
+	return p
+}
+
+// getConfig returns the current configuration atomically
+// P0-2: Readers get a consistent snapshot even if UpdateConfig is called concurrently
+func (p *Processor) getConfig() *Config {
+	return p.config.Load().(*Config)
 }
 
 // ProcessRequest processes FPD in a bid request and returns bidder-specific FPD
 // This is the main entry point for FPD processing
 func (p *Processor) ProcessRequest(req *openrtb.BidRequest, bidders []string) (BidderFPD, error) {
-	p.mu.RLock()
-	config := p.config
-	p.mu.RUnlock()
+	// P0-2: Atomic load ensures consistent config snapshot for entire function
+	config := p.getConfig()
 
 	if !config.Enabled {
 		return nil, nil
@@ -288,17 +295,15 @@ func (p *Processor) setExtData(ext json.RawMessage, data json.RawMessage) json.R
 }
 
 // GetConfig returns the processor's configuration
+// P0-2: Uses atomic load for lock-free, race-safe access
 func (p *Processor) GetConfig() *Config {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.config
+	return p.config.Load().(*Config)
 }
 
 // UpdateConfig updates the processor's configuration
+// P0-2: Uses atomic store for lock-free, race-safe updates
 func (p *Processor) UpdateConfig(config *Config) {
 	if config != nil {
-		p.mu.Lock()
-		p.config = config
-		p.mu.Unlock()
+		p.config.Store(config)
 	}
 }

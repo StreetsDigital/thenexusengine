@@ -199,32 +199,45 @@ func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout ti
 	buf := make([]byte, 4096)
 	totalRead := 0
 
+	// P0-3: Channel for read results to enable context cancellation during read
+	type readResult struct {
+		n   int
+		err error
+	}
+	readCh := make(chan readResult, 1)
+
 	for {
-		// Check context before each read to avoid blocking on slow responses
+		// P0-3: Perform read in goroutine to allow context cancellation during blocking read
+		go func() {
+			n, err := resp.Body.Read(buf)
+			readCh <- readResult{n: n, err: err}
+		}()
+
+		// P0-3: Wait for either read completion or context cancellation
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		default:
-		}
-
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			totalRead += n
-			if totalRead > maxResponseSize {
-				return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
+		case result := <-readCh:
+			if result.n > 0 {
+				totalRead += result.n
+				if totalRead > maxResponseSize {
+					return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
+				}
+				body = append(body, buf[:result.n]...)
 			}
-			body = append(body, buf[:n]...)
-		}
-		if err != nil {
-			if err == io.EOF {
-				break // Normal end of response
+			if result.err != nil {
+				if result.err == io.EOF {
+					break // Normal end of response - exit select, then break outer loop
+				}
+				// For other errors, return what we have if we got some data
+				if totalRead > 0 {
+					break // Exit select, then break outer loop
+				}
+				return nil, result.err
 			}
-			// For other errors, return what we have if we got some data
-			if totalRead > 0 {
-				break
-			}
-			return nil, err
+			continue // Continue the for loop
 		}
+		break // Exit the for loop after EOF or partial read error
 	}
 
 	return &ResponseData{
