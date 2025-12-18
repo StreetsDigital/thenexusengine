@@ -631,6 +631,36 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
         except Exception as e:
             return jsonify(_safe_error_response(e, 'Failed to update FPD settings', 400))
 
+    @app.route('/api/config/cookie_sync', methods=['PATCH'])
+    @login_required
+    def update_cookie_sync_config():
+        """Update Cookie Sync configuration."""
+        try:
+            config = load_config(app.config['CONFIG_PATH'])
+            updates = request.json
+
+            if 'cookie_sync' not in config:
+                config['cookie_sync'] = {}
+
+            config['cookie_sync']['enabled'] = updates.get('enabled', True)
+            config['cookie_sync']['default_type'] = updates.get('default_type', 'iframe')
+            config['cookie_sync']['limit'] = updates.get('limit', 5)
+            config['cookie_sync']['interval_hours'] = updates.get('interval_hours', 24)
+            config['cookie_sync']['sync_url'] = updates.get('sync_url', '/setuid')
+            config['cookie_sync']['gdpr_url'] = updates.get('gdpr_url', '')
+            config['cookie_sync']['coop_sync'] = updates.get('coop_sync', False)
+            config['cookie_sync']['priority_sync'] = updates.get('priority_sync', True)
+
+            save_config(config, app.config['CONFIG_PATH'])
+
+            return jsonify({
+                'status': 'success',
+                'config': config['cookie_sync'],
+                'message': 'Cookie sync settings saved.'
+            })
+        except Exception as e:
+            return jsonify(_safe_error_response(e, 'Failed to update cookie sync settings', 400))
+
     @app.route('/api/select', methods=['POST'])
     @login_required
     def select_partners():
