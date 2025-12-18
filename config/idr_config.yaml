@@ -15,7 +15,8 @@ scoring:
 # Partner selection settings
 selector:
   # BYPASS/TESTING MODES
-  bypass_enabled: false        # If true, select ALL bidders (no IDR filtering)
+  # Default: bypass enabled (IDR off) during early development
+  bypass_enabled: true         # If true, select ALL bidders (no IDR filtering)
   shadow_mode: false           # If true, return all but track what WOULD be excluded
 
   # Selection limits
