@@ -37,6 +37,15 @@ const (
 	SecondPriceAuction AuctionType = 2
 )
 
+// Clone allocation limits (P1-3: prevent OOM from malicious requests)
+const (
+	maxImpressionsPerRequest = 100  // Maximum impressions to clone
+	maxEIDsPerUser           = 50   // Maximum EIDs to clone
+	maxDataPerUser           = 20   // Maximum Data segments to clone
+	maxDealsPerImp           = 50   // Maximum deals per impression
+	maxSChainNodes           = 20   // Maximum supply chain nodes
+)
+
 // Config holds exchange configuration
 type Config struct {
 	DefaultTimeout     time.Duration
@@ -150,6 +159,7 @@ type BidderResult struct {
 	Latency    time.Duration
 	Selected   bool
 	Score      float64
+	TimedOut   bool // P2-2: indicates if the bidder request timed out
 }
 
 // DebugInfo contains debug information
@@ -255,6 +265,17 @@ func (e *Exchange) validateBid(bid *openrtb.Bid, bidderCode string, impIDs map[s
 		}
 	}
 
+	// P2-1: Validate that bid has creative content (AdM or NURL required)
+	// OpenRTB 2.x requires either inline markup (adm) or a URL to fetch it (nurl)
+	if bid.AdM == "" && bid.NURL == "" {
+		return &BidValidationError{
+			BidID:      bid.ID,
+			ImpID:      bid.ImpID,
+			BidderCode: bidderCode,
+			Reason:     "bid must have either adm or nurl",
+		}
+	}
+
 	return nil
 }
 
@@ -294,8 +315,9 @@ func (e *Exchange) runAuctionLogic(validBids []ValidatedBid) map[string][]Valida
 
 		if e.config.AuctionType == SecondPriceAuction && len(bids) > 1 {
 			// Second-price: winner pays second highest + increment
+			// Use integer arithmetic to avoid floating-point precision errors (P0-2)
 			secondPrice := bids[1].Bid.Bid.Price
-			winningPrice := secondPrice + e.config.PriceIncrement
+			winningPrice := roundToCents(secondPrice + e.config.PriceIncrement)
 			// Ensure winning price doesn't exceed original bid
 			if winningPrice > bids[0].Bid.Bid.Price {
 				winningPrice = bids[0].Bid.Bid.Price
@@ -311,15 +333,33 @@ func (e *Exchange) runAuctionLogic(validBids []ValidatedBid) map[string][]Valida
 }
 
 // sortBidsByPrice sorts bids in descending order by price (highest first)
+// Includes defensive nil checks to prevent panics
 func sortBidsByPrice(bids []ValidatedBid) {
 	// Simple insertion sort - typically small number of bids per impression
 	for i := 1; i < len(bids); i++ {
 		j := i
-		for j > 0 && bids[j].Bid.Bid.Price > bids[j-1].Bid.Bid.Price {
-			bids[j], bids[j-1] = bids[j-1], bids[j]
-			j--
+		for j > 0 {
+			// Defensive nil checks (P1-5)
+			if bids[j].Bid == nil || bids[j].Bid.Bid == nil ||
+				bids[j-1].Bid == nil || bids[j-1].Bid.Bid == nil {
+				break
+			}
+			if bids[j].Bid.Bid.Price > bids[j-1].Bid.Bid.Price {
+				bids[j], bids[j-1] = bids[j-1], bids[j]
+				j--
+			} else {
+				break
+			}
 		}
 	}
+}
+
+// roundToCents rounds a price to 2 decimal places using integer arithmetic
+// to avoid floating-point precision errors (P0-2)
+func roundToCents(price float64) float64 {
+	// Convert to cents, round, convert back
+	cents := int64(price*100 + 0.5)
+	return float64(cents) / 100.0
 }
 
 // RunAuction executes the auction
@@ -442,6 +482,17 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 		publisherID = req.BidRequest.Site.Publisher.ID
 	}
 
+	// P1-2: Check context deadline before expensive validation work
+	// If we've already timed out, return early with whatever we have
+	select {
+	case <-ctx.Done():
+		response.DebugInfo.TotalLatency = time.Since(startTime)
+		response.BidResponse = e.buildEmptyResponse(req.BidRequest)
+		return response, nil // Return empty response rather than error on timeout
+	default:
+		// Context still valid, proceed with validation
+	}
+
 	// Build impression floor map for bid validation
 	impFloors := buildImpFloorMap(req.BidRequest)
 
@@ -491,7 +542,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 				mediaType,
 				adSize,
 				publisherID,
-				false, // timedOut - would need to check context
+				result.TimedOut, // P2-2: use actual timeout status
 				hadError,
 				errorMsg,
 			)
@@ -703,15 +754,23 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 			geoCopy := *req.User.Geo
 			userCopy.Geo = &geoCopy
 		}
-		// Deep copy EIDs slice
+		// Deep copy EIDs slice (P1-3: bounded allocation)
 		if len(req.User.EIDs) > 0 {
-			userCopy.EIDs = make([]openrtb.EID, len(req.User.EIDs))
-			copy(userCopy.EIDs, req.User.EIDs)
+			eidCount := len(req.User.EIDs)
+			if eidCount > maxEIDsPerUser {
+				eidCount = maxEIDsPerUser
+			}
+			userCopy.EIDs = make([]openrtb.EID, eidCount)
+			copy(userCopy.EIDs, req.User.EIDs[:eidCount])
 		}
-		// Deep copy Data slice
+		// Deep copy Data slice (P1-3: bounded allocation)
 		if len(req.User.Data) > 0 {
-			userCopy.Data = make([]openrtb.Data, len(req.User.Data))
-			copy(userCopy.Data, req.User.Data)
+			dataCount := len(req.User.Data)
+			if dataCount > maxDataPerUser {
+				dataCount = maxDataPerUser
+			}
+			userCopy.Data = make([]openrtb.Data, dataCount)
+			copy(userCopy.Data, req.User.Data[:dataCount])
 		}
 		clone.User = &userCopy
 	}
@@ -737,19 +796,29 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 		sourceCopy := *req.Source
 		if req.Source.SChain != nil {
 			schainCopy := *req.Source.SChain
+			// P1-3: bounded allocation for supply chain nodes
 			if len(req.Source.SChain.Nodes) > 0 {
-				schainCopy.Nodes = make([]openrtb.SupplyChainNode, len(req.Source.SChain.Nodes))
-				copy(schainCopy.Nodes, req.Source.SChain.Nodes)
+				nodeCount := len(req.Source.SChain.Nodes)
+				if nodeCount > maxSChainNodes {
+					nodeCount = maxSChainNodes
+				}
+				schainCopy.Nodes = make([]openrtb.SupplyChainNode, nodeCount)
+				copy(schainCopy.Nodes, req.Source.SChain.Nodes[:nodeCount])
 			}
 			sourceCopy.SChain = &schainCopy
 		}
 		clone.Source = &sourceCopy
 	}
 
-	// Deep copy Imp slice
+	// Deep copy Imp slice (P1-3: bounded allocation)
 	if len(req.Imp) > 0 {
-		clone.Imp = make([]openrtb.Imp, len(req.Imp))
-		for i, imp := range req.Imp {
+		impCount := len(req.Imp)
+		if impCount > maxImpressionsPerRequest {
+			impCount = maxImpressionsPerRequest
+		}
+		clone.Imp = make([]openrtb.Imp, impCount)
+		for i := 0; i < impCount; i++ {
+			imp := req.Imp[i]
 			impCopy := imp
 			if imp.Banner != nil {
 				bannerCopy := *imp.Banner
@@ -769,9 +838,14 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 			}
 			if imp.PMP != nil {
 				pmpCopy := *imp.PMP
+				// P1-3: bounded allocation for deals
 				if len(imp.PMP.Deals) > 0 {
-					pmpCopy.Deals = make([]openrtb.Deal, len(imp.PMP.Deals))
-					copy(pmpCopy.Deals, imp.PMP.Deals)
+					dealCount := len(imp.PMP.Deals)
+					if dealCount > maxDealsPerImp {
+						dealCount = maxDealsPerImp
+					}
+					pmpCopy.Deals = make([]openrtb.Deal, dealCount)
+					copy(pmpCopy.Deals, imp.PMP.Deals[:dealCount])
 				}
 				impCopy.PMP = &pmpCopy
 			}
@@ -813,6 +887,7 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 		case <-ctx.Done():
 			result.Errors = append(result.Errors, ctx.Err())
 			result.Latency = time.Since(start)
+			result.TimedOut = true // P2-2: mark as timed out
 			return result
 		default:
 			// Context still valid, proceed with request
@@ -821,6 +896,10 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 		resp, err := e.httpClient.Do(ctx, reqData, timeout)
 		if err != nil {
 			result.Errors = append(result.Errors, err)
+			// P2-2: Check if this was a timeout error
+			if err == context.DeadlineExceeded || err == context.Canceled {
+				result.TimedOut = true
+			}
 			continue
 		}
 
@@ -830,6 +909,27 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 		}
 
 		if bidderResp != nil {
+			// P2-5: Validate BidResponse.ID matches BidRequest.ID (OpenRTB 2.x requirement)
+			// Per spec, response ID must echo request ID - reject on mismatch
+			if bidderResp.ResponseID != "" && bidderResp.ResponseID != req.ID {
+				result.Errors = append(result.Errors, fmt.Errorf(
+					"response ID mismatch from %s: expected %q, got %q (bids rejected)",
+					bidderCode, req.ID, bidderResp.ResponseID,
+				))
+				continue // Reject all bids from this response
+			}
+
+			// P1-4: Validate response currency matches expected currency
+			// We request USD in the bid request, so responses must be in USD
+			if bidderResp.Currency != "" && bidderResp.Currency != e.config.DefaultCurrency {
+				result.Errors = append(result.Errors, fmt.Errorf(
+					"currency mismatch from %s: expected %s, got %s (bids rejected)",
+					bidderCode, e.config.DefaultCurrency, bidderResp.Currency,
+				))
+				// Skip bids with wrong currency - can't safely compare prices
+				continue
+			}
+
 			allBids = append(allBids, bidderResp.Bids...)
 		}
 	}
