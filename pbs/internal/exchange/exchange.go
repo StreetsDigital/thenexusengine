@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,34 +38,62 @@ const (
 	SecondPriceAuction AuctionType = 2
 )
 
-// Clone allocation limits (P1-3: prevent OOM from malicious requests)
+// Default clone allocation limits (P1-3: prevent OOM from malicious requests)
+// P3-1: These are now defaults; can be overridden via CloneLimits config
 const (
-	maxImpressionsPerRequest = 100  // Maximum impressions to clone
-	maxEIDsPerUser           = 50   // Maximum EIDs to clone
-	maxDataPerUser           = 20   // Maximum Data segments to clone
-	maxDealsPerImp           = 50   // Maximum deals per impression
-	maxSChainNodes           = 20   // Maximum supply chain nodes
+	defaultMaxImpressionsPerRequest = 100 // Maximum impressions to clone
+	defaultMaxEIDsPerUser           = 50  // Maximum EIDs to clone
+	defaultMaxDataPerUser           = 20  // Maximum Data segments to clone
+	defaultMaxDealsPerImp           = 50  // Maximum deals per impression
+	defaultMaxSChainNodes           = 20  // Maximum supply chain nodes
 )
+
+// P1-4: Timeout bounds for dynamic adapter validation
+const (
+	minBidderTimeout = 10 * time.Millisecond  // Minimum reasonable timeout
+	maxBidderTimeout = 5 * time.Second        // Maximum to prevent resource exhaustion
+)
+
+// CloneLimits holds configurable limits for request cloning (P3-1)
+type CloneLimits struct {
+	MaxImpressionsPerRequest int // Maximum impressions to clone (default: 100)
+	MaxEIDsPerUser           int // Maximum EIDs to clone (default: 50)
+	MaxDataPerUser           int // Maximum Data segments to clone (default: 20)
+	MaxDealsPerImp           int // Maximum deals per impression (default: 50)
+	MaxSChainNodes           int // Maximum supply chain nodes (default: 20)
+}
+
+// DefaultCloneLimits returns default clone limits
+func DefaultCloneLimits() *CloneLimits {
+	return &CloneLimits{
+		MaxImpressionsPerRequest: defaultMaxImpressionsPerRequest,
+		MaxEIDsPerUser:           defaultMaxEIDsPerUser,
+		MaxDataPerUser:           defaultMaxDataPerUser,
+		MaxDealsPerImp:           defaultMaxDealsPerImp,
+		MaxSChainNodes:           defaultMaxSChainNodes,
+	}
+}
 
 // Config holds exchange configuration
 type Config struct {
-	DefaultTimeout     time.Duration
-	MaxBidders         int
+	DefaultTimeout       time.Duration
+	MaxBidders           int
 	MaxConcurrentBidders int // P0-4: Limit concurrent bidder goroutines (0 = unlimited)
-	IDREnabled         bool
-	IDRServiceURL      string
-	EventRecordEnabled bool
-	EventBufferSize    int
-	CurrencyConv       bool
-	DefaultCurrency    string
-	FPD                *fpd.Config
+	IDREnabled           bool
+	IDRServiceURL        string
+	EventRecordEnabled   bool
+	EventBufferSize      int
+	CurrencyConv         bool
+	DefaultCurrency      string
+	FPD                  *fpd.Config
+	CloneLimits          *CloneLimits // P3-1: Configurable clone limits
 	// Dynamic bidder configuration
 	DynamicBiddersEnabled bool
 	DynamicRefreshPeriod  time.Duration
 	// Auction configuration
-	AuctionType      AuctionType
-	PriceIncrement   float64 // For second-price auctions (typically 0.01)
-	MinBidPrice      float64 // Minimum valid bid price
+	AuctionType    AuctionType
+	PriceIncrement float64 // For second-price auctions (typically 0.01)
+	MinBidPrice    float64 // Minimum valid bid price
 }
 
 // DefaultConfig returns default configuration
@@ -80,6 +109,7 @@ func DefaultConfig() *Config {
 		CurrencyConv:          false,
 		DefaultCurrency:       "USD",
 		FPD:                   fpd.DefaultConfig(),
+		CloneLimits:           DefaultCloneLimits(), // P3-1: Configurable clone limits
 		DynamicBiddersEnabled: true,
 		DynamicRefreshPeriod:  30 * time.Second,
 		AuctionType:           FirstPriceAuction,
@@ -88,11 +118,79 @@ func DefaultConfig() *Config {
 	}
 }
 
+// validateConfig validates config values and applies sensible defaults for invalid values
+// P1-2: Prevent runtime panics or silent failures from bad configuration
+func validateConfig(config *Config) *Config {
+	defaults := DefaultConfig()
+
+	// Timeout must be positive
+	if config.DefaultTimeout <= 0 {
+		config.DefaultTimeout = defaults.DefaultTimeout
+	}
+
+	// MaxBidders must be positive
+	if config.MaxBidders <= 0 {
+		config.MaxBidders = defaults.MaxBidders
+	}
+
+	// MaxConcurrentBidders must be non-negative (0 means unlimited)
+	if config.MaxConcurrentBidders < 0 {
+		config.MaxConcurrentBidders = defaults.MaxConcurrentBidders
+	}
+
+	// AuctionType must be valid
+	if config.AuctionType != FirstPriceAuction && config.AuctionType != SecondPriceAuction {
+		config.AuctionType = FirstPriceAuction
+	}
+
+	// PriceIncrement must be positive for second-price auctions
+	if config.AuctionType == SecondPriceAuction && config.PriceIncrement <= 0 {
+		config.PriceIncrement = defaults.PriceIncrement
+	}
+
+	// MinBidPrice should not be negative
+	if config.MinBidPrice < 0 {
+		config.MinBidPrice = 0
+	}
+
+	// EventBufferSize must be positive if event recording is enabled
+	if config.EventRecordEnabled && config.EventBufferSize <= 0 {
+		config.EventBufferSize = defaults.EventBufferSize
+	}
+
+	// P3-1: Initialize CloneLimits if nil and validate values
+	if config.CloneLimits == nil {
+		config.CloneLimits = DefaultCloneLimits()
+	} else {
+		defaultLimits := DefaultCloneLimits()
+		if config.CloneLimits.MaxImpressionsPerRequest <= 0 {
+			config.CloneLimits.MaxImpressionsPerRequest = defaultLimits.MaxImpressionsPerRequest
+		}
+		if config.CloneLimits.MaxEIDsPerUser <= 0 {
+			config.CloneLimits.MaxEIDsPerUser = defaultLimits.MaxEIDsPerUser
+		}
+		if config.CloneLimits.MaxDataPerUser <= 0 {
+			config.CloneLimits.MaxDataPerUser = defaultLimits.MaxDataPerUser
+		}
+		if config.CloneLimits.MaxDealsPerImp <= 0 {
+			config.CloneLimits.MaxDealsPerImp = defaultLimits.MaxDealsPerImp
+		}
+		if config.CloneLimits.MaxSChainNodes <= 0 {
+			config.CloneLimits.MaxSChainNodes = defaultLimits.MaxSChainNodes
+		}
+	}
+
+	return config
+}
+
 // New creates a new exchange
 func New(registry *adapters.Registry, config *Config) *Exchange {
 	if config == nil {
 		config = DefaultConfig()
 	}
+
+	// P1-2: Validate and apply defaults for critical config fields
+	config = validateConfig(config)
 
 	// Initialize FPD config if not provided
 	fpdConfig := config.FPD
@@ -434,23 +532,31 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	if e.idrClient != nil && e.config.IDREnabled {
 		idrStart := time.Now()
 
-		reqJSON, _ := json.Marshal(req.BidRequest)
-		idrResult, err := e.idrClient.SelectPartners(ctx, reqJSON, availableBidders)
+		// P1-5: Handle JSON marshaling errors properly
+		reqJSON, marshalErr := json.Marshal(req.BidRequest)
+		if marshalErr != nil {
+			// Log error but continue with all bidders as fallback
+			response.DebugInfo.AddError("idr", []string{
+				fmt.Sprintf("failed to marshal request for IDR: %v", marshalErr),
+			})
+		} else {
+			idrResult, err := e.idrClient.SelectPartners(ctx, reqJSON, availableBidders)
 
-		response.DebugInfo.IDRLatency = time.Since(idrStart)
+			response.DebugInfo.IDRLatency = time.Since(idrStart)
 
-		if err == nil && idrResult != nil {
-			response.IDRResult = idrResult
-			selectedBidders = make([]string, 0, len(idrResult.SelectedBidders))
-			for _, sb := range idrResult.SelectedBidders {
-				selectedBidders = append(selectedBidders, sb.BidderCode)
+			if err == nil && idrResult != nil {
+				response.IDRResult = idrResult
+				selectedBidders = make([]string, 0, len(idrResult.SelectedBidders))
+				for _, sb := range idrResult.SelectedBidders {
+					selectedBidders = append(selectedBidders, sb.BidderCode)
+				}
+
+				for _, eb := range idrResult.ExcludedBidders {
+					response.DebugInfo.ExcludedBidders = append(response.DebugInfo.ExcludedBidders, eb.BidderCode)
+				}
 			}
-
-			for _, eb := range idrResult.ExcludedBidders {
-				response.DebugInfo.ExcludedBidders = append(response.DebugInfo.ExcludedBidders, eb.BidderCode)
-			}
+			// If IDR fails, fall back to all bidders
 		}
-		// If IDR fails, fall back to all bidders
 	}
 
 	response.DebugInfo.SelectedBidders = selectedBidders
@@ -554,7 +660,16 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			hadError := len(result.Errors) > 0
 			var errorMsg string
 			if hadError {
-				errorMsg = result.Errors[0].Error()
+				// P2-7: Aggregate all errors instead of just the first
+				if len(result.Errors) == 1 {
+					errorMsg = result.Errors[0].Error()
+				} else {
+					errMsgs := make([]string, len(result.Errors))
+					for i, err := range result.Errors {
+						errMsgs[i] = err.Error()
+					}
+					errorMsg = fmt.Sprintf("%d errors: %s", len(result.Errors), strings.Join(errMsgs, "; "))
+				}
 			}
 
 			e.eventRecorder.RecordBidResponse(
@@ -724,10 +839,19 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 					// Clone request and apply bidder-specific FPD
 					bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
 
-					// Use dynamic adapter's timeout if smaller
+					// P1-4: Use dynamic adapter's timeout if smaller, with validation bounds
 					bidderTimeout := timeout
 					if da.GetTimeout() > 0 && da.GetTimeout() < timeout {
-						bidderTimeout = da.GetTimeout()
+						dynamicTimeout := da.GetTimeout()
+						// Enforce minimum timeout to prevent crashes
+						if dynamicTimeout < minBidderTimeout {
+							dynamicTimeout = minBidderTimeout
+						}
+						// Enforce maximum timeout to prevent resource exhaustion
+						if dynamicTimeout > maxBidderTimeout {
+							dynamicTimeout = maxBidderTimeout
+						}
+						bidderTimeout = dynamicTimeout
 					}
 
 					result := e.callBidder(ctx, bidderReq, code, da, bidderTimeout)
@@ -753,7 +877,7 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 // and enforces USD currency for all bid requests
 func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode string, bidderFPD fpd.BidderFPD) *openrtb.BidRequest {
 	// Always clone to ensure thread safety and allow currency normalization
-	clone := deepCloneRequest(req)
+	clone := deepCloneRequest(req, e.config.CloneLimits)
 
 	// Enforce USD currency on all outgoing requests
 	// This ensures all bidders compete in the same currency without needing forex conversion
@@ -782,7 +906,8 @@ func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode strin
 
 // deepCloneRequest creates a deep copy of the BidRequest to avoid race conditions
 // when multiple bidders modify request data concurrently
-func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
+// P3-1: Uses configurable limits to bound allocations
+func deepCloneRequest(req *openrtb.BidRequest, limits *CloneLimits) *openrtb.BidRequest {
 	clone := *req
 
 	// Deep copy Site
@@ -823,8 +948,8 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 		// Deep copy EIDs slice (P1-3: bounded allocation)
 		if len(req.User.EIDs) > 0 {
 			eidCount := len(req.User.EIDs)
-			if eidCount > maxEIDsPerUser {
-				eidCount = maxEIDsPerUser
+			if eidCount > limits.MaxEIDsPerUser {
+				eidCount = limits.MaxEIDsPerUser
 			}
 			userCopy.EIDs = make([]openrtb.EID, eidCount)
 			copy(userCopy.EIDs, req.User.EIDs[:eidCount])
@@ -832,8 +957,8 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 		// Deep copy Data slice (P1-3: bounded allocation)
 		if len(req.User.Data) > 0 {
 			dataCount := len(req.User.Data)
-			if dataCount > maxDataPerUser {
-				dataCount = maxDataPerUser
+			if dataCount > limits.MaxDataPerUser {
+				dataCount = limits.MaxDataPerUser
 			}
 			userCopy.Data = make([]openrtb.Data, dataCount)
 			copy(userCopy.Data, req.User.Data[:dataCount])
@@ -865,8 +990,8 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 			// P1-3: bounded allocation for supply chain nodes
 			if len(req.Source.SChain.Nodes) > 0 {
 				nodeCount := len(req.Source.SChain.Nodes)
-				if nodeCount > maxSChainNodes {
-					nodeCount = maxSChainNodes
+				if nodeCount > limits.MaxSChainNodes {
+					nodeCount = limits.MaxSChainNodes
 				}
 				schainCopy.Nodes = make([]openrtb.SupplyChainNode, nodeCount)
 				copy(schainCopy.Nodes, req.Source.SChain.Nodes[:nodeCount])
@@ -879,8 +1004,8 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 	// Deep copy Imp slice (P1-3: bounded allocation)
 	if len(req.Imp) > 0 {
 		impCount := len(req.Imp)
-		if impCount > maxImpressionsPerRequest {
-			impCount = maxImpressionsPerRequest
+		if impCount > limits.MaxImpressionsPerRequest {
+			impCount = limits.MaxImpressionsPerRequest
 		}
 		clone.Imp = make([]openrtb.Imp, impCount)
 		for i := 0; i < impCount; i++ {
@@ -907,8 +1032,8 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 				// P1-3: bounded allocation for deals
 				if len(imp.PMP.Deals) > 0 {
 					dealCount := len(imp.PMP.Deals)
-					if dealCount > maxDealsPerImp {
-						dealCount = maxDealsPerImp
+					if dealCount > limits.MaxDealsPerImp {
+						dealCount = limits.MaxDealsPerImp
 					}
 					pmpCopy.Deals = make([]openrtb.Deal, dealCount)
 					copy(pmpCopy.Deals, imp.PMP.Deals[:dealCount])

@@ -38,7 +38,7 @@ func (a *Adapter) MakeBids(request *openrtb.BidRequest, responseData *adapters.R
 	if err := json.Unmarshal(responseData.Body, &bidResp); err != nil {
 		return nil, []error{err}
 	}
-	response := &adapters.BidderResponse{Currency: bidResp.Cur, Bids: make([]*adapters.TypedBid, 0)}
+	response := &adapters.BidderResponse{Currency: bidResp.Cur, ResponseID: bidResp.ID, Bids: make([]*adapters.TypedBid, 0)}
 	for _, sb := range bidResp.SeatBid {
 		for i := range sb.Bid {
 			response.Bids = append(response.Bids, &adapters.TypedBid{Bid: &sb.Bid[i], BidType: adapters.BidTypeVideo})

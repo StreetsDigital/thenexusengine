@@ -55,31 +55,20 @@ func (a *Adapter) MakeBids(request *openrtb.BidRequest, responseData *adapters.R
 		return nil, []error{fmt.Errorf("failed to parse response: %v", err)}
 	}
 
-	response := &adapters.BidderResponse{Currency: bidResp.Cur, Bids: make([]*adapters.TypedBid, 0)}
+	response := &adapters.BidderResponse{Currency: bidResp.Cur, ResponseID: bidResp.ID, Bids: make([]*adapters.TypedBid, 0)}
+
+	// P3-2: Use shared helper for O(1) bid type lookup
+	impMap := adapters.BuildImpMap(request.Imp)
 	for _, seatBid := range bidResp.SeatBid {
 		for i := range seatBid.Bid {
+			bid := &seatBid.Bid[i]
 			response.Bids = append(response.Bids, &adapters.TypedBid{
-				Bid:     &seatBid.Bid[i],
-				BidType: getBidType(&seatBid.Bid[i], request),
+				Bid:     bid,
+				BidType: adapters.GetBidTypeFromMap(bid, impMap),
 			})
 		}
 	}
 	return response, nil
-}
-
-func getBidType(bid *openrtb.Bid, request *openrtb.BidRequest) adapters.BidType {
-	for _, imp := range request.Imp {
-		if imp.ID == bid.ImpID {
-			if imp.Video != nil {
-				return adapters.BidTypeVideo
-			}
-			if imp.Native != nil {
-				return adapters.BidTypeNative
-			}
-			return adapters.BidTypeBanner
-		}
-	}
-	return adapters.BidTypeBanner
 }
 
 // Info returns bidder information

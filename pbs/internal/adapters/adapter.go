@@ -167,11 +167,20 @@ func NewHTTPClient(timeout time.Duration) *DefaultHTTPClient {
 
 // Do executes an HTTP request with proper timeout handling
 func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout time.Duration) (*ResponseData, error) {
-	// Create timeout context for this specific request if timeout is provided
+	// P1-3: Respect parent context deadline - use shorter of parent deadline or specified timeout
 	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+		if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
+			remaining := time.Until(deadline)
+			if remaining < timeout {
+				timeout = remaining // Use parent's shorter deadline
+			}
+		}
+		// Only create new context if we still have positive timeout
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URI, nil)

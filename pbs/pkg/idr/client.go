@@ -6,9 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
+
+// P2-4: Maximum IDR response size to prevent OOM from malformed responses
+const maxIDRResponseSize = 1024 * 1024 // 1MB - plenty for partner selection
 
 // Client communicates with the Python IDR service
 type Client struct {
@@ -110,8 +114,10 @@ func (c *Client) SelectPartners(ctx context.Context, ortbRequest json.RawMessage
 			return fmt.Errorf("IDR service returned status %d", resp.StatusCode)
 		}
 
+		// P2-4: Limit response size to prevent OOM from malformed responses
+		limitedReader := io.LimitReader(resp.Body, maxIDRResponseSize)
 		var response SelectPartnersResponse
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		if err := json.NewDecoder(limitedReader).Decode(&response); err != nil {
 			return fmt.Errorf("failed to decode response: %w", err)
 		}
 
