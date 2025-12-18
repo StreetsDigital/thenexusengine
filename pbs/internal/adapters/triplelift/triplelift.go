@@ -52,7 +52,7 @@ func (a *Adapter) MakeBids(request *openrtb.BidRequest, responseData *adapters.R
 		return nil, []error{fmt.Errorf("failed to parse response: %v", err)}
 	}
 
-	response := &adapters.BidderResponse{Currency: bidResp.Cur, Bids: make([]*adapters.TypedBid, 0)}
+	response := &adapters.BidderResponse{Currency: bidResp.Cur, ResponseID: bidResp.ID, Bids: make([]*adapters.TypedBid, 0)}
 	for _, seatBid := range bidResp.SeatBid {
 		for i := range seatBid.Bid {
 			response.Bids = append(response.Bids, &adapters.TypedBid{
