@@ -56,8 +56,9 @@ type ResponseData struct {
 
 // BidderResponse contains parsed bids from a bidder
 type BidderResponse struct {
-	Bids     []*TypedBid
-	Currency string
+	Bids       []*TypedBid
+	Currency   string
+	ResponseID string // OpenRTB response ID - should match request ID
 }
 
 // TypedBid is a bid with its type

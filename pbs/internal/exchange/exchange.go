@@ -178,6 +178,90 @@ func (d *DebugInfo) AppendError(key string, errMsg string) {
 	d.Errors[key] = append(d.Errors[key], errMsg)
 }
 
+// RequestValidationError represents a bid request validation failure
+type RequestValidationError struct {
+	Field  string
+	Reason string
+}
+
+func (e *RequestValidationError) Error() string {
+	return fmt.Sprintf("invalid request: %s - %s", e.Field, e.Reason)
+}
+
+// ValidateRequest performs OpenRTB 2.x request validation
+// Returns nil if valid, or a RequestValidationError describing the issue
+func ValidateRequest(req *openrtb.BidRequest) *RequestValidationError {
+	if req == nil {
+		return &RequestValidationError{Field: "request", Reason: "nil request"}
+	}
+
+	// Validate required field: ID
+	if req.ID == "" {
+		return &RequestValidationError{Field: "id", Reason: "missing required field"}
+	}
+
+	// Validate required field: at least one impression
+	if len(req.Imp) == 0 {
+		return &RequestValidationError{Field: "imp", Reason: "at least one impression is required"}
+	}
+
+	// Validate impression IDs are unique and non-empty
+	impIDs := make(map[string]struct{}, len(req.Imp))
+	for i, imp := range req.Imp {
+		if imp.ID == "" {
+			return &RequestValidationError{
+				Field:  fmt.Sprintf("imp[%d].id", i),
+				Reason: "impression ID is required",
+			}
+		}
+		if _, exists := impIDs[imp.ID]; exists {
+			return &RequestValidationError{
+				Field:  fmt.Sprintf("imp[%d].id", i),
+				Reason: fmt.Sprintf("duplicate impression ID: %s", imp.ID),
+			}
+		}
+		impIDs[imp.ID] = struct{}{}
+	}
+
+	// Validate Site XOR App (exactly one must be present, not both, not neither)
+	hasSite := req.Site != nil
+	hasApp := req.App != nil
+	if hasSite && hasApp {
+		return &RequestValidationError{
+			Field:  "site/app",
+			Reason: "request cannot contain both site and app objects",
+		}
+	}
+	if !hasSite && !hasApp {
+		return &RequestValidationError{
+			Field:  "site/app",
+			Reason: "request must contain either site or app object",
+		}
+	}
+
+	// Validate TMax if present (reasonable bounds: 0 means no limit, otherwise 10ms-30000ms)
+	if req.TMax < 0 {
+		return &RequestValidationError{
+			Field:  "tmax",
+			Reason: fmt.Sprintf("tmax cannot be negative: %d", req.TMax),
+		}
+	}
+	if req.TMax > 0 && req.TMax < 10 {
+		return &RequestValidationError{
+			Field:  "tmax",
+			Reason: fmt.Sprintf("tmax too small (minimum 10ms): %d", req.TMax),
+		}
+	}
+	if req.TMax > 30000 {
+		return &RequestValidationError{
+			Field:  "tmax",
+			Reason: fmt.Sprintf("tmax too large (maximum 30000ms): %d", req.TMax),
+		}
+	}
+
+	return nil
+}
+
 // BidValidationError represents a bid validation failure
 type BidValidationError struct {
 	BidID   string
@@ -333,6 +417,12 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			BidderLatencies: make(map[string]time.Duration),
 			Errors:          make(map[string][]string),
 		},
+	}
+
+	// Validate the bid request per OpenRTB 2.x specification
+	if validationErr := ValidateRequest(req.BidRequest); validationErr != nil {
+		response.DebugInfo.TotalLatency = time.Since(startTime)
+		return response, validationErr
 	}
 
 	// Get timeout from request or config
@@ -830,6 +920,14 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 		}
 
 		if bidderResp != nil {
+			// Validate BidResponse.ID matches BidRequest.ID (OpenRTB 2.x requirement)
+			if bidderResp.ResponseID != "" && bidderResp.ResponseID != req.ID {
+				result.Errors = append(result.Errors, fmt.Errorf(
+					"response ID mismatch from %s: expected %q, got %q",
+					bidderCode, req.ID, bidderResp.ResponseID,
+				))
+				// Still collect bids but log the mismatch as a warning
+			}
 			allBids = append(allBids, bidderResp.Bids...)
 		}
 	}

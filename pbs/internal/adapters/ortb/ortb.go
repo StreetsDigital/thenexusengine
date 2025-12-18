@@ -187,8 +187,9 @@ func (a *GenericAdapter) MakeBids(request *openrtb.BidRequest, responseData *ada
 
 	// Build adapter response
 	response := &adapters.BidderResponse{
-		Currency: bidResp.Cur,
-		Bids:     make([]*adapters.TypedBid, 0),
+		Currency:   bidResp.Cur,
+		ResponseID: bidResp.ID,
+		Bids:       make([]*adapters.TypedBid, 0),
 	}
 
 	// Process each bid
