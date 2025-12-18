@@ -373,4 +373,429 @@ func TestDefaultConfig(t *testing.T) {
 	if config.FPD == nil {
 		t.Error("expected non-nil FPD config")
 	}
+	if config.AuctionType != FirstPriceAuction {
+		t.Error("expected first-price auction as default")
+	}
+	if config.PriceIncrement != 0.01 {
+		t.Errorf("expected 0.01 price increment, got %f", config.PriceIncrement)
+	}
+}
+
+func TestBidValidation(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := New(registry, &Config{
+		DefaultTimeout:  100 * time.Millisecond,
+		IDREnabled:      false,
+		DefaultCurrency: "USD",
+		MinBidPrice:     0.01,
+	})
+
+	impFloors := map[string]float64{
+		"imp1": 1.00,
+		"imp2": 0.50,
+	}
+
+	tests := []struct {
+		name        string
+		bid         *openrtb.Bid
+		bidderCode  string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "nil bid",
+			bid:         nil,
+			bidderCode:  "test-bidder",
+			wantErr:     true,
+			errContains: "nil bid",
+		},
+		{
+			name:        "missing bid ID",
+			bid:         &openrtb.Bid{ImpID: "imp1", Price: 1.50},
+			bidderCode:  "test-bidder",
+			wantErr:     true,
+			errContains: "missing required field: id",
+		},
+		{
+			name:        "missing impID",
+			bid:         &openrtb.Bid{ID: "bid1", Price: 1.50},
+			bidderCode:  "test-bidder",
+			wantErr:     true,
+			errContains: "missing required field: impid",
+		},
+		{
+			name:        "invalid impID",
+			bid:         &openrtb.Bid{ID: "bid1", ImpID: "invalid", Price: 1.50},
+			bidderCode:  "test-bidder",
+			wantErr:     true,
+			errContains: "not found in request",
+		},
+		{
+			name:        "negative price",
+			bid:         &openrtb.Bid{ID: "bid1", ImpID: "imp1", Price: -1.00},
+			bidderCode:  "test-bidder",
+			wantErr:     true,
+			errContains: "negative price",
+		},
+		{
+			name:        "below minimum price",
+			bid:         &openrtb.Bid{ID: "bid1", ImpID: "imp1", Price: 0.005},
+			bidderCode:  "test-bidder",
+			wantErr:     true,
+			errContains: "below minimum",
+		},
+		{
+			name:        "below floor price",
+			bid:         &openrtb.Bid{ID: "bid1", ImpID: "imp1", Price: 0.75},
+			bidderCode:  "test-bidder",
+			wantErr:     true,
+			errContains: "below floor",
+		},
+		{
+			name:       "valid bid at floor",
+			bid:        &openrtb.Bid{ID: "bid1", ImpID: "imp1", Price: 1.00},
+			bidderCode: "test-bidder",
+			wantErr:    false,
+		},
+		{
+			name:       "valid bid above floor",
+			bid:        &openrtb.Bid{ID: "bid1", ImpID: "imp1", Price: 2.50},
+			bidderCode: "test-bidder",
+			wantErr:    false,
+		},
+		{
+			name:       "valid bid lower floor impression",
+			bid:        &openrtb.Bid{ID: "bid2", ImpID: "imp2", Price: 0.50},
+			bidderCode: "test-bidder",
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ex.validateBid(tt.bid, tt.bidderCode, impFloors)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				} else if tt.errContains != "" && !containsString(err.Error(), tt.errContains) {
+					t.Errorf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestBidDeduplication(t *testing.T) {
+	registry := adapters.NewRegistry()
+
+	// Create mock HTTP server for bidder1
+	bid1 := &openrtb.Bid{ID: "dup-bid", ImpID: "imp1", Price: 2.00}
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := &openrtb.BidResponse{
+			ID: "resp1",
+			SeatBid: []openrtb.SeatBid{
+				{Bid: []openrtb.Bid{*bid1}},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server1.Close()
+
+	// Create mock HTTP server for bidder2
+	bid2 := &openrtb.Bid{ID: "dup-bid", ImpID: "imp1", Price: 3.00}
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := &openrtb.BidResponse{
+			ID: "resp2",
+			SeatBid: []openrtb.SeatBid{
+				{Bid: []openrtb.Bid{*bid2}},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server2.Close()
+
+	// Create adapters that use the mock servers
+	mock1 := &mockAdapter{
+		bids: []*adapters.TypedBid{
+			{Bid: bid1, BidType: adapters.BidTypeBanner},
+		},
+		requests: []*adapters.RequestData{
+			{Method: "POST", URI: server1.URL, Body: []byte(`{}`)},
+		},
+	}
+	mock2 := &mockAdapter{
+		bids: []*adapters.TypedBid{
+			{Bid: bid2, BidType: adapters.BidTypeBanner},
+		},
+		requests: []*adapters.RequestData{
+			{Method: "POST", URI: server2.URL, Body: []byte(`{}`)},
+		},
+	}
+
+	registry.Register("bidder1", mock1, adapters.BidderInfo{Enabled: true})
+	registry.Register("bidder2", mock2, adapters.BidderInfo{Enabled: true})
+
+	ex := New(registry, &Config{
+		DefaultTimeout:  500 * time.Millisecond,
+		IDREnabled:      false,
+		DefaultCurrency: "USD",
+		AuctionType:     FirstPriceAuction,
+	})
+
+	req := &AuctionRequest{
+		BidRequest: &openrtb.BidRequest{
+			ID:  "test-dedup",
+			Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+		},
+	}
+
+	resp, err := ex.RunAuction(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Only one bid should win (first one seen), the duplicate should be rejected
+	totalBids := 0
+	for _, sb := range resp.BidResponse.SeatBid {
+		totalBids += len(sb.Bid)
+	}
+
+	if totalBids != 1 {
+		t.Errorf("expected 1 bid after deduplication, got %d", totalBids)
+	}
+
+	// Check that a deduplication error was recorded
+	foundDupError := false
+	for _, errors := range resp.DebugInfo.Errors {
+		for _, errMsg := range errors {
+			if containsString(errMsg, "duplicate bid ID") {
+				foundDupError = true
+				break
+			}
+		}
+	}
+	if !foundDupError {
+		t.Error("expected duplicate bid error in debug info")
+	}
+}
+
+func TestSecondPriceAuction(t *testing.T) {
+	registry := adapters.NewRegistry()
+
+	// Create mock HTTP servers and bidders with different prices
+	bid1 := &openrtb.Bid{ID: "bid1", ImpID: "imp1", Price: 5.00}
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := &openrtb.BidResponse{
+			ID:      "resp1",
+			SeatBid: []openrtb.SeatBid{{Bid: []openrtb.Bid{*bid1}}},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server1.Close()
+
+	bid2 := &openrtb.Bid{ID: "bid2", ImpID: "imp1", Price: 3.00}
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := &openrtb.BidResponse{
+			ID:      "resp2",
+			SeatBid: []openrtb.SeatBid{{Bid: []openrtb.Bid{*bid2}}},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server2.Close()
+
+	bid3 := &openrtb.Bid{ID: "bid3", ImpID: "imp1", Price: 2.00}
+	server3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := &openrtb.BidResponse{
+			ID:      "resp3",
+			SeatBid: []openrtb.SeatBid{{Bid: []openrtb.Bid{*bid3}}},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server3.Close()
+
+	mock1 := &mockAdapter{
+		bids:     []*adapters.TypedBid{{Bid: bid1, BidType: adapters.BidTypeBanner}},
+		requests: []*adapters.RequestData{{Method: "POST", URI: server1.URL, Body: []byte(`{}`)}},
+	}
+	mock2 := &mockAdapter{
+		bids:     []*adapters.TypedBid{{Bid: bid2, BidType: adapters.BidTypeBanner}},
+		requests: []*adapters.RequestData{{Method: "POST", URI: server2.URL, Body: []byte(`{}`)}},
+	}
+	mock3 := &mockAdapter{
+		bids:     []*adapters.TypedBid{{Bid: bid3, BidType: adapters.BidTypeBanner}},
+		requests: []*adapters.RequestData{{Method: "POST", URI: server3.URL, Body: []byte(`{}`)}},
+	}
+
+	registry.Register("bidder1", mock1, adapters.BidderInfo{Enabled: true})
+	registry.Register("bidder2", mock2, adapters.BidderInfo{Enabled: true})
+	registry.Register("bidder3", mock3, adapters.BidderInfo{Enabled: true})
+
+	ex := New(registry, &Config{
+		DefaultTimeout:  500 * time.Millisecond,
+		IDREnabled:      false,
+		DefaultCurrency: "USD",
+		AuctionType:     SecondPriceAuction,
+		PriceIncrement:  0.01,
+	})
+
+	req := &AuctionRequest{
+		BidRequest: &openrtb.BidRequest{
+			ID:  "test-second-price",
+			Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+		},
+	}
+
+	resp, err := ex.RunAuction(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Find the winning bid (highest)
+	var winningPrice float64
+	for _, sb := range resp.BidResponse.SeatBid {
+		for _, bid := range sb.Bid {
+			if bid.Price > winningPrice {
+				winningPrice = bid.Price
+			}
+		}
+	}
+
+	// In second-price auction, winner should pay second-highest + increment
+	// Second highest is 3.00, so winning price should be 3.01
+	expectedPrice := 3.01
+	if winningPrice != expectedPrice {
+		t.Errorf("expected winning price %.2f (second price + increment), got %.2f", expectedPrice, winningPrice)
+	}
+}
+
+func TestFirstPriceAuction(t *testing.T) {
+	registry := adapters.NewRegistry()
+
+	// Create mock HTTP servers
+	bid1 := &openrtb.Bid{ID: "bid1", ImpID: "imp1", Price: 5.00}
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := &openrtb.BidResponse{
+			ID:      "resp1",
+			SeatBid: []openrtb.SeatBid{{Bid: []openrtb.Bid{*bid1}}},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server1.Close()
+
+	bid2 := &openrtb.Bid{ID: "bid2", ImpID: "imp1", Price: 3.00}
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := &openrtb.BidResponse{
+			ID:      "resp2",
+			SeatBid: []openrtb.SeatBid{{Bid: []openrtb.Bid{*bid2}}},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server2.Close()
+
+	mock1 := &mockAdapter{
+		bids:     []*adapters.TypedBid{{Bid: bid1, BidType: adapters.BidTypeBanner}},
+		requests: []*adapters.RequestData{{Method: "POST", URI: server1.URL, Body: []byte(`{}`)}},
+	}
+	mock2 := &mockAdapter{
+		bids:     []*adapters.TypedBid{{Bid: bid2, BidType: adapters.BidTypeBanner}},
+		requests: []*adapters.RequestData{{Method: "POST", URI: server2.URL, Body: []byte(`{}`)}},
+	}
+
+	registry.Register("bidder1", mock1, adapters.BidderInfo{Enabled: true})
+	registry.Register("bidder2", mock2, adapters.BidderInfo{Enabled: true})
+
+	ex := New(registry, &Config{
+		DefaultTimeout:  500 * time.Millisecond,
+		IDREnabled:      false,
+		DefaultCurrency: "USD",
+		AuctionType:     FirstPriceAuction,
+	})
+
+	req := &AuctionRequest{
+		BidRequest: &openrtb.BidRequest{
+			ID:  "test-first-price",
+			Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+		},
+	}
+
+	resp, err := ex.RunAuction(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Find the highest bid
+	var highestPrice float64
+	for _, sb := range resp.BidResponse.SeatBid {
+		for _, bid := range sb.Bid {
+			if bid.Price > highestPrice {
+				highestPrice = bid.Price
+			}
+		}
+	}
+
+	// In first-price auction, winner pays their bid (5.00)
+	if highestPrice != 5.00 {
+		t.Errorf("expected winning price 5.00 (first price), got %.2f", highestPrice)
+	}
+}
+
+func TestSortBidsByPrice(t *testing.T) {
+	bids := []ValidatedBid{
+		{Bid: &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b1", Price: 1.00}}, BidderCode: "bidder1"},
+		{Bid: &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b2", Price: 5.00}}, BidderCode: "bidder2"},
+		{Bid: &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b3", Price: 3.00}}, BidderCode: "bidder3"},
+		{Bid: &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b4", Price: 2.50}}, BidderCode: "bidder4"},
+	}
+
+	sortBidsByPrice(bids)
+
+	// Should be sorted descending
+	expectedPrices := []float64{5.00, 3.00, 2.50, 1.00}
+	for i, bid := range bids {
+		if bid.Bid.Bid.Price != expectedPrices[i] {
+			t.Errorf("position %d: expected price %.2f, got %.2f", i, expectedPrices[i], bid.Bid.Bid.Price)
+		}
+	}
+}
+
+func TestBuildImpFloorMap(t *testing.T) {
+	req := &openrtb.BidRequest{
+		Imp: []openrtb.Imp{
+			{ID: "imp1", BidFloor: 1.50},
+			{ID: "imp2", BidFloor: 0.75},
+			{ID: "imp3", BidFloor: 0}, // No floor
+		},
+	}
+
+	floors := buildImpFloorMap(req)
+
+	if len(floors) != 3 {
+		t.Errorf("expected 3 floor entries, got %d", len(floors))
+	}
+	if floors["imp1"] != 1.50 {
+		t.Errorf("expected imp1 floor 1.50, got %f", floors["imp1"])
+	}
+	if floors["imp2"] != 0.75 {
+		t.Errorf("expected imp2 floor 0.75, got %f", floors["imp2"])
+	}
+	if floors["imp3"] != 0 {
+		t.Errorf("expected imp3 floor 0, got %f", floors["imp3"])
+	}
+}
+
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
+}
+
+func containsSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
