@@ -136,6 +136,21 @@ type DebugInfo struct {
 	SelectedBidders   []string
 	ExcludedBidders   []string
 	Errors            map[string][]string
+	errorsMu          sync.Mutex // Protects concurrent access to Errors map
+}
+
+// AddError safely adds errors to the Errors map with mutex protection
+func (d *DebugInfo) AddError(key string, errors []string) {
+	d.errorsMu.Lock()
+	defer d.errorsMu.Unlock()
+	d.Errors[key] = errors
+}
+
+// AppendError safely appends an error to the Errors map with mutex protection
+func (d *DebugInfo) AppendError(key string, errMsg string) {
+	d.errorsMu.Lock()
+	defer d.errorsMu.Unlock()
+	d.Errors[key] = append(d.Errors[key], errMsg)
 }
 
 // RunAuction executes the auction
@@ -217,7 +232,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 		bidderFPD, err = e.fpdProcessor.ProcessRequest(req.BidRequest, selectedBidders)
 		if err != nil {
 			// Log error but continue - FPD is not critical
-			response.DebugInfo.Errors["fpd"] = []string{err.Error()}
+			response.DebugInfo.AddError("fpd", []string{err.Error()})
 		}
 	}
 
@@ -269,7 +284,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			for i, err := range result.Errors {
 				errStrs[i] = err.Error()
 			}
-			response.DebugInfo.Errors[bidderCode] = errStrs
+			response.DebugInfo.AddError(bidderCode, errStrs)
 		}
 
 		// Record event to IDR
@@ -390,7 +405,8 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 	return results
 }
 
-// cloneRequestWithFPD creates a copy of the request with bidder-specific FPD applied
+// cloneRequestWithFPD creates a deep copy of the request with bidder-specific FPD applied
+// This ensures thread-safety when multiple goroutines modify their copies concurrently
 func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode string, bidderFPD fpd.BidderFPD) *openrtb.BidRequest {
 	if bidderFPD == nil {
 		return req
@@ -401,15 +417,166 @@ func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode strin
 		return req
 	}
 
-	// Create a shallow clone of the request
-	clone := *req
+	// Deep clone the request to prevent race conditions
+	clone := e.deepCloneRequest(req)
 
 	// Apply FPD using the processor
 	if e.fpdProcessor != nil {
-		e.fpdProcessor.ApplyFPDToRequest(&clone, bidderCode, fpdData)
+		e.fpdProcessor.ApplyFPDToRequest(clone, bidderCode, fpdData)
 	}
 
-	return &clone
+	return clone
+}
+
+// deepCloneRequest creates a deep copy of a BidRequest to ensure thread-safety
+func (e *Exchange) deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
+	clone := &openrtb.BidRequest{}
+	*clone = *req
+
+	// Deep clone Site
+	if req.Site != nil {
+		siteCopy := *req.Site
+		if req.Site.Publisher != nil {
+			pubCopy := *req.Site.Publisher
+			siteCopy.Publisher = &pubCopy
+		}
+		if req.Site.Content != nil {
+			contentCopy := *req.Site.Content
+			siteCopy.Content = &contentCopy
+		}
+		clone.Site = &siteCopy
+	}
+
+	// Deep clone App
+	if req.App != nil {
+		appCopy := *req.App
+		if req.App.Publisher != nil {
+			pubCopy := *req.App.Publisher
+			appCopy.Publisher = &pubCopy
+		}
+		if req.App.Content != nil {
+			contentCopy := *req.App.Content
+			appCopy.Content = &contentCopy
+		}
+		clone.App = &appCopy
+	}
+
+	// Deep clone User
+	if req.User != nil {
+		userCopy := *req.User
+		if len(req.User.EIDs) > 0 {
+			userCopy.EIDs = make([]openrtb.EID, len(req.User.EIDs))
+			copy(userCopy.EIDs, req.User.EIDs)
+		}
+		if len(req.User.Data) > 0 {
+			userCopy.Data = make([]openrtb.Data, len(req.User.Data))
+			copy(userCopy.Data, req.User.Data)
+		}
+		if req.User.Geo != nil {
+			geoCopy := *req.User.Geo
+			userCopy.Geo = &geoCopy
+		}
+		clone.User = &userCopy
+	}
+
+	// Deep clone Device
+	if req.Device != nil {
+		deviceCopy := *req.Device
+		if req.Device.Geo != nil {
+			geoCopy := *req.Device.Geo
+			deviceCopy.Geo = &geoCopy
+		}
+		clone.Device = &deviceCopy
+	}
+
+	// Deep clone Regs
+	if req.Regs != nil {
+		regsCopy := *req.Regs
+		clone.Regs = &regsCopy
+	}
+
+	// Deep clone Source
+	if req.Source != nil {
+		sourceCopy := *req.Source
+		clone.Source = &sourceCopy
+	}
+
+	// Deep clone Imp array (critical for thread-safety)
+	if len(req.Imp) > 0 {
+		clone.Imp = make([]openrtb.Imp, len(req.Imp))
+		for i, imp := range req.Imp {
+			clone.Imp[i] = imp
+			// Clone nested media type objects
+			if imp.Banner != nil {
+				bannerCopy := *imp.Banner
+				if len(imp.Banner.Format) > 0 {
+					bannerCopy.Format = make([]openrtb.Format, len(imp.Banner.Format))
+					copy(bannerCopy.Format, imp.Banner.Format)
+				}
+				clone.Imp[i].Banner = &bannerCopy
+			}
+			if imp.Video != nil {
+				videoCopy := *imp.Video
+				if len(imp.Video.Mimes) > 0 {
+					videoCopy.Mimes = make([]string, len(imp.Video.Mimes))
+					copy(videoCopy.Mimes, imp.Video.Mimes)
+				}
+				if len(imp.Video.Protocols) > 0 {
+					videoCopy.Protocols = make([]int, len(imp.Video.Protocols))
+					copy(videoCopy.Protocols, imp.Video.Protocols)
+				}
+				clone.Imp[i].Video = &videoCopy
+			}
+			if imp.Native != nil {
+				nativeCopy := *imp.Native
+				clone.Imp[i].Native = &nativeCopy
+			}
+			if imp.Audio != nil {
+				audioCopy := *imp.Audio
+				clone.Imp[i].Audio = &audioCopy
+			}
+			if imp.PMP != nil {
+				pmpCopy := *imp.PMP
+				if len(imp.PMP.Deals) > 0 {
+					pmpCopy.Deals = make([]openrtb.Deal, len(imp.PMP.Deals))
+					copy(pmpCopy.Deals, imp.PMP.Deals)
+				}
+				clone.Imp[i].PMP = &pmpCopy
+			}
+		}
+	}
+
+	// Deep clone Cur array
+	if len(req.Cur) > 0 {
+		clone.Cur = make([]string, len(req.Cur))
+		copy(clone.Cur, req.Cur)
+	}
+
+	// Deep clone WLang array
+	if len(req.WLang) > 0 {
+		clone.WLang = make([]string, len(req.WLang))
+		copy(clone.WLang, req.WLang)
+	}
+
+	// Deep clone BCat array
+	if len(req.BCat) > 0 {
+		clone.BCat = make([]string, len(req.BCat))
+		copy(clone.BCat, req.BCat)
+	}
+
+	// Deep clone BAdv array
+	if len(req.BAdv) > 0 {
+		clone.BAdv = make([]string, len(req.BAdv))
+		copy(clone.BAdv, req.BAdv)
+	}
+
+	// Deep clone BApp array
+	if len(req.BApp) > 0 {
+		clone.BApp = make([]string, len(req.BApp))
+		copy(clone.BApp, req.BApp)
+	}
+
+	return clone
 }
 
 // callBidder calls a single bidder
@@ -438,6 +605,16 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 	// Execute requests (could parallelize for multi-request adapters)
 	allBids := make([]*adapters.TypedBid, 0)
 	for _, reqData := range requests {
+		// Check if context has expired before each request to avoid wasted work
+		select {
+		case <-ctx.Done():
+			result.Errors = append(result.Errors, ctx.Err())
+			result.Latency = time.Since(start)
+			return result
+		default:
+			// Context still valid, proceed with request
+		}
+
 		resp, err := e.httpClient.Do(ctx, reqData, timeout)
 		if err != nil {
 			result.Errors = append(result.Errors, err)
