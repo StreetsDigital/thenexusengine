@@ -102,6 +102,63 @@ func (c *Client) HGet(ctx context.Context, key, field string) (string, error) {
 	return "", fmt.Errorf("unexpected result type: %T", result)
 }
 
+// HGetAll gets all fields and values from a hash
+func (c *Client) HGetAll(ctx context.Context, key string) (map[string]string, error) {
+	result, err := c.conn.Do(ctx, "HGETALL", key)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return make(map[string]string), nil
+	}
+	arr, ok := result.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type: %T", result)
+	}
+	// HGETALL returns alternating key-value pairs
+	m := make(map[string]string, len(arr)/2)
+	for i := 0; i < len(arr)-1; i += 2 {
+		key := toString(arr[i])
+		val := toString(arr[i+1])
+		m[key] = val
+	}
+	return m, nil
+}
+
+// SMembers gets all members of a set
+func (c *Client) SMembers(ctx context.Context, key string) ([]string, error) {
+	result, err := c.conn.Do(ctx, "SMEMBERS", key)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return []string{}, nil
+	}
+	arr, ok := result.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type: %T", result)
+	}
+	members := make([]string, len(arr))
+	for i, v := range arr {
+		members[i] = toString(v)
+	}
+	return members, nil
+}
+
+// toString converts an interface{} to string
+func toString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 // Ping tests the connection
 func (c *Client) Ping(ctx context.Context) error {
 	result, err := c.conn.Do(ctx, "PING")

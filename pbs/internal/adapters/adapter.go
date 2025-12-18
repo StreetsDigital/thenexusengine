@@ -3,6 +3,7 @@ package adapters
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"time"
 
@@ -181,16 +182,10 @@ func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout ti
 	}
 	defer resp.Body.Close()
 
-	body := make([]byte, 0)
-	buf := make([]byte, 1024)
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			body = append(body, buf[:n]...)
-		}
-		if err != nil {
-			break
-		}
+	// Use io.ReadAll for proper error handling
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 
 	return &ResponseData{
@@ -208,7 +203,7 @@ type bodyReader struct {
 
 func (r *bodyReader) Read(p []byte) (n int, err error) {
 	if r.pos >= len(r.data) {
-		return 0, http.ErrBodyReadAfterClose
+		return 0, io.EOF
 	}
 	n = copy(p, r.data[r.pos:])
 	r.pos += n
