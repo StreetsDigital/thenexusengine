@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -245,18 +246,37 @@ func TestGetClientIP(t *testing.T) {
 		remoteAddr string
 		xff        string
 		xri        string
+		trustXFF   bool
 		expected   string
 	}{
-		{"RemoteAddr with port", "192.168.1.1:12345", "", "", "192.168.1.1"},
-		{"RemoteAddr without port", "192.168.1.1", "", "", "192.168.1.1"},
-		{"X-Forwarded-For single", "192.168.1.1:12345", "10.0.0.1", "", "10.0.0.1"},
-		{"X-Forwarded-For chain", "192.168.1.1:12345", "10.0.0.1, 10.0.0.2", "", "10.0.0.1"},
-		{"X-Real-IP", "192.168.1.1:12345", "", "10.0.0.1", "10.0.0.1"},
-		{"XFF takes precedence", "192.168.1.1:12345", "10.0.0.1", "10.0.0.2", "10.0.0.1"},
+		// Without trusted proxies, always use RemoteAddr
+		{"RemoteAddr with port", "192.168.1.1:12345", "", "", false, "192.168.1.1"},
+		{"RemoteAddr without port", "192.168.1.1", "", "", false, "192.168.1.1"},
+		{"XFF ignored without trust", "192.168.1.1:12345", "10.0.0.1", "", false, "192.168.1.1"},
+		// With trusted proxies configured, XFF is used
+		{"X-Forwarded-For with trust", "127.0.0.1:12345", "10.0.0.1", "", true, "10.0.0.1"},
+		{"X-Real-IP with trust", "127.0.0.1:12345", "", "10.0.0.1", true, "10.0.0.1"},
+		{"XFF takes precedence with trust", "127.0.0.1:12345", "10.0.0.1", "10.0.0.2", true, "10.0.0.1"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var config *RateLimitConfig
+			if tt.trustXFF {
+				// Trust localhost as proxy
+				_, loopback, _ := net.ParseCIDR("127.0.0.1/32")
+				config = &RateLimitConfig{
+					TrustedProxies: []*net.IPNet{loopback},
+					TrustXFF:       true,
+				}
+			} else {
+				config = &RateLimitConfig{
+					TrustXFF: false,
+				}
+			}
+
+			rl := &RateLimiter{config: config}
+
 			req := httptest.NewRequest("GET", "/test", nil)
 			req.RemoteAddr = tt.remoteAddr
 			if tt.xff != "" {
@@ -266,7 +286,7 @@ func TestGetClientIP(t *testing.T) {
 				req.Header.Set("X-Real-IP", tt.xri)
 			}
 
-			result := getClientIP(req)
+			result := rl.getClientIP(req)
 			if result != tt.expected {
 				t.Errorf("expected %s, got %s", tt.expected, result)
 			}

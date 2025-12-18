@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters"
+	"github.com/StreetsDigital/thenexusengine/pbs/pkg/logger"
 )
 
 const (
@@ -78,7 +79,7 @@ func (r *DynamicRegistry) refreshLoop(ctx context.Context) {
 		case <-ticker.C:
 			if err := r.Refresh(ctx); err != nil {
 				// Log error but continue
-				fmt.Printf("Failed to refresh dynamic bidders: %v\n", err)
+				logger.Log.Warn().Err(err).Msg("Failed to refresh dynamic bidders")
 			}
 		case <-r.stopChan:
 			return
@@ -108,7 +109,7 @@ func (r *DynamicRegistry) Refresh(ctx context.Context) error {
 
 		var config BidderConfig
 		if err := json.Unmarshal([]byte(jsonStr), &config); err != nil {
-			fmt.Printf("Failed to parse config for %s: %v\n", bidderCode, err)
+			logger.Log.Warn().Err(err).Str("bidder", bidderCode).Msg("Failed to parse bidder config")
 			continue
 		}
 

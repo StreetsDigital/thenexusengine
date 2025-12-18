@@ -2,6 +2,7 @@ package fpd
 
 import (
 	"encoding/json"
+	"sync"
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 )
@@ -9,6 +10,7 @@ import (
 // Processor handles First Party Data processing for bid requests
 type Processor struct {
 	config *Config
+	mu     sync.RWMutex
 }
 
 // NewProcessor creates a new FPD processor with the given configuration
@@ -22,7 +24,11 @@ func NewProcessor(config *Config) *Processor {
 // ProcessRequest processes FPD in a bid request and returns bidder-specific FPD
 // This is the main entry point for FPD processing
 func (p *Processor) ProcessRequest(req *openrtb.BidRequest, bidders []string) (BidderFPD, error) {
-	if !p.config.Enabled {
+	p.mu.RLock()
+	config := p.config
+	p.mu.RUnlock()
+
+	if !config.Enabled {
 		return nil, nil
 	}
 
@@ -40,10 +46,10 @@ func (p *Processor) ProcessRequest(req *openrtb.BidRequest, bidders []string) (B
 	}
 
 	// Extract base FPD from the request
-	baseFPD := p.extractBaseFPD(req)
+	baseFPD := p.extractBaseFPD(req, config)
 
 	// Apply global FPD if enabled
-	if p.config.GlobalEnabled && prebidExt != nil && prebidExt.Data != nil {
+	if config.GlobalEnabled && prebidExt != nil && prebidExt.Data != nil {
 		baseFPD = p.mergeGlobalFPD(baseFPD, prebidExt.Data)
 	}
 
@@ -52,7 +58,7 @@ func (p *Processor) ProcessRequest(req *openrtb.BidRequest, bidders []string) (B
 		bidderFPD := p.cloneFPD(baseFPD)
 
 		// Apply bidder-specific config if enabled
-		if p.config.BidderConfigEnabled && prebidExt != nil {
+		if config.BidderConfigEnabled && prebidExt != nil {
 			bidderFPD = p.applyBidderConfig(bidderFPD, bidder, prebidExt.BidderConfig)
 		}
 
@@ -63,28 +69,28 @@ func (p *Processor) ProcessRequest(req *openrtb.BidRequest, bidders []string) (B
 }
 
 // extractBaseFPD extracts base FPD from the request's site/app/user objects
-func (p *Processor) extractBaseFPD(req *openrtb.BidRequest) *ResolvedFPD {
+func (p *Processor) extractBaseFPD(req *openrtb.BidRequest, config *Config) *ResolvedFPD {
 	fpd := &ResolvedFPD{
 		Imp: make(map[string]json.RawMessage),
 	}
 
 	// Extract site.ext.data if enabled
-	if p.config.SiteEnabled && req.Site != nil && req.Site.Ext != nil {
+	if config.SiteEnabled && req.Site != nil && req.Site.Ext != nil {
 		fpd.Site = p.extractExtData(req.Site.Ext)
 	}
 
 	// Extract app.ext.data if enabled
-	if p.config.SiteEnabled && req.App != nil && req.App.Ext != nil {
+	if config.SiteEnabled && req.App != nil && req.App.Ext != nil {
 		fpd.App = p.extractExtData(req.App.Ext)
 	}
 
 	// Extract user.ext.data if enabled
-	if p.config.UserEnabled && req.User != nil && req.User.Ext != nil {
+	if config.UserEnabled && req.User != nil && req.User.Ext != nil {
 		fpd.User = p.extractExtData(req.User.Ext)
 	}
 
 	// Extract imp[].ext.data if enabled
-	if p.config.ImpEnabled {
+	if config.ImpEnabled {
 		for _, imp := range req.Imp {
 			if imp.Ext != nil {
 				if data := p.extractExtData(imp.Ext); data != nil {
@@ -283,12 +289,16 @@ func (p *Processor) setExtData(ext json.RawMessage, data json.RawMessage) json.R
 
 // GetConfig returns the processor's configuration
 func (p *Processor) GetConfig() *Config {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return p.config
 }
 
 // UpdateConfig updates the processor's configuration
 func (p *Processor) UpdateConfig(config *Config) {
 	if config != nil {
+		p.mu.Lock()
 		p.config = config
+		p.mu.Unlock()
 	}
 }

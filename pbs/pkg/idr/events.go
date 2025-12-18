@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type EventRecorder struct {
 	httpClient *http.Client
 	buffer     []BidEvent
 	bufferSize int
+	mu         sync.Mutex
 }
 
 // BidEvent represents a bid event to record
@@ -88,10 +90,13 @@ func (r *EventRecorder) RecordBidResponse(
 		ErrorMsg:    errorMsg,
 	}
 
+	r.mu.Lock()
 	r.buffer = append(r.buffer, event)
+	shouldFlush := len(r.buffer) >= r.bufferSize
+	r.mu.Unlock()
 
 	// Flush if buffer is full
-	if len(r.buffer) >= r.bufferSize {
+	if shouldFlush {
 		go r.Flush(context.Background())
 	}
 }
@@ -119,23 +124,29 @@ func (r *EventRecorder) RecordWin(
 		PublisherID: publisherID,
 	}
 
+	r.mu.Lock()
 	r.buffer = append(r.buffer, event)
+	shouldFlush := len(r.buffer) >= r.bufferSize
+	r.mu.Unlock()
 
 	// Flush if buffer is full
-	if len(r.buffer) >= r.bufferSize {
+	if shouldFlush {
 		go r.Flush(context.Background())
 	}
 }
 
 // Flush sends buffered events to the IDR service
 func (r *EventRecorder) Flush(ctx context.Context) error {
+	r.mu.Lock()
 	if len(r.buffer) == 0 {
+		r.mu.Unlock()
 		return nil
 	}
 
-	// Swap buffer
+	// Swap buffer atomically
 	events := r.buffer
 	r.buffer = make([]BidEvent, 0, r.bufferSize)
+	r.mu.Unlock()
 
 	// Build request
 	reqBody := map[string]interface{}{
