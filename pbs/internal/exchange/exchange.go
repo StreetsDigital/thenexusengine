@@ -27,6 +27,16 @@ type Exchange struct {
 	eidFilter        *fpd.EIDFilter
 }
 
+// AuctionType defines the type of auction to run
+type AuctionType int
+
+const (
+	// FirstPriceAuction - winner pays their bid price
+	FirstPriceAuction AuctionType = 1
+	// SecondPriceAuction - winner pays second highest bid + increment
+	SecondPriceAuction AuctionType = 2
+)
+
 // Config holds exchange configuration
 type Config struct {
 	DefaultTimeout     time.Duration
@@ -41,6 +51,10 @@ type Config struct {
 	// Dynamic bidder configuration
 	DynamicBiddersEnabled bool
 	DynamicRefreshPeriod  time.Duration
+	// Auction configuration
+	AuctionType      AuctionType
+	PriceIncrement   float64 // For second-price auctions (typically 0.01)
+	MinBidPrice      float64 // Minimum valid bid price
 }
 
 // DefaultConfig returns default configuration
@@ -57,6 +71,9 @@ func DefaultConfig() *Config {
 		FPD:                   fpd.DefaultConfig(),
 		DynamicBiddersEnabled: true,
 		DynamicRefreshPeriod:  30 * time.Second,
+		AuctionType:           FirstPriceAuction,
+		PriceIncrement:        0.01,
+		MinBidPrice:           0.0,
 	}
 }
 
@@ -159,6 +176,150 @@ func (d *DebugInfo) AppendError(key string, errMsg string) {
 	d.errorsMu.Lock()
 	defer d.errorsMu.Unlock()
 	d.Errors[key] = append(d.Errors[key], errMsg)
+}
+
+// BidValidationError represents a bid validation failure
+type BidValidationError struct {
+	BidID   string
+	ImpID   string
+	Reason  string
+	BidderCode string
+}
+
+func (e *BidValidationError) Error() string {
+	return fmt.Sprintf("invalid bid from %s (bid=%s, imp=%s): %s", e.BidderCode, e.BidID, e.ImpID, e.Reason)
+}
+
+// validateBid checks if a bid meets OpenRTB requirements and exchange rules
+func (e *Exchange) validateBid(bid *openrtb.Bid, bidderCode string, impIDs map[string]float64) *BidValidationError {
+	if bid == nil {
+		return &BidValidationError{BidderCode: bidderCode, Reason: "nil bid"}
+	}
+
+	// Check required field: Bid.ID
+	if bid.ID == "" {
+		return &BidValidationError{
+			ImpID:      bid.ImpID,
+			BidderCode: bidderCode,
+			Reason:     "missing required field: id",
+		}
+	}
+
+	// Check required field: Bid.ImpID
+	if bid.ImpID == "" {
+		return &BidValidationError{
+			BidID:      bid.ID,
+			BidderCode: bidderCode,
+			Reason:     "missing required field: impid",
+		}
+	}
+
+	// Validate ImpID exists in request
+	floor, validImp := impIDs[bid.ImpID]
+	if !validImp {
+		return &BidValidationError{
+			BidID:      bid.ID,
+			ImpID:      bid.ImpID,
+			BidderCode: bidderCode,
+			Reason:     fmt.Sprintf("impid %q not found in request", bid.ImpID),
+		}
+	}
+
+	// Check price is non-negative
+	if bid.Price < 0 {
+		return &BidValidationError{
+			BidID:      bid.ID,
+			ImpID:      bid.ImpID,
+			BidderCode: bidderCode,
+			Reason:     fmt.Sprintf("negative price: %.4f", bid.Price),
+		}
+	}
+
+	// Check price meets minimum
+	if bid.Price < e.config.MinBidPrice {
+		return &BidValidationError{
+			BidID:      bid.ID,
+			ImpID:      bid.ImpID,
+			BidderCode: bidderCode,
+			Reason:     fmt.Sprintf("price %.4f below minimum %.4f", bid.Price, e.config.MinBidPrice),
+		}
+	}
+
+	// Check price meets floor
+	if floor > 0 && bid.Price < floor {
+		return &BidValidationError{
+			BidID:      bid.ID,
+			ImpID:      bid.ImpID,
+			BidderCode: bidderCode,
+			Reason:     fmt.Sprintf("price %.4f below floor %.4f", bid.Price, floor),
+		}
+	}
+
+	return nil
+}
+
+// buildImpFloorMap creates a map of impression IDs to their floor prices
+func buildImpFloorMap(req *openrtb.BidRequest) map[string]float64 {
+	impFloors := make(map[string]float64, len(req.Imp))
+	for _, imp := range req.Imp {
+		impFloors[imp.ID] = imp.BidFloor
+	}
+	return impFloors
+}
+
+// ValidatedBid wraps a bid with validation status
+type ValidatedBid struct {
+	Bid        *adapters.TypedBid
+	BidderCode string
+}
+
+// runAuctionLogic applies auction rules (first-price or second-price) to validated bids
+// Returns bids grouped by impression with prices adjusted according to auction type
+func (e *Exchange) runAuctionLogic(validBids []ValidatedBid) map[string][]ValidatedBid {
+	// Group bids by impression
+	bidsByImp := make(map[string][]ValidatedBid)
+	for _, vb := range validBids {
+		impID := vb.Bid.Bid.ImpID
+		bidsByImp[impID] = append(bidsByImp[impID], vb)
+	}
+
+	// Apply auction logic per impression
+	for impID, bids := range bidsByImp {
+		if len(bids) == 0 {
+			continue
+		}
+
+		// Sort by price descending
+		sortBidsByPrice(bids)
+
+		if e.config.AuctionType == SecondPriceAuction && len(bids) > 1 {
+			// Second-price: winner pays second highest + increment
+			secondPrice := bids[1].Bid.Bid.Price
+			winningPrice := secondPrice + e.config.PriceIncrement
+			// Ensure winning price doesn't exceed original bid
+			if winningPrice > bids[0].Bid.Bid.Price {
+				winningPrice = bids[0].Bid.Bid.Price
+			}
+			bids[0].Bid.Bid.Price = winningPrice
+		}
+		// First-price: winner pays their bid (no adjustment needed)
+
+		bidsByImp[impID] = bids
+	}
+
+	return bidsByImp
+}
+
+// sortBidsByPrice sorts bids in descending order by price (highest first)
+func sortBidsByPrice(bids []ValidatedBid) {
+	// Simple insertion sort - typically small number of bids per impression
+	for i := 1; i < len(bids); i++ {
+		j := i
+		for j > 0 && bids[j].Bid.Bid.Price > bids[j-1].Bid.Bid.Price {
+			bids[j], bids[j-1] = bids[j-1], bids[j]
+			j--
+		}
+	}
 }
 
 // RunAuction executes the auction
@@ -281,8 +442,17 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 		publisherID = req.BidRequest.Site.Publisher.ID
 	}
 
+	// Build impression floor map for bid validation
+	impFloors := buildImpFloorMap(req.BidRequest)
+
+	// Track seen bid IDs for deduplication
+	seenBidIDs := make(map[string]struct{})
+
+	// Collect and validate all bids
+	var validBids []ValidatedBid
+	var validationErrors []error
+
 	// Collect results
-	allBids := make([]openrtb.SeatBid, 0)
 	for bidderCode, result := range results {
 		response.BidderResults[bidderCode] = result
 		response.DebugInfo.BidderLatencies[bidderCode] = result.Latency
@@ -327,16 +497,65 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			)
 		}
 
-		if len(result.Bids) > 0 {
-			seatBid := openrtb.SeatBid{
-				Seat: bidderCode,
-				Bid:  make([]openrtb.Bid, len(result.Bids)),
+		// Validate and deduplicate bids
+		for _, tb := range result.Bids {
+			// Skip nil bids
+			if tb == nil || tb.Bid == nil {
+				continue
 			}
-			for i, tb := range result.Bids {
-				seatBid.Bid[i] = *tb.Bid
+
+			// Validate bid
+			if validErr := e.validateBid(tb.Bid, bidderCode, impFloors); validErr != nil {
+				validationErrors = append(validationErrors, validErr)
+				response.DebugInfo.AppendError(bidderCode, validErr.Error())
+				continue
 			}
-			allBids = append(allBids, seatBid)
+
+			// Check for duplicate bid IDs
+			if _, seen := seenBidIDs[tb.Bid.ID]; seen {
+				dupErr := &BidValidationError{
+					BidID:      tb.Bid.ID,
+					ImpID:      tb.Bid.ImpID,
+					BidderCode: bidderCode,
+					Reason:     "duplicate bid ID",
+				}
+				validationErrors = append(validationErrors, dupErr)
+				response.DebugInfo.AppendError(bidderCode, dupErr.Error())
+				continue
+			}
+			seenBidIDs[tb.Bid.ID] = struct{}{}
+
+			// Add to valid bids
+			validBids = append(validBids, ValidatedBid{
+				Bid:        tb,
+				BidderCode: bidderCode,
+			})
 		}
+	}
+
+	// Apply auction logic (first-price or second-price)
+	auctionedBids := e.runAuctionLogic(validBids)
+
+	// Build seat bids from auctioned results
+	seatBidMap := make(map[string]*openrtb.SeatBid)
+	for _, impBids := range auctionedBids {
+		for _, vb := range impBids {
+			sb, ok := seatBidMap[vb.BidderCode]
+			if !ok {
+				sb = &openrtb.SeatBid{
+					Seat: vb.BidderCode,
+					Bid:  []openrtb.Bid{},
+				}
+				seatBidMap[vb.BidderCode] = sb
+			}
+			sb.Bid = append(sb.Bid, *vb.Bid.Bid)
+		}
+	}
+
+	// Convert seat bid map to slice
+	allBids := make([]openrtb.SeatBid, 0, len(seatBidMap))
+	for _, sb := range seatBidMap {
+		allBids = append(allBids, *sb)
 	}
 
 	// Build response
