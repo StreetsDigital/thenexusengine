@@ -50,6 +50,7 @@ const (
 type Config struct {
 	DefaultTimeout     time.Duration
 	MaxBidders         int
+	MaxConcurrentBidders int // P0-4: Limit concurrent bidder goroutines (0 = unlimited)
 	IDREnabled         bool
 	IDRServiceURL      string
 	EventRecordEnabled bool
@@ -71,6 +72,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		DefaultTimeout:        1000 * time.Millisecond,
 		MaxBidders:            50,
+		MaxConcurrentBidders:  10, // P0-4: Limit concurrent HTTP requests per auction
 		IDREnabled:            true,
 		IDRServiceURL:         "http://localhost:5050",
 		EventRecordEnabled:    true,
@@ -296,7 +298,7 @@ type ValidatedBid struct {
 
 // runAuctionLogic applies auction rules (first-price or second-price) to validated bids
 // Returns bids grouped by impression with prices adjusted according to auction type
-func (e *Exchange) runAuctionLogic(validBids []ValidatedBid) map[string][]ValidatedBid {
+func (e *Exchange) runAuctionLogic(validBids []ValidatedBid, impFloors map[string]float64) map[string][]ValidatedBid {
 	// Group bids by impression
 	bidsByImp := make(map[string][]ValidatedBid)
 	for _, vb := range validBids {
@@ -313,12 +315,26 @@ func (e *Exchange) runAuctionLogic(validBids []ValidatedBid) map[string][]Valida
 		// Sort by price descending
 		sortBidsByPrice(bids)
 
-		if e.config.AuctionType == SecondPriceAuction && len(bids) > 1 {
-			// Second-price: winner pays second highest + increment
-			// Use integer arithmetic to avoid floating-point precision errors (P0-2)
-			secondPrice := bids[1].Bid.Bid.Price
-			winningPrice := roundToCents(secondPrice + e.config.PriceIncrement)
-			// Ensure winning price doesn't exceed original bid
+		if e.config.AuctionType == SecondPriceAuction {
+			var winningPrice float64
+
+			if len(bids) > 1 {
+				// Multiple bids: winner pays second highest + increment
+				// Use integer arithmetic to avoid floating-point precision errors (P0-2)
+				secondPrice := bids[1].Bid.Bid.Price
+				winningPrice = roundToCents(secondPrice + e.config.PriceIncrement)
+			} else {
+				// P0-6: Single bid - use floor as "second price" for consistent auction semantics
+				floor := impFloors[impID]
+				if floor > 0 {
+					winningPrice = roundToCents(floor + e.config.PriceIncrement)
+				} else {
+					// No floor - winner pays minimum bid price + increment
+					winningPrice = roundToCents(e.config.MinBidPrice + e.config.PriceIncrement)
+				}
+			}
+
+			// Ensure winning price doesn't exceed original bid (safety cap)
 			if winningPrice > bids[0].Bid.Bid.Price {
 				winningPrice = bids[0].Bid.Bid.Price
 			}
@@ -365,6 +381,17 @@ func roundToCents(price float64) float64 {
 // RunAuction executes the auction
 func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*AuctionResponse, error) {
 	startTime := time.Now()
+
+	// P0-7: Validate required BidRequest fields per OpenRTB 2.x spec
+	if req.BidRequest == nil {
+		return nil, fmt.Errorf("invalid auction request: missing bid request")
+	}
+	if req.BidRequest.ID == "" {
+		return nil, fmt.Errorf("invalid bid request: missing required field 'id'")
+	}
+	if len(req.BidRequest.Imp) == 0 {
+		return nil, fmt.Errorf("invalid bid request: must have at least one impression")
+	}
 
 	response := &AuctionResponse{
 		BidderResults: make(map[string]*BidderResult),
@@ -585,7 +612,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	}
 
 	// Apply auction logic (first-price or second-price)
-	auctionedBids := e.runAuctionLogic(validBids)
+	auctionedBids := e.runAuctionLogic(validBids, impFloors)
 
 	// Build seat bids from auctioned results
 	seatBidMap := make(map[string]*openrtb.SeatBid)
@@ -627,10 +654,18 @@ func (e *Exchange) callBidders(ctx context.Context, req *openrtb.BidRequest, bid
 }
 
 // callBiddersWithFPD calls all selected bidders in parallel with FPD support
+// P0-1: Uses sync.Map for thread-safe result collection
+// P0-4: Uses semaphore to limit concurrent bidder goroutines
 func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidRequest, bidders []string, timeout time.Duration, bidderFPD fpd.BidderFPD) map[string]*BidderResult {
-	results := make(map[string]*BidderResult)
-	var mu sync.Mutex
+	var results sync.Map // P0-1: Thread-safe map for concurrent writes
 	var wg sync.WaitGroup
+
+	// P0-4: Create semaphore to limit concurrent bidder calls
+	maxConcurrent := e.config.MaxConcurrentBidders
+	if maxConcurrent <= 0 {
+		maxConcurrent = 10 // Default limit
+	}
+	sem := make(chan struct{}, maxConcurrent)
 
 	for _, bidderCode := range bidders {
 		// Try static registry first
@@ -640,14 +675,26 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 			go func(code string, awi adapters.AdapterWithInfo) {
 				defer wg.Done()
 
+				// P0-4: Acquire semaphore (blocks if at capacity)
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }() // Release on completion
+				case <-ctx.Done():
+					// Context cancelled while waiting for semaphore
+					results.Store(code, &BidderResult{
+						BidderCode: code,
+						Errors:     []error{ctx.Err()},
+						TimedOut:   true,
+					})
+					return
+				}
+
 				// Clone request and apply bidder-specific FPD
 				bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
 
 				result := e.callBidder(ctx, bidderReq, code, awi.Adapter, timeout)
 
-				mu.Lock()
-				results[code] = result
-				mu.Unlock()
+				results.Store(code, result) // P0-1: Thread-safe store
 			}(bidderCode, adapterWithInfo)
 			continue
 		}
@@ -660,6 +707,20 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 				go func(code string, da *ortb.GenericAdapter) {
 					defer wg.Done()
 
+					// P0-4: Acquire semaphore (blocks if at capacity)
+					select {
+					case sem <- struct{}{}:
+						defer func() { <-sem }() // Release on completion
+					case <-ctx.Done():
+						// Context cancelled while waiting for semaphore
+						results.Store(code, &BidderResult{
+							BidderCode: code,
+							Errors:     []error{ctx.Err()},
+							TimedOut:   true,
+						})
+						return
+					}
+
 					// Clone request and apply bidder-specific FPD
 					bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
 
@@ -671,16 +732,21 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 
 					result := e.callBidder(ctx, bidderReq, code, da, bidderTimeout)
 
-					mu.Lock()
-					results[code] = result
-					mu.Unlock()
+					results.Store(code, result) // P0-1: Thread-safe store
 				}(bidderCode, dynamicAdapter)
 			}
 		}
 	}
 
 	wg.Wait()
-	return results
+
+	// P0-1: Convert sync.Map to regular map for return
+	finalResults := make(map[string]*BidderResult)
+	results.Range(func(key, value interface{}) bool {
+		finalResults[key.(string)] = value.(*BidderResult)
+		return true
+	})
+	return finalResults
 }
 
 // cloneRequestWithFPD creates a deep copy of the request with bidder-specific FPD applied
