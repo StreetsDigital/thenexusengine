@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,6 +17,8 @@ type RateLimitConfig struct {
 	BurstSize         int           // Max burst size
 	CleanupInterval   time.Duration // How often to clean up old entries
 	WindowSize        time.Duration // Time window for rate limiting
+	TrustedProxies    []*net.IPNet  // CIDR ranges of trusted proxies
+	TrustXFF          bool          // Whether to trust X-Forwarded-For at all
 }
 
 // DefaultRateLimitConfig returns default rate limit configuration
@@ -29,12 +33,41 @@ func DefaultRateLimitConfig() *RateLimitConfig {
 		burst = 100 // Default burst size
 	}
 
+	// Parse trusted proxies from env (comma-separated CIDR ranges)
+	// Example: TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32
+	var trustedProxies []*net.IPNet
+	if proxyStr := os.Getenv("TRUSTED_PROXIES"); proxyStr != "" {
+		for _, cidr := range strings.Split(proxyStr, ",") {
+			cidr = strings.TrimSpace(cidr)
+			if cidr == "" {
+				continue
+			}
+			// Handle single IPs by adding /32 or /128
+			if !strings.Contains(cidr, "/") {
+				if strings.Contains(cidr, ":") {
+					cidr += "/128"
+				} else {
+					cidr += "/32"
+				}
+			}
+			_, network, err := net.ParseCIDR(cidr)
+			if err == nil {
+				trustedProxies = append(trustedProxies, network)
+			}
+		}
+	}
+
+	// Only trust XFF header if trusted proxies are configured
+	trustXFF := len(trustedProxies) > 0
+
 	return &RateLimitConfig{
 		Enabled:           os.Getenv("RATE_LIMIT_ENABLED") == "true",
 		RequestsPerSecond: rps,
 		BurstSize:         burst,
 		CleanupInterval:   time.Minute,
 		WindowSize:        time.Second,
+		TrustedProxies:    trustedProxies,
+		TrustXFF:          trustXFF,
 	}
 }
 
@@ -111,7 +144,7 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 		// Get client identifier (prefer publisher ID from auth, fallback to IP)
 		clientID := r.Header.Get("X-Publisher-ID")
 		if clientID == "" {
-			clientID = getClientIP(r)
+			clientID = rl.getClientIP(r)
 		}
 
 		// Check rate limit
@@ -167,34 +200,81 @@ func (rl *RateLimiter) allow(clientID string) bool {
 	return true
 }
 
-// getClientIP extracts the client IP from the request
-func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header (common for proxied requests)
-	xff := r.Header.Get("X-Forwarded-For")
-	if xff != "" {
-		// Take the first IP in the chain
-		for i := 0; i < len(xff); i++ {
-			if xff[i] == ',' {
-				return xff[:i]
+// getClientIP extracts the client IP from the request with secure XFF handling
+func (rl *RateLimiter) getClientIP(r *http.Request) string {
+	// Get the direct connection IP (RemoteAddr)
+	remoteIP := extractIP(r.RemoteAddr)
+
+	// Only trust XFF if configured and remote IP is from a trusted proxy
+	if rl.config.TrustXFF && rl.isTrustedProxy(remoteIP) {
+		// Check X-Forwarded-For header
+		xff := r.Header.Get("X-Forwarded-For")
+		if xff != "" {
+			// Parse the XFF chain and find the rightmost untrusted IP
+			// XFF format: client, proxy1, proxy2 (leftmost is original client)
+			ips := strings.Split(xff, ",")
+			// Walk backwards through the chain, stopping at the first untrusted IP
+			for i := len(ips) - 1; i >= 0; i-- {
+				ip := strings.TrimSpace(ips[i])
+				if ip == "" {
+					continue
+				}
+				// If this IP is not a trusted proxy, it's the client
+				if !rl.isTrustedProxy(ip) {
+					return ip
+				}
 			}
 		}
-		return xff
-	}
 
-	// Check X-Real-IP header
-	xri := r.Header.Get("X-Real-IP")
-	if xri != "" {
-		return xri
+		// Check X-Real-IP header (set by some proxies like nginx)
+		xri := r.Header.Get("X-Real-IP")
+		if xri != "" {
+			return strings.TrimSpace(xri)
+		}
 	}
 
 	// Fall back to RemoteAddr
-	addr := r.RemoteAddr
-	// Strip port if present
-	for i := len(addr) - 1; i >= 0; i-- {
-		if addr[i] == ':' {
-			return addr[:i]
+	return remoteIP
+}
+
+// isTrustedProxy checks if an IP is in the trusted proxy list
+func (rl *RateLimiter) isTrustedProxy(ipStr string) bool {
+	if len(rl.config.TrustedProxies) == 0 {
+		return false
+	}
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+
+	for _, network := range rl.config.TrustedProxies {
+		if network.Contains(ip) {
+			return true
 		}
 	}
+	return false
+}
+
+// extractIP extracts the IP from an address that may include a port
+func extractIP(addr string) string {
+	// Handle IPv6 with port: [::1]:8080
+	if strings.HasPrefix(addr, "[") {
+		if idx := strings.LastIndex(addr, "]"); idx != -1 {
+			return addr[1:idx]
+		}
+	}
+
+	// Handle IPv4 with port or plain IP
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		// Check if this looks like IPv6 without brackets
+		if strings.Count(addr, ":") > 1 {
+			// It's IPv6 without port
+			return addr
+		}
+		return addr[:idx]
+	}
+
 	return addr
 }
 

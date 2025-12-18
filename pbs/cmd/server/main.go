@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters"
 	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/appnexus"
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/ortb"
 	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/pubmatic"
 	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/rubicon"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/endpoints"
@@ -20,7 +23,7 @@ import (
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/metrics"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/middleware"
 	"github.com/StreetsDigital/thenexusengine/pbs/pkg/logger"
-	"github.com/rs/zerolog"
+	"github.com/StreetsDigital/thenexusengine/pbs/pkg/redis"
 )
 
 func main() {
@@ -71,17 +74,40 @@ func main() {
 	// Create exchange with default registry
 	ex := exchange.New(adapters.DefaultRegistry, config)
 
+	// Initialize dynamic registry if Redis is available
+	var dynamicRegistry *ortb.DynamicRegistry
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL != "" {
+		redisClient, err := redis.New(redisURL)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to connect to Redis, dynamic bidders disabled")
+		} else {
+			dynamicRegistry = ortb.NewDynamicRegistry(redisClient, 30*time.Second)
+			if err := dynamicRegistry.Start(context.Background()); err != nil {
+				log.Warn().Err(err).Msg("Failed to start dynamic registry")
+			} else {
+				ex.SetDynamicRegistry(dynamicRegistry)
+				log.Info().
+					Int("dynamic_bidders", dynamicRegistry.Count()).
+					Msg("Dynamic bidder registry initialized")
+			}
+		}
+	} else {
+		log.Info().Msg("REDIS_URL not set, dynamic bidders disabled")
+	}
+
 	// List registered bidders
 	bidders := adapters.DefaultRegistry.ListBidders()
 	log.Info().
 		Int("count", len(bidders)).
 		Strs("bidders", bidders).
-		Msg("Bidders registered")
+		Msg("Static bidders registered")
 
 	// Create handlers
 	auctionHandler := endpoints.NewAuctionHandler(ex)
 	statusHandler := endpoints.NewStatusHandler()
-	biddersHandler := endpoints.NewInfoBiddersHandler(bidders)
+	// Use dynamic handler that queries registries at request time
+	biddersHandler := endpoints.NewDynamicInfoBiddersHandler(adapters.DefaultRegistry, dynamicRegistry)
 
 	// Setup routes
 	mux := http.NewServeMux()
@@ -104,11 +130,12 @@ func main() {
 		}
 	})
 
-	// Build middleware chain: Size Limit -> Rate Limit -> Auth -> Metrics -> Handler
+	// Build middleware chain: Logging -> Size Limit -> Auth -> Rate Limit -> Metrics -> Handler
+	// Note: Auth must run before Rate Limit so publisher ID is available for rate limiting
 	handler := http.Handler(mux)
 	handler = m.Middleware(handler)
-	handler = auth.Middleware(handler)
 	handler = rateLimiter.Middleware(handler)
+	handler = auth.Middleware(handler)
 	handler = sizeLimiter.Middleware(handler)
 	handler = loggingMiddleware(handler)
 
@@ -138,6 +165,19 @@ func main() {
 
 	// Stop rate limiter cleanup goroutine
 	rateLimiter.Stop()
+
+	// Stop dynamic registry refresh goroutine
+	if dynamicRegistry != nil {
+		dynamicRegistry.Stop()
+		log.Info().Msg("Dynamic registry stopped")
+	}
+
+	// Flush pending events from exchange
+	if err := ex.Close(); err != nil {
+		log.Warn().Err(err).Msg("Error flushing event recorder")
+	} else {
+		log.Info().Msg("Event recorder flushed")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -217,18 +257,13 @@ func healthHandler() http.Handler {
 	})
 }
 
-// generateRequestID creates a unique request ID
+// generateRequestID creates a unique request ID using cryptographically secure randomness
 func generateRequestID() string {
-	return zerolog.TimestampFunc().Format("20060102150405") + "-" + randomString(8)
-}
-
-// randomString generates a random alphanumeric string
-func randomString(n int) string {
-	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = letters[time.Now().UnixNano()%int64(len(letters))]
-		time.Sleep(time.Nanosecond)
+	// Use 8 bytes (16 hex chars) for a good balance of uniqueness and brevity
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based ID if crypto/rand fails (should never happen)
+		return time.Now().Format("20060102150405.000000000")
 	}
-	return string(b)
+	return hex.EncodeToString(b)
 }

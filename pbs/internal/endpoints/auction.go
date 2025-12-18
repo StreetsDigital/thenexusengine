@@ -9,6 +9,7 @@ import (
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/exchange"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
+	"github.com/StreetsDigital/thenexusengine/pbs/pkg/logger"
 )
 
 // AuctionHandler handles /openrtb2/auction requests
@@ -39,7 +40,8 @@ func (h *AuctionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Parse OpenRTB request
 	var bidRequest openrtb.BidRequest
 	if err := json.Unmarshal(body, &bidRequest); err != nil {
-		writeError(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+		logger.Log.Warn().Err(err).Msg("Invalid JSON in bid request")
+		writeError(w, "Invalid JSON in request body", http.StatusBadRequest)
 		return
 	}
 
@@ -59,7 +61,11 @@ func (h *AuctionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	result, err := h.exchange.RunAuction(ctx, auctionReq)
 	if err != nil {
-		writeError(w, "Auction failed: "+err.Error(), http.StatusInternalServerError)
+		logger.Log.Error().
+			Err(err).
+			Str("request_id", bidRequest.ID).
+			Msg("Auction failed")
+		writeError(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -162,18 +168,61 @@ func (h *StatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// BidderLister is an interface for listing bidders
+type BidderLister interface {
+	ListBidders() []string
+}
+
+// DynamicBidderLister is an optional interface for listing dynamic bidders
+type DynamicBidderLister interface {
+	ListBidderCodes() []string
+}
+
 // InfoBiddersHandler handles /info/bidders requests
 type InfoBiddersHandler struct {
-	bidders []string
+	staticRegistry  BidderLister
+	dynamicRegistry DynamicBidderLister // May be nil
 }
 
 // NewInfoBiddersHandler creates a new bidders info handler
+// Deprecated: Use NewDynamicInfoBiddersHandler instead for proper dynamic bidder support
 func NewInfoBiddersHandler(bidders []string) *InfoBiddersHandler {
-	return &InfoBiddersHandler{bidders: bidders}
+	return &InfoBiddersHandler{}
+}
+
+// NewDynamicInfoBiddersHandler creates a handler that queries registries at request time
+func NewDynamicInfoBiddersHandler(staticRegistry BidderLister, dynamicRegistry DynamicBidderLister) *InfoBiddersHandler {
+	return &InfoBiddersHandler{
+		staticRegistry:  staticRegistry,
+		dynamicRegistry: dynamicRegistry,
+	}
 }
 
 // ServeHTTP handles info/bidders requests
 func (h *InfoBiddersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Collect bidders from both registries at request time
+	bidderSet := make(map[string]bool)
+
+	// Add static bidders
+	if h.staticRegistry != nil {
+		for _, bidder := range h.staticRegistry.ListBidders() {
+			bidderSet[bidder] = true
+		}
+	}
+
+	// Add dynamic bidders
+	if h.dynamicRegistry != nil {
+		for _, bidder := range h.dynamicRegistry.ListBidderCodes() {
+			bidderSet[bidder] = true
+		}
+	}
+
+	// Convert to slice
+	bidders := make([]string, 0, len(bidderSet))
+	for bidder := range bidderSet {
+		bidders = append(bidders, bidder)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(h.bidders)
+	json.NewEncoder(w).Encode(bidders)
 }

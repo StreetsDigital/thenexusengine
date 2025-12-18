@@ -242,7 +242,7 @@ type bodyReader struct {
 // Read implements io.Reader with proper EOF handling
 func (r *bodyReader) Read(p []byte) (n int, err error) {
 	if r.pos >= len(r.data) {
-		return 0, io.EOF // Return io.EOF when all data has been read
+		return 0, io.EOF
 	}
 	n = copy(p, r.data[r.pos:])
 	r.pos += n

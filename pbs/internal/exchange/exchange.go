@@ -101,6 +101,14 @@ func (e *Exchange) GetDynamicRegistry() *ortb.DynamicRegistry {
 	return e.dynamicRegistry
 }
 
+// Close shuts down the exchange and flushes pending events
+func (e *Exchange) Close() error {
+	if e.eventRecorder != nil {
+		return e.eventRecorder.Close()
+	}
+	return nil
+}
+
 // AuctionRequest contains auction parameters
 type AuctionRequest struct {
 	BidRequest *openrtb.BidRequest
@@ -406,34 +414,42 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 }
 
 // cloneRequestWithFPD creates a deep copy of the request with bidder-specific FPD applied
-// This ensures thread-safety when multiple goroutines modify their copies concurrently
+// and enforces USD currency for all bid requests
 func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode string, bidderFPD fpd.BidderFPD) *openrtb.BidRequest {
-	if bidderFPD == nil {
-		return req
+	// Always clone to ensure thread safety and allow currency normalization
+	clone := deepCloneRequest(req)
+
+	// Enforce USD currency on all outgoing requests
+	// This ensures all bidders compete in the same currency without needing forex conversion
+	clone.Cur = []string{e.config.DefaultCurrency}
+
+	// Normalize bid floor currencies to USD
+	for i := range clone.Imp {
+		if clone.Imp[i].BidFloorCur == "" || clone.Imp[i].BidFloorCur != e.config.DefaultCurrency {
+			// If floor currency differs from USD and we had conversion, we'd convert here
+			// For now, we just set the currency - publishers should specify floors in USD
+			clone.Imp[i].BidFloorCur = e.config.DefaultCurrency
+		}
 	}
 
-	fpdData, ok := bidderFPD[bidderCode]
-	if !ok || fpdData == nil {
-		return req
-	}
-
-	// Deep clone the request to prevent race conditions
-	clone := e.deepCloneRequest(req)
-
-	// Apply FPD using the processor
-	if e.fpdProcessor != nil {
-		e.fpdProcessor.ApplyFPDToRequest(clone, bidderCode, fpdData)
+	// Apply FPD if available
+	if bidderFPD != nil {
+		if fpdData, ok := bidderFPD[bidderCode]; ok && fpdData != nil {
+			if e.fpdProcessor != nil {
+				e.fpdProcessor.ApplyFPDToRequest(clone, bidderCode, fpdData)
+			}
+		}
 	}
 
 	return clone
 }
 
-// deepCloneRequest creates a deep copy of a BidRequest to ensure thread-safety
-func (e *Exchange) deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
-	clone := &openrtb.BidRequest{}
-	*clone = *req
+// deepCloneRequest creates a deep copy of the BidRequest to avoid race conditions
+// when multiple bidders modify request data concurrently
+func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
+	clone := *req
 
-	// Deep clone Site
+	// Deep copy Site
 	if req.Site != nil {
 		siteCopy := *req.Site
 		if req.Site.Publisher != nil {
@@ -447,7 +463,7 @@ func (e *Exchange) deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest
 		clone.Site = &siteCopy
 	}
 
-	// Deep clone App
+	// Deep copy App
 	if req.App != nil {
 		appCopy := *req.App
 		if req.App.Publisher != nil {
@@ -461,25 +477,27 @@ func (e *Exchange) deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest
 		clone.App = &appCopy
 	}
 
-	// Deep clone User
+	// Deep copy User
 	if req.User != nil {
 		userCopy := *req.User
-		if len(req.User.EIDs) > 0 {
-			userCopy.EIDs = make([]openrtb.EID, len(req.User.EIDs))
-			copy(userCopy.EIDs, req.User.EIDs)
-		}
-		if len(req.User.Data) > 0 {
-			userCopy.Data = make([]openrtb.Data, len(req.User.Data))
-			copy(userCopy.Data, req.User.Data)
-		}
 		if req.User.Geo != nil {
 			geoCopy := *req.User.Geo
 			userCopy.Geo = &geoCopy
 		}
+		// Deep copy EIDs slice
+		if len(req.User.EIDs) > 0 {
+			userCopy.EIDs = make([]openrtb.EID, len(req.User.EIDs))
+			copy(userCopy.EIDs, req.User.EIDs)
+		}
+		// Deep copy Data slice
+		if len(req.User.Data) > 0 {
+			userCopy.Data = make([]openrtb.Data, len(req.User.Data))
+			copy(userCopy.Data, req.User.Data)
+		}
 		clone.User = &userCopy
 	}
 
-	// Deep clone Device
+	// Deep copy Device
 	if req.Device != nil {
 		deviceCopy := *req.Device
 		if req.Device.Geo != nil {
@@ -489,51 +507,46 @@ func (e *Exchange) deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest
 		clone.Device = &deviceCopy
 	}
 
-	// Deep clone Regs
+	// Deep copy Regs
 	if req.Regs != nil {
 		regsCopy := *req.Regs
 		clone.Regs = &regsCopy
 	}
 
-	// Deep clone Source
+	// Deep copy Source
 	if req.Source != nil {
 		sourceCopy := *req.Source
+		if req.Source.SChain != nil {
+			schainCopy := *req.Source.SChain
+			if len(req.Source.SChain.Nodes) > 0 {
+				schainCopy.Nodes = make([]openrtb.SupplyChainNode, len(req.Source.SChain.Nodes))
+				copy(schainCopy.Nodes, req.Source.SChain.Nodes)
+			}
+			sourceCopy.SChain = &schainCopy
+		}
 		clone.Source = &sourceCopy
 	}
 
-	// Deep clone Imp array (critical for thread-safety)
+	// Deep copy Imp slice
 	if len(req.Imp) > 0 {
 		clone.Imp = make([]openrtb.Imp, len(req.Imp))
 		for i, imp := range req.Imp {
-			clone.Imp[i] = imp
-			// Clone nested media type objects
+			impCopy := imp
 			if imp.Banner != nil {
 				bannerCopy := *imp.Banner
-				if len(imp.Banner.Format) > 0 {
-					bannerCopy.Format = make([]openrtb.Format, len(imp.Banner.Format))
-					copy(bannerCopy.Format, imp.Banner.Format)
-				}
-				clone.Imp[i].Banner = &bannerCopy
+				impCopy.Banner = &bannerCopy
 			}
 			if imp.Video != nil {
 				videoCopy := *imp.Video
-				if len(imp.Video.Mimes) > 0 {
-					videoCopy.Mimes = make([]string, len(imp.Video.Mimes))
-					copy(videoCopy.Mimes, imp.Video.Mimes)
-				}
-				if len(imp.Video.Protocols) > 0 {
-					videoCopy.Protocols = make([]int, len(imp.Video.Protocols))
-					copy(videoCopy.Protocols, imp.Video.Protocols)
-				}
-				clone.Imp[i].Video = &videoCopy
-			}
-			if imp.Native != nil {
-				nativeCopy := *imp.Native
-				clone.Imp[i].Native = &nativeCopy
+				impCopy.Video = &videoCopy
 			}
 			if imp.Audio != nil {
 				audioCopy := *imp.Audio
-				clone.Imp[i].Audio = &audioCopy
+				impCopy.Audio = &audioCopy
+			}
+			if imp.Native != nil {
+				nativeCopy := *imp.Native
+				impCopy.Native = &nativeCopy
 			}
 			if imp.PMP != nil {
 				pmpCopy := *imp.PMP
@@ -541,42 +554,13 @@ func (e *Exchange) deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest
 					pmpCopy.Deals = make([]openrtb.Deal, len(imp.PMP.Deals))
 					copy(pmpCopy.Deals, imp.PMP.Deals)
 				}
-				clone.Imp[i].PMP = &pmpCopy
+				impCopy.PMP = &pmpCopy
 			}
+			clone.Imp[i] = impCopy
 		}
 	}
 
-	// Deep clone Cur array
-	if len(req.Cur) > 0 {
-		clone.Cur = make([]string, len(req.Cur))
-		copy(clone.Cur, req.Cur)
-	}
-
-	// Deep clone WLang array
-	if len(req.WLang) > 0 {
-		clone.WLang = make([]string, len(req.WLang))
-		copy(clone.WLang, req.WLang)
-	}
-
-	// Deep clone BCat array
-	if len(req.BCat) > 0 {
-		clone.BCat = make([]string, len(req.BCat))
-		copy(clone.BCat, req.BCat)
-	}
-
-	// Deep clone BAdv array
-	if len(req.BAdv) > 0 {
-		clone.BAdv = make([]string, len(req.BAdv))
-		copy(clone.BAdv, req.BAdv)
-	}
-
-	// Deep clone BApp array
-	if len(req.BApp) > 0 {
-		clone.BApp = make([]string, len(req.BApp))
-		copy(clone.BApp, req.BApp)
-	}
-
-	return clone
+	return &clone
 }
 
 // callBidder calls a single bidder
