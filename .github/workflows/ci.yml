@@ -225,4 +225,3 @@ jobs:
           # Run Go integration tests
           cd pbs
           go test -v -tags=integration ./...
-        continue-on-error: true
