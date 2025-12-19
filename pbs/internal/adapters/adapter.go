@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
+	"github.com/StreetsDigital/thenexusengine/pbs/pkg/logger"
 )
 
 // maxResponseSize limits bidder response size to prevent OOM attacks
@@ -224,8 +225,17 @@ func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout ti
 	case <-ctx.Done():
 		// Close response body to unblock the read goroutine
 		resp.Body.Close()
-		// Drain channel to allow goroutine to complete cleanly
-		<-readCh
+		// P1-NEW-2: Drain channel and log any unexpected errors for debugging
+		// This helps diagnose bidder issues that occur during timeout/cancellation
+		result := <-readCh
+		if result.err != nil && result.err != io.EOF {
+			// Log non-EOF errors that occurred during cancellation for debugging
+			// These are typically network errors masked by the context cancellation
+			logger.Log.Debug().
+				Err(result.err).
+				Str("uri", req.URI).
+				Msg("read error during context cancellation (masked by timeout)")
+		}
 		return nil, ctx.Err()
 	case result := <-readCh:
 		if result.err != nil {

@@ -1340,10 +1340,18 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 			if responseCurrency == "" {
 				responseCurrency = "USD" // OpenRTB 2.5 default
 			}
-			if responseCurrency != e.config.DefaultCurrency {
+
+			// P1-NEW-4: Defensive check for exchange currency misconfiguration
+			// Normalize exchange currency to USD if empty to prevent silent validation bypass
+			exchangeCurrency := e.config.DefaultCurrency
+			if exchangeCurrency == "" {
+				exchangeCurrency = "USD" // Fallback if misconfigured
+			}
+
+			if responseCurrency != exchangeCurrency {
 				result.Errors = append(result.Errors, fmt.Errorf(
 					"currency mismatch from %s: expected %s, got %s (bids rejected)",
-					bidderCode, e.config.DefaultCurrency, responseCurrency,
+					bidderCode, exchangeCurrency, responseCurrency,
 				))
 				// Skip bids with wrong currency - can't safely compare prices
 				continue
