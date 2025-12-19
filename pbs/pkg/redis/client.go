@@ -1,279 +1,136 @@
-// Package redis provides a Redis client for PBS
+// Package redis provides a Redis client for PBS with connection pooling
 package redis
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"net"
-	"net/url"
-	"strconv"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
 
-// Client wraps a Redis connection
+// Client wraps a Redis connection pool
 type Client struct {
-	conn    Conn
-	address string
+	client *redis.Client
 }
 
-// Conn is the interface for Redis connection operations
-type Conn interface {
-	Do(ctx context.Context, args ...interface{}) (interface{}, error)
-	Close() error
+// ClientConfig holds configuration for the Redis client
+type ClientConfig struct {
+	// Connection pool size (default: 10 * runtime.GOMAXPROCS)
+	PoolSize int
+	// Minimum idle connections to maintain
+	MinIdleConns int
+	// Maximum connection age before recycling
+	MaxConnAge time.Duration
+	// Timeout for establishing new connections
+	DialTimeout time.Duration
+	// Timeout for socket reads
+	ReadTimeout time.Duration
+	// Timeout for socket writes
+	WriteTimeout time.Duration
+	// Timeout for getting connection from pool
+	PoolTimeout time.Duration
 }
 
-// SimpleConn is a minimal Redis connection using net
-type SimpleConn struct {
-	addr     string
-	password string
-	db       int
+// DefaultClientConfig returns production-ready configuration
+func DefaultClientConfig() *ClientConfig {
+	return &ClientConfig{
+		PoolSize:     100,              // Handle high concurrency
+		MinIdleConns: 10,               // Keep warm connections ready
+		MaxConnAge:   30 * time.Minute, // Recycle connections periodically
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+		PoolTimeout:  4 * time.Second,
+	}
 }
 
-// New creates a new Redis client from a URL
+// New creates a new Redis client from a URL with default configuration
 func New(redisURL string) (*Client, error) {
+	return NewWithConfig(redisURL, DefaultClientConfig())
+}
+
+// NewWithConfig creates a new Redis client with custom configuration
+func NewWithConfig(redisURL string, cfg *ClientConfig) (*Client, error) {
 	if redisURL == "" {
 		return nil, fmt.Errorf("redis URL is empty")
 	}
 
-	u, err := url.Parse(redisURL)
+	if cfg == nil {
+		cfg = DefaultClientConfig()
+	}
+
+	// Parse Redis URL
+	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid redis URL: %w", err)
 	}
 
-	host := u.Hostname()
-	port := u.Port()
-	if port == "" {
-		port = "6379"
-	}
+	// Apply our configuration
+	opts.PoolSize = cfg.PoolSize
+	opts.MinIdleConns = cfg.MinIdleConns
+	opts.ConnMaxLifetime = cfg.MaxConnAge
+	opts.DialTimeout = cfg.DialTimeout
+	opts.ReadTimeout = cfg.ReadTimeout
+	opts.WriteTimeout = cfg.WriteTimeout
+	opts.PoolTimeout = cfg.PoolTimeout
 
-	password := ""
-	if u.User != nil {
-		password, _ = u.User.Password()
-	}
-
-	db := 0
-	if len(u.Path) > 1 {
-		db, _ = strconv.Atoi(u.Path[1:])
-	}
-
-	conn := &SimpleConn{
-		addr:     fmt.Sprintf("%s:%s", host, port),
-		password: password,
-		db:       db,
-	}
-
-	client := &Client{
-		conn:    conn,
-		address: conn.addr,
-	}
+	client := redis.NewClient(opts)
 
 	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := client.Ping(ctx); err != nil {
-		log.Warn().Err(err).Str("address", conn.addr).Msg("Redis connection test failed")
+	if err := client.Ping(ctx).Err(); err != nil {
+		log.Warn().Err(err).Str("address", opts.Addr).Msg("Redis connection test failed")
 		// Don't fail - we'll retry on each request
 	} else {
-		log.Info().Str("address", conn.addr).Msg("Redis connected")
+		log.Info().
+			Str("address", opts.Addr).
+			Int("pool_size", cfg.PoolSize).
+			Int("min_idle", cfg.MinIdleConns).
+			Msg("Redis connected with connection pooling")
 	}
 
-	return client, nil
+	return &Client{client: client}, nil
 }
 
 // HGet gets a hash field value
 func (c *Client) HGet(ctx context.Context, key, field string) (string, error) {
-	result, err := c.conn.Do(ctx, "HGET", key, field)
-	if err != nil {
-		return "", err
-	}
-	if result == nil {
+	result, err := c.client.HGet(ctx, key, field).Result()
+	if err == redis.Nil {
 		return "", nil
 	}
-	if s, ok := result.(string); ok {
-		return s, nil
-	}
-	if b, ok := result.([]byte); ok {
-		return string(b), nil
-	}
-	return "", fmt.Errorf("unexpected result type: %T", result)
+	return result, err
 }
 
 // HGetAll gets all fields and values from a hash
 func (c *Client) HGetAll(ctx context.Context, key string) (map[string]string, error) {
-	result, err := c.conn.Do(ctx, "HGETALL", key)
-	if err != nil {
-		return nil, err
-	}
-	if result == nil {
-		return make(map[string]string), nil
-	}
-	arr, ok := result.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("unexpected result type: %T", result)
-	}
-	// HGETALL returns alternating key-value pairs
-	m := make(map[string]string, len(arr)/2)
-	for i := 0; i < len(arr)-1; i += 2 {
-		key := toString(arr[i])
-		val := toString(arr[i+1])
-		m[key] = val
-	}
-	return m, nil
+	return c.client.HGetAll(ctx, key).Result()
 }
 
 // SMembers gets all members of a set
 func (c *Client) SMembers(ctx context.Context, key string) ([]string, error) {
-	result, err := c.conn.Do(ctx, "SMEMBERS", key)
-	if err != nil {
-		return nil, err
-	}
-	if result == nil {
-		return []string{}, nil
-	}
-	arr, ok := result.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("unexpected result type: %T", result)
-	}
-	members := make([]string, len(arr))
-	for i, v := range arr {
-		members[i] = toString(v)
-	}
-	return members, nil
-}
-
-// toString converts an interface{} to string
-func toString(v interface{}) string {
-	if v == nil {
-		return ""
-	}
-	if s, ok := v.(string); ok {
-		return s
-	}
-	if b, ok := v.([]byte); ok {
-		return string(b)
-	}
-	return fmt.Sprintf("%v", v)
+	return c.client.SMembers(ctx, key).Result()
 }
 
 // Ping tests the connection
 func (c *Client) Ping(ctx context.Context) error {
-	result, err := c.conn.Do(ctx, "PING")
-	if err != nil {
-		return err
-	}
-	if s, ok := result.(string); ok && s == "PONG" {
-		return nil
-	}
-	return fmt.Errorf("unexpected PING response: %v", result)
+	return c.client.Ping(ctx).Err()
 }
 
-// Close closes the connection
+// Close closes the connection pool
 func (c *Client) Close() error {
-	return c.conn.Close()
+	return c.client.Close()
 }
 
-// Do executes a Redis command (for SimpleConn)
-func (c *SimpleConn) Do(ctx context.Context, args ...interface{}) (interface{}, error) {
-	// Use a simple TCP connection for each command
-	conn, err := net.DialTimeout("tcp", c.addr, 5*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("connect failed: %w", err)
-	}
-	defer conn.Close()
-
-	// Set deadline from context
-	if deadline, ok := ctx.Deadline(); ok {
-		conn.SetDeadline(deadline)
-	}
-
-	// AUTH if password set
-	if c.password != "" {
-		if err := c.sendCommand(conn, "AUTH", c.password); err != nil {
-			return nil, err
-		}
-		if _, err := c.readResponse(conn); err != nil {
-			return nil, fmt.Errorf("AUTH failed: %w", err)
-		}
-	}
-
-	// SELECT database if not 0
-	if c.db != 0 {
-		if err := c.sendCommand(conn, "SELECT", strconv.Itoa(c.db)); err != nil {
-			return nil, err
-		}
-		if _, err := c.readResponse(conn); err != nil {
-			return nil, fmt.Errorf("SELECT failed: %w", err)
-		}
-	}
-
-	// Send the actual command
-	if err := c.sendCommand(conn, args...); err != nil {
-		return nil, err
-	}
-
-	return c.readResponse(conn)
+// PoolStats returns connection pool statistics for monitoring
+func (c *Client) PoolStats() *redis.PoolStats {
+	return c.client.PoolStats()
 }
 
-func (c *SimpleConn) sendCommand(conn net.Conn, args ...interface{}) error {
-	// RESP protocol: *<num args>\r\n$<len>\r\n<arg>\r\n...
-	cmd := fmt.Sprintf("*%d\r\n", len(args))
-	for _, arg := range args {
-		s := fmt.Sprintf("%v", arg)
-		cmd += fmt.Sprintf("$%d\r\n%s\r\n", len(s), s)
-	}
-	_, err := conn.Write([]byte(cmd))
-	return err
-}
-
-func (c *SimpleConn) readResponse(conn net.Conn) (interface{}, error) {
-	reader := bufio.NewReader(conn)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	line = line[:len(line)-2] // Strip \r\n
-
-	switch line[0] {
-	case '+': // Simple string
-		return line[1:], nil
-	case '-': // Error
-		return nil, fmt.Errorf("redis error: %s", line[1:])
-	case ':': // Integer
-		n, _ := strconv.ParseInt(line[1:], 10, 64)
-		return n, nil
-	case '$': // Bulk string
-		length, _ := strconv.Atoi(line[1:])
-		if length == -1 {
-			return nil, nil // Nil
-		}
-		data := make([]byte, length+2)
-		_, err := reader.Read(data)
-		if err != nil {
-			return nil, err
-		}
-		return string(data[:length]), nil
-	case '*': // Array
-		count, _ := strconv.Atoi(line[1:])
-		if count == -1 {
-			return nil, nil
-		}
-		result := make([]interface{}, count)
-		for i := 0; i < count; i++ {
-			result[i], err = c.readResponse(conn)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return result, nil
-	}
-	return nil, fmt.Errorf("unknown response type: %s", line)
-}
-
-// Close for SimpleConn - connection-per-request, nothing to close
-func (c *SimpleConn) Close() error {
-	return nil
+// Do executes a generic Redis command (for compatibility)
+func (c *Client) Do(ctx context.Context, args ...interface{}) *redis.Cmd {
+	return c.client.Do(ctx, args...)
 }
