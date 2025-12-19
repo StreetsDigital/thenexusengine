@@ -51,12 +51,14 @@ func main() {
 
 	// Initialize middleware
 	cors := middleware.NewCORS(middleware.DefaultCORSConfig())
+	security := middleware.NewSecurity(nil) // Uses DefaultSecurityConfig()
 	auth := middleware.NewAuth(middleware.DefaultAuthConfig())
 	rateLimiter := middleware.NewRateLimiter(middleware.DefaultRateLimitConfig())
 	sizeLimiter := middleware.NewSizeLimiter(middleware.DefaultSizeLimitConfig())
 
 	log.Info().
 		Bool("cors_enabled", true).
+		Bool("security_headers_enabled", security.GetConfig().Enabled).
 		Bool("auth_enabled", auth.IsEnabled()).
 		Bool("rate_limiting_enabled", rateLimiter != nil).
 		Msg("Middleware initialized")
@@ -132,8 +134,9 @@ func main() {
 		}
 	})
 
-	// Build middleware chain: CORS -> Logging -> Size Limit -> Auth -> Rate Limit -> Metrics -> Handler
+	// Build middleware chain: CORS -> Security -> Logging -> Size Limit -> Auth -> Rate Limit -> Metrics -> Handler
 	// Note: CORS must be outermost to handle preflight OPTIONS requests
+	// Note: Security headers applied early to ensure all responses have them
 	// Note: Auth must run before Rate Limit so publisher ID is available for rate limiting
 	handler := http.Handler(mux)
 	handler = m.Middleware(handler)
@@ -141,6 +144,7 @@ func main() {
 	handler = auth.Middleware(handler)
 	handler = sizeLimiter.Middleware(handler)
 	handler = loggingMiddleware(handler)
+	handler = security.Middleware(handler)
 	handler = cors.Middleware(handler)
 
 	// Create server
