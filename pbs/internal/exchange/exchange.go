@@ -544,6 +544,15 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 		if imp.Banner == nil && imp.Video == nil && imp.Audio == nil && imp.Native == nil {
 			return nil, fmt.Errorf("invalid bid request: impression[%d] has no media type (banner/video/audio/native required)", i)
 		}
+
+		// P1-NEW-4: Validate banner dimensions per OpenRTB 2.5 section 3.2.6
+		if imp.Banner != nil {
+			hasExplicitSize := imp.Banner.W > 0 && imp.Banner.H > 0
+			hasFormat := len(imp.Banner.Format) > 0
+			if !hasExplicitSize && !hasFormat {
+				return nil, fmt.Errorf("invalid bid request: impression[%d] banner must have either w/h or format array (OpenRTB 2.5)", i)
+			}
+		}
 	}
 
 	response := &AuctionResponse{
@@ -556,9 +565,16 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	}
 
 	// Get timeout from request or config
+	// P1-NEW-1: Validate TMax bounds to prevent abuse
 	timeout := req.Timeout
 	if timeout == 0 && req.BidRequest.TMax > 0 {
-		timeout = time.Duration(req.BidRequest.TMax) * time.Millisecond
+		tmax := req.BidRequest.TMax
+		// Cap TMax at reasonable maximum (10 seconds) to prevent resource exhaustion
+		const maxAllowedTMax = 10000 // 10 seconds in milliseconds
+		if tmax > maxAllowedTMax {
+			tmax = maxAllowedTMax
+		}
+		timeout = time.Duration(tmax) * time.Millisecond
 	}
 	if timeout == 0 {
 		timeout = e.config.DefaultTimeout
@@ -969,6 +985,36 @@ func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode strin
 func deepCloneRequest(req *openrtb.BidRequest, limits *CloneLimits) *openrtb.BidRequest {
 	clone := *req
 
+	// P1-NEW-2: Deep copy top-level string slices to prevent shared references
+	if len(req.Cur) > 0 {
+		clone.Cur = make([]string, len(req.Cur))
+		copy(clone.Cur, req.Cur)
+	}
+	if len(req.WSeat) > 0 {
+		clone.WSeat = make([]string, len(req.WSeat))
+		copy(clone.WSeat, req.WSeat)
+	}
+	if len(req.BSeat) > 0 {
+		clone.BSeat = make([]string, len(req.BSeat))
+		copy(clone.BSeat, req.BSeat)
+	}
+	if len(req.WLang) > 0 {
+		clone.WLang = make([]string, len(req.WLang))
+		copy(clone.WLang, req.WLang)
+	}
+	if len(req.BCat) > 0 {
+		clone.BCat = make([]string, len(req.BCat))
+		copy(clone.BCat, req.BCat)
+	}
+	if len(req.BAdv) > 0 {
+		clone.BAdv = make([]string, len(req.BAdv))
+		copy(clone.BAdv, req.BAdv)
+	}
+	if len(req.BApp) > 0 {
+		clone.BApp = make([]string, len(req.BApp))
+		copy(clone.BApp, req.BApp)
+	}
+
 	// Deep copy Site
 	if req.Site != nil {
 		siteCopy := *req.Site
@@ -1140,6 +1186,17 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 	requests, errs := adapter.MakeRequests(req, extraInfo)
 	if len(errs) > 0 {
 		result.Errors = append(result.Errors, errs...)
+	}
+
+	// P1-NEW-6: Check context after potentially expensive MakeRequests operation
+	select {
+	case <-ctx.Done():
+		result.Errors = append(result.Errors, ctx.Err())
+		result.Latency = time.Since(start)
+		result.TimedOut = true
+		return result
+	default:
+		// Context still valid, continue
 	}
 
 	if len(requests) == 0 {

@@ -145,13 +145,19 @@ func (r *DynamicRegistry) refreshLoop(ctx context.Context) {
 	ticker := time.NewTicker(r.refreshPeriod)
 	defer ticker.Stop()
 
+	// P1-NEW-3: Timeout for individual refresh operations to prevent blocking
+	const refreshTimeout = 5 * time.Second
+
 	for {
 		select {
 		case <-ticker.C:
-			if err := r.Refresh(ctx); err != nil {
+			// Create timeout context for each refresh to prevent blocking on slow Redis
+			refreshCtx, cancel := context.WithTimeout(ctx, refreshTimeout)
+			if err := r.Refresh(refreshCtx); err != nil {
 				// Log error but continue
 				logger.Log.Warn().Err(err).Msg("Failed to refresh dynamic bidders")
 			}
+			cancel()
 		case <-r.stopChan:
 			return
 		case <-ctx.Done():
@@ -223,11 +229,12 @@ func (r *DynamicRegistry) Refresh(ctx context.Context) error {
 
 // Get retrieves an adapter by bidder code
 func (r *DynamicRegistry) Get(bidderCode string) (*GenericAdapter, bool) {
+	// P1-NEW-5: Release registry lock before acquiring metrics lock to avoid lock ordering issues
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	adapter, ok := r.adapters[bidderCode]
+	r.mu.RUnlock()
 
-	// P3-NEW-1: Record lookup metrics
+	// Record metrics outside the critical section to prevent potential deadlock
 	if ok {
 		r.metrics.recordGetHit()
 	} else {
