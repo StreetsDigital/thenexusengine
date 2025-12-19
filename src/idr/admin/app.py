@@ -1051,6 +1051,10 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                     'ccpa_applies': config.privacy.ccpa_applies,
                     'coppa_applies': config.privacy.coppa_applies,
                 },
+                'revenue_share': {
+                    'platform_demand_rev_share': config.revenue_share.platform_demand_rev_share,
+                    'publisher_own_demand_fee': config.revenue_share.publisher_own_demand_fee,
+                },
             })
 
         except Exception as e:
@@ -1088,6 +1092,7 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
                 'idr': data.get('idr', {'max_bidders': 8, 'min_score': 0.1, 'timeout_ms': 50}),
                 'rate_limits': data.get('rate_limits', {'requests_per_second': 1000, 'burst': 100}),
                 'privacy': data.get('privacy', {'gdpr_applies': True, 'ccpa_applies': True, 'coppa_applies': False}),
+                'revenue_share': data.get('revenue_share', {'platform_demand_rev_share': 0.0, 'publisher_own_demand_fee': 0.0}),
             }
 
             # Get config directory

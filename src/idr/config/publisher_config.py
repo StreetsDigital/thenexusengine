@@ -61,6 +61,24 @@ class APIKeyConfig:
 
 
 @dataclass
+class RevenueShareConfig:
+    """
+    Revenue share configuration for a publisher.
+
+    - platform_demand_rev_share: Percentage taken from platform-sourced demand partners.
+      This is the margin on demand sources that the platform brings in.
+      Applied on top of publisher's net earnings.
+      Example: 15.0 means we take 15% of earnings from our demand partners.
+
+    - publisher_own_demand_fee: Percentage fee charged when publishers use their own demand.
+      This is billed monthly to the publisher.
+      Example: 5.0 means we charge 5% on revenue from publisher's own demand sources.
+    """
+    platform_demand_rev_share: float = 0.0  # % taken from platform demand
+    publisher_own_demand_fee: float = 0.0   # % charged for publisher's own demand
+
+
+@dataclass
 class PublisherConfig:
     """Complete configuration for a publisher."""
     publisher_id: str
@@ -74,6 +92,7 @@ class PublisherConfig:
     rate_limits: RateLimitConfig = field(default_factory=RateLimitConfig)
     privacy: PrivacyConfig = field(default_factory=PrivacyConfig)
     api_key: APIKeyConfig = field(default_factory=APIKeyConfig)
+    revenue_share: RevenueShareConfig = field(default_factory=RevenueShareConfig)
 
     def get_enabled_bidders(self) -> list[str]:
         """Get list of enabled bidder codes."""
@@ -260,6 +279,13 @@ class PublisherConfigManager:
                 enabled=api_key_data.get("enabled", True),
             )
 
+            # Parse revenue share config
+            revenue_share_data = data.get("revenue_share", {})
+            revenue_share_config = RevenueShareConfig(
+                platform_demand_rev_share=float(revenue_share_data.get("platform_demand_rev_share", 0.0)),
+                publisher_own_demand_fee=float(revenue_share_data.get("publisher_own_demand_fee", 0.0)),
+            )
+
             return PublisherConfig(
                 publisher_id=data.get("publisher_id", path.stem),
                 name=data.get("name", ""),
@@ -272,6 +298,7 @@ class PublisherConfigManager:
                 rate_limits=rate_config,
                 privacy=privacy_config,
                 api_key=api_key_config,
+                revenue_share=revenue_share_config,
             )
 
         except yaml.YAMLError as e:

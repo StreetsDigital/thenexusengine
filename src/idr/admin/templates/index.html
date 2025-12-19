@@ -1588,6 +1588,7 @@
                         <button id="tab-general" class="tab-btn active" onclick="showTab('general')">General</button>
                         <button id="tab-sites" class="tab-btn" onclick="showTab('sites')">Sites & Ad Units</button>
                         <button id="tab-bidders" class="tab-btn" onclick="showTab('bidders')">Bidders</button>
+                        <button id="tab-revenue" class="tab-btn" onclick="showTab('revenue')">Revenue Share</button>
                         <button id="tab-settings" class="tab-btn" onclick="showTab('settings')">Settings</button>
                     </div>
 
@@ -1639,6 +1640,62 @@
                         </p>
                         <div id="bidders-list" style="max-height: 400px; overflow-y: auto;">
                             ${biddersHtml}
+                        </div>
+                    </div>
+
+                    <!-- Revenue Share Tab -->
+                    <div id="panel-revenue" class="tab-panel" style="display: none; background: white; padding: 1rem; border-radius: 0.375rem;">
+                        <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 0.375rem; padding: 1rem; margin-bottom: 1.5rem;">
+                            <strong style="color: #92400e;">Revenue Share Configuration</strong>
+                            <p style="color: #78350f; font-size: 0.875rem; margin-top: 0.5rem;">
+                                Configure how revenue is shared with this publisher. These settings affect margins and monthly billing.
+                            </p>
+                        </div>
+
+                        <h4 style="margin-bottom: 1rem; color: var(--gray-700);">Platform Demand Sources</h4>
+                        <p style="color: var(--gray-600); font-size: 0.875rem; margin-bottom: 1rem;">
+                            For demand partners that the platform brings in. This percentage is taken from the publisher's net earnings.
+                        </p>
+                        <div class="form-group">
+                            <label>Platform Demand Revenue Share (%)</label>
+                            <input type="number" id="edit-rev-platform" value="${data.revenue_share?.platform_demand_rev_share || 0}" min="0" max="100" step="0.1">
+                            <span class="help-text">Margin taken on earnings from platform-sourced demand partners (e.g., 15 means you take 15%)</span>
+                        </div>
+
+                        <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+                        <h4 style="margin-bottom: 1rem; color: var(--gray-700);">Publisher's Own Demand</h4>
+                        <p style="color: var(--gray-600); font-size: 0.875rem; margin-bottom: 1rem;">
+                            Fee charged when publisher uses their own demand sources. This amount is billed monthly.
+                        </p>
+                        <div class="form-group">
+                            <label>Publisher Own Demand Fee (%)</label>
+                            <input type="number" id="edit-rev-own-demand" value="${data.revenue_share?.publisher_own_demand_fee || 0}" min="0" max="100" step="0.1">
+                            <span class="help-text">Percentage fee charged on revenue from publisher's own demand sources (billed monthly)</span>
+                        </div>
+
+                        <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid var(--gray-200);">
+
+                        <div style="background: var(--gray-50); border-radius: 0.375rem; padding: 1rem;">
+                            <h5 style="margin-bottom: 0.75rem; color: var(--gray-700);">Revenue Example Calculator</h5>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; font-size: 0.875rem;">
+                                <div>
+                                    <strong>Platform Demand Scenario:</strong>
+                                    <p style="color: var(--gray-600); margin-top: 0.25rem;">
+                                        $1,000 gross revenue<br>
+                                        - <span id="calc-platform-share">${data.revenue_share?.platform_demand_rev_share || 0}</span>% platform share = $<span id="calc-platform-margin">0</span><br>
+                                        = <strong>$<span id="calc-platform-net">1000</span> publisher net</strong>
+                                    </p>
+                                </div>
+                                <div>
+                                    <strong>Own Demand Scenario:</strong>
+                                    <p style="color: var(--gray-600); margin-top: 0.25rem;">
+                                        $1,000 gross revenue<br>
+                                        Publisher receives 100%<br>
+                                        Monthly fee: $<span id="calc-own-fee">0</span> (<span id="calc-own-pct">${data.revenue_share?.publisher_own_demand_fee || 0}</span>%)
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -1725,6 +1782,47 @@
             // Show selected panel
             document.getElementById('panel-' + tabName).style.display = 'block';
             document.getElementById('tab-' + tabName).classList.add('active');
+
+            // Initialize revenue calculator if showing revenue tab
+            if (tabName === 'revenue') {
+                initRevenueCalculator();
+            }
+        }
+
+        function initRevenueCalculator() {
+            const platformInput = document.getElementById('edit-rev-platform');
+            const ownDemandInput = document.getElementById('edit-rev-own-demand');
+
+            if (platformInput && ownDemandInput) {
+                platformInput.addEventListener('input', updateRevenueCalculator);
+                ownDemandInput.addEventListener('input', updateRevenueCalculator);
+                updateRevenueCalculator();
+            }
+        }
+
+        function updateRevenueCalculator() {
+            const platformShare = parseFloat(document.getElementById('edit-rev-platform').value) || 0;
+            const ownDemandFee = parseFloat(document.getElementById('edit-rev-own-demand').value) || 0;
+
+            // Platform demand calculation (on $1000 gross)
+            const platformMargin = (1000 * platformShare / 100).toFixed(2);
+            const platformNet = (1000 - platformMargin).toFixed(2);
+
+            // Own demand calculation (on $1000 gross)
+            const ownFee = (1000 * ownDemandFee / 100).toFixed(2);
+
+            // Update display
+            const calcPlatformShare = document.getElementById('calc-platform-share');
+            const calcPlatformMargin = document.getElementById('calc-platform-margin');
+            const calcPlatformNet = document.getElementById('calc-platform-net');
+            const calcOwnFee = document.getElementById('calc-own-fee');
+            const calcOwnPct = document.getElementById('calc-own-pct');
+
+            if (calcPlatformShare) calcPlatformShare.textContent = platformShare;
+            if (calcPlatformMargin) calcPlatformMargin.textContent = platformMargin;
+            if (calcPlatformNet) calcPlatformNet.textContent = platformNet;
+            if (calcOwnFee) calcOwnFee.textContent = ownFee;
+            if (calcOwnPct) calcOwnPct.textContent = ownDemandFee;
         }
 
         function toggleBidder(bidderCode) {
@@ -2199,6 +2297,10 @@
                     gdpr_applies: document.getElementById('edit-privacy-gdpr').checked,
                     ccpa_applies: document.getElementById('edit-privacy-ccpa').checked,
                     coppa_applies: document.getElementById('edit-privacy-coppa').checked
+                },
+                revenue_share: {
+                    platform_demand_rev_share: parseFloat(document.getElementById('edit-rev-platform').value) || 0,
+                    publisher_own_demand_fee: parseFloat(document.getElementById('edit-rev-own-demand').value) || 0
                 }
             };
 
