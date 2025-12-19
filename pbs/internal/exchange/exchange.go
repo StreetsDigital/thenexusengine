@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,23 @@ const (
 const (
 	minBidderTimeout = 10 * time.Millisecond  // Minimum reasonable timeout
 	maxBidderTimeout = 5 * time.Second        // Maximum to prevent resource exhaustion
+)
+
+// P2-NEW-2: OpenRTB 2.5 No-Bid Reason (NBR) codes per Section 5.24
+// These explain why an exchange returned no bid for a request
+const (
+	NBRUnknownError     = 0  // Unknown Error
+	NBRTechnicalError   = 1  // Technical Error
+	NBRInvalidRequest   = 2  // Invalid Request
+	NBRKnownWebSpider   = 3  // Known Web Spider
+	NBRNonHumanTraffic  = 4  // Suspected Non-Human Traffic
+	NBRProxyIP          = 5  // Cloud, Data Center, or Proxy IP
+	NBRUnsupportedDevice = 6 // Unsupported Device
+	NBRBlockedPublisher = 7  // Blocked Publisher or Site
+	NBRUnmatchedUser    = 8  // Unmatched User
+	// 500+ reserved for exchange-specific reasons
+	NBRNoBiddersAvailable = 500 // Exchange-specific: No bidders configured/available
+	NBRTimeout            = 501 // Exchange-specific: Request processing timed out
 )
 
 // CloneLimits holds configurable limits for request cloning (P3-1)
@@ -468,12 +486,11 @@ func sortBidsByPrice(bids []ValidatedBid) {
 	}
 }
 
-// roundToCents rounds a price to 2 decimal places using integer arithmetic
-// to avoid floating-point precision errors (P0-2)
+// roundToCents rounds a price to 2 decimal places
+// P2-NEW-3: Use math.Round for correct rounding of all values including edge cases
 func roundToCents(price float64) float64 {
-	// Convert to cents, round, convert back
-	cents := int64(price*100 + 0.5)
-	return float64(cents) / 100.0
+	// math.Round correctly handles all cases including negative numbers and .5 values
+	return math.Round(price*100) / 100.0
 }
 
 // RunAuction executes the auction
@@ -489,6 +506,18 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	}
 	if len(req.BidRequest.Imp) == 0 {
 		return nil, fmt.Errorf("invalid bid request: must have at least one impression")
+	}
+
+	// P1-NEW-2: Validate impression IDs are unique and non-empty per OpenRTB 2.5 section 3.2.4
+	seenImpIDs := make(map[string]bool, len(req.BidRequest.Imp))
+	for i, imp := range req.BidRequest.Imp {
+		if imp.ID == "" {
+			return nil, fmt.Errorf("invalid bid request: impression[%d] has empty id (required by OpenRTB 2.5)", i)
+		}
+		if seenImpIDs[imp.ID] {
+			return nil, fmt.Errorf("invalid bid request: duplicate impression id %q (must be unique per OpenRTB 2.5)", imp.ID)
+		}
+		seenImpIDs[imp.ID] = true
 	}
 
 	response := &AuctionResponse{
@@ -523,7 +552,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	}
 
 	if len(availableBidders) == 0 {
-		response.BidResponse = e.buildEmptyResponse(req.BidRequest)
+		response.BidResponse = e.buildEmptyResponse(req.BidRequest, NBRNoBiddersAvailable)
 		return response, nil
 	}
 
@@ -620,7 +649,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	select {
 	case <-ctx.Done():
 		response.DebugInfo.TotalLatency = time.Since(startTime)
-		response.BidResponse = e.buildEmptyResponse(req.BidRequest)
+		response.BidResponse = e.buildEmptyResponse(req.BidRequest, NBRTimeout)
 		return response, nil // Return empty response rather than error on timeout
 	default:
 		// Context still valid, proceed with validation
@@ -1110,12 +1139,16 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 				continue // Reject all bids from this response
 			}
 
-			// P1-4: Validate response currency matches expected currency
-			// We request USD in the bid request, so responses must be in USD
-			if bidderResp.Currency != "" && bidderResp.Currency != e.config.DefaultCurrency {
+			// P1-NEW-3: Normalize and validate response currency
+			// Per OpenRTB 2.5 spec section 7.2, empty currency means USD
+			responseCurrency := bidderResp.Currency
+			if responseCurrency == "" {
+				responseCurrency = "USD" // OpenRTB 2.5 default
+			}
+			if responseCurrency != e.config.DefaultCurrency {
 				result.Errors = append(result.Errors, fmt.Errorf(
 					"currency mismatch from %s: expected %s, got %s (bids rejected)",
-					bidderCode, e.config.DefaultCurrency, bidderResp.Currency,
+					bidderCode, e.config.DefaultCurrency, responseCurrency,
 				))
 				// Skip bids with wrong currency - can't safely compare prices
 				continue
@@ -1130,12 +1163,14 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 	return result
 }
 
-// buildEmptyResponse creates an empty bid response
-func (e *Exchange) buildEmptyResponse(req *openrtb.BidRequest) *openrtb.BidResponse {
+// buildEmptyResponse creates an empty bid response with optional NBR code
+// P2-NEW-2: Include NBR (No-Bid Reason) for debugging per OpenRTB 2.5
+func (e *Exchange) buildEmptyResponse(req *openrtb.BidRequest, nbr int) *openrtb.BidResponse {
 	return &openrtb.BidResponse{
 		ID:      req.ID,
 		SeatBid: []openrtb.SeatBid{},
 		Cur:     e.config.DefaultCurrency,
+		NBR:     nbr,
 	}
 }
 
