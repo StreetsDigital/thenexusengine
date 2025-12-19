@@ -72,6 +72,14 @@ func TestExchangeNew(t *testing.T) {
 	}
 }
 
+// testSite returns a minimal valid Site for tests
+func testSite() *openrtb.Site {
+	return &openrtb.Site{
+		ID:   "test-site",
+		Name: "Test Site",
+	}
+}
+
 func TestExchangeRunAuctionNoBidders(t *testing.T) {
 	registry := adapters.NewRegistry()
 	ex := New(registry, &Config{
@@ -81,8 +89,8 @@ func TestExchangeRunAuctionNoBidders(t *testing.T) {
 
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
-			ID: "test-req-1",
-			Site: &openrtb.Site{ID: "site1"},
+			ID:   "test-req-1",
+			Site: testSite(),
 			Imp: []openrtb.Imp{
 				{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}},
 			},
@@ -147,8 +155,8 @@ func TestExchangeRunAuctionWithBidders(t *testing.T) {
 
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
-			ID: "test-req-2",
-			Site: &openrtb.Site{ID: "site1"},
+			ID:   "test-req-2",
+			Site: testSite(),
 			Imp: []openrtb.Imp{
 				{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}},
 			},
@@ -243,8 +251,8 @@ func TestExchangeEIDFiltering(t *testing.T) {
 	// Create request with multiple EIDs
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
-			ID: "test-eid",
-			Site: &openrtb.Site{ID: "site1"},
+			ID:   "test-eid",
+			Site: testSite(),
 			User: &openrtb.User{
 				ID: "user1",
 				EIDs: []openrtb.EID{
@@ -282,8 +290,8 @@ func TestExchangeTimeoutFromRequest(t *testing.T) {
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
 			ID:   "test-timeout",
+			Site: testSite(),
 			TMax: 100, // 100ms
-			Site: &openrtb.Site{ID: "site1"},
 			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 	}
@@ -338,7 +346,7 @@ func TestExchangeDebugInfo(t *testing.T) {
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
 			ID:   "test-debug",
-			Site: &openrtb.Site{ID: "site1"},
+			Site: testSite(),
 			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 		Debug: true,
@@ -570,7 +578,7 @@ func TestBidDeduplication(t *testing.T) {
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
 			ID:   "test-dedup",
-			Site: &openrtb.Site{ID: "site1"},
+			Site: testSite(),
 			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 	}
@@ -667,7 +675,7 @@ func TestSecondPriceAuction(t *testing.T) {
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
 			ID:   "test-second-price",
-			Site: &openrtb.Site{ID: "site1"},
+			Site: testSite(),
 			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 	}
@@ -741,7 +749,7 @@ func TestFirstPriceAuction(t *testing.T) {
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
 			ID:   "test-first-price",
-			Site: &openrtb.Site{ID: "site1"},
+			Site: testSite(),
 			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 	}
@@ -822,4 +830,180 @@ func containsSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// P2 Validation Tests
+
+func TestValidateRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		request     *openrtb.BidRequest
+		wantErr     bool
+		errField    string
+		errContains string
+	}{
+		{
+			name:        "nil request",
+			request:     nil,
+			wantErr:     true,
+			errField:    "request",
+			errContains: "nil",
+		},
+		{
+			name:        "empty request ID",
+			request:     &openrtb.BidRequest{ID: "", Site: testSite(), Imp: []openrtb.Imp{{ID: "imp1"}}},
+			wantErr:     true,
+			errField:    "id",
+			errContains: "required",
+		},
+		{
+			name:        "no impressions",
+			request:     &openrtb.BidRequest{ID: "req1", Site: testSite(), Imp: []openrtb.Imp{}},
+			wantErr:     true,
+			errField:    "imp",
+			errContains: "at least one",
+		},
+		{
+			name:        "empty impression ID",
+			request:     &openrtb.BidRequest{ID: "req1", Site: testSite(), Imp: []openrtb.Imp{{ID: ""}}},
+			wantErr:     true,
+			errField:    "imp[0].id",
+			errContains: "required",
+		},
+		{
+			name: "duplicate impression IDs",
+			request: &openrtb.BidRequest{
+				ID:   "req1",
+				Site: testSite(),
+				Imp: []openrtb.Imp{
+					{ID: "imp1"},
+					{ID: "imp1"}, // Duplicate
+				},
+			},
+			wantErr:     true,
+			errField:    "imp[1].id",
+			errContains: "duplicate",
+		},
+		{
+			name:        "missing site and app",
+			request:     &openrtb.BidRequest{ID: "req1", Imp: []openrtb.Imp{{ID: "imp1"}}},
+			wantErr:     true,
+			errField:    "site/app",
+			errContains: "either site or app",
+		},
+		{
+			name: "both site and app present",
+			request: &openrtb.BidRequest{
+				ID:   "req1",
+				Site: testSite(),
+				App:  &openrtb.App{ID: "app1"},
+				Imp:  []openrtb.Imp{{ID: "imp1"}},
+			},
+			wantErr:     true,
+			errField:    "site/app",
+			errContains: "cannot contain both",
+		},
+		{
+			name:        "tmax too low",
+			request:     &openrtb.BidRequest{ID: "req1", Site: testSite(), TMax: 5, Imp: []openrtb.Imp{{ID: "imp1"}}},
+			wantErr:     true,
+			errField:    "tmax",
+			errContains: "minimum 10",
+		},
+		{
+			name:        "tmax too high",
+			request:     &openrtb.BidRequest{ID: "req1", Site: testSite(), TMax: 35000, Imp: []openrtb.Imp{{ID: "imp1"}}},
+			wantErr:     true,
+			errField:    "tmax",
+			errContains: "30000",
+		},
+		{
+			name:        "valid request with site",
+			request:     &openrtb.BidRequest{ID: "req1", Site: testSite(), Imp: []openrtb.Imp{{ID: "imp1"}}},
+			wantErr:     false,
+		},
+		{
+			name:        "valid request with app",
+			request:     &openrtb.BidRequest{ID: "req1", App: &openrtb.App{ID: "app1"}, Imp: []openrtb.Imp{{ID: "imp1"}}},
+			wantErr:     false,
+		},
+		{
+			name:        "valid request with tmax at lower bound",
+			request:     &openrtb.BidRequest{ID: "req1", Site: testSite(), TMax: 10, Imp: []openrtb.Imp{{ID: "imp1"}}},
+			wantErr:     false,
+		},
+		{
+			name:        "valid request with tmax at upper bound",
+			request:     &openrtb.BidRequest{ID: "req1", Site: testSite(), TMax: 30000, Imp: []openrtb.Imp{{ID: "imp1"}}},
+			wantErr:     false,
+		},
+		{
+			name:        "valid request with zero tmax (no limit)",
+			request:     &openrtb.BidRequest{ID: "req1", Site: testSite(), TMax: 0, Imp: []openrtb.Imp{{ID: "imp1"}}},
+			wantErr:     false,
+		},
+		{
+			name: "valid request with multiple unique impressions",
+			request: &openrtb.BidRequest{
+				ID:   "req1",
+				Site: testSite(),
+				Imp: []openrtb.Imp{
+					{ID: "imp1"},
+					{ID: "imp2"},
+					{ID: "imp3"},
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRequest(tt.request)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				} else {
+					if err.Field != tt.errField {
+						t.Errorf("expected field %q, got %q", tt.errField, err.Field)
+					}
+					if tt.errContains != "" && !containsString(err.Reason, tt.errContains) {
+						t.Errorf("expected reason containing %q, got %q", tt.errContains, err.Reason)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateRequestInRunAuction(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := New(registry, &Config{
+		DefaultTimeout: 100 * time.Millisecond,
+		IDREnabled:     false,
+	})
+
+	// Test that invalid request returns error from RunAuction
+	req := &AuctionRequest{
+		BidRequest: &openrtb.BidRequest{
+			ID:  "req1",
+			Imp: []openrtb.Imp{{ID: "imp1"}},
+			// Missing Site and App - should fail validation
+		},
+	}
+
+	_, err := ex.RunAuction(context.Background(), req)
+	if err == nil {
+		t.Error("expected validation error, got nil")
+	}
+
+	// The early validation in RunAuction returns a plain error for site/app check
+	// (before the formal ValidateRequest call), so we check for the error message
+	if !containsString(err.Error(), "site") && !containsString(err.Error(), "app") {
+		t.Errorf("expected site/app validation error, got: %v", err)
+	}
 }
