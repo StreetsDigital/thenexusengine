@@ -1,7 +1,6 @@
 """Lookup Key model for hierarchical performance data retrieval."""
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -19,8 +18,8 @@ class LookupKey:
     country: str
     device_type: str
     ad_format: str
-    ad_size: Optional[str] = None
-    publisher_id: Optional[str] = None
+    ad_size: str | None = None
+    publisher_id: str | None = None
 
     def to_redis_key(self, bidder_code: str) -> str:
         """Generate Redis key for this lookup."""
@@ -33,9 +32,9 @@ class LookupKey:
         if self.ad_size:
             parts.append(self.ad_size)
         parts.append(bidder_code)
-        return ':'.join(parts)
+        return ":".join(parts)
 
-    def get_fallback_keys(self) -> list['LookupKey']:
+    def get_fallback_keys(self) -> list["LookupKey"]:
         """
         Generate list of fallback keys from most specific to least.
 
@@ -45,33 +44,39 @@ class LookupKey:
 
         # Without ad_size
         if self.ad_size:
-            keys.append(LookupKey(
-                country=self.country,
-                device_type=self.device_type,
-                ad_format=self.ad_format,
-                ad_size=None,
-                publisher_id=self.publisher_id,
-            ))
-
-        # Without publisher (global stats)
-        if self.publisher_id:
-            keys.append(LookupKey(
-                country=self.country,
-                device_type=self.device_type,
-                ad_format=self.ad_format,
-                ad_size=self.ad_size,
-                publisher_id=None,
-            ))
-
-            # Global without ad_size
-            if self.ad_size:
-                keys.append(LookupKey(
+            keys.append(
+                LookupKey(
                     country=self.country,
                     device_type=self.device_type,
                     ad_format=self.ad_format,
                     ad_size=None,
+                    publisher_id=self.publisher_id,
+                )
+            )
+
+        # Without publisher (global stats)
+        if self.publisher_id:
+            keys.append(
+                LookupKey(
+                    country=self.country,
+                    device_type=self.device_type,
+                    ad_format=self.ad_format,
+                    ad_size=self.ad_size,
                     publisher_id=None,
-                ))
+                )
+            )
+
+            # Global without ad_size
+            if self.ad_size:
+                keys.append(
+                    LookupKey(
+                        country=self.country,
+                        device_type=self.device_type,
+                        ad_format=self.ad_format,
+                        ad_size=None,
+                        publisher_id=None,
+                    )
+                )
 
         return keys
 
@@ -82,4 +87,4 @@ class LookupKey:
             parts.append(self.ad_size)
         if self.publisher_id:
             parts.append(f"pub:{self.publisher_id}")
-        return '/'.join(parts)
+        return "/".join(parts)

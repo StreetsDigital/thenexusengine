@@ -4,7 +4,7 @@ import pytest
 
 from src.idr.models.bidder_score import BidderScore
 from src.idr.models.classified_request import AdFormat, ClassifiedRequest, DeviceType
-from src.idr.selector import PartnerSelector, SelectorConfig, SelectionResult
+from src.idr.selector import PartnerSelector, SelectionResult, SelectorConfig
 from src.idr.selector.partner_selector import (
     MockAnchorProvider,
     SelectedBidder,
@@ -35,12 +35,12 @@ class TestPartnerSelector:
     def sample_request(self):
         """Sample classified request."""
         return ClassifiedRequest(
-            impression_id='test-imp-1',
+            impression_id="test-imp-1",
             ad_format=AdFormat.BANNER,
-            ad_sizes=['300x250'],
+            ad_sizes=["300x250"],
             device_type=DeviceType.MOBILE,
-            country='GB',
-            publisher_id='pub-123',
+            country="GB",
+            publisher_id="pub-123",
         )
 
     @pytest.fixture
@@ -48,32 +48,30 @@ class TestPartnerSelector:
         """Sample bidder scores with variety of scores and confidence."""
         return [
             # Premium bidders - high scores
-            BidderScore(bidder_code='rubicon', total_score=85.0, confidence=0.95),
-            BidderScore(bidder_code='appnexus', total_score=82.0, confidence=0.92),
-            BidderScore(bidder_code='pubmatic', total_score=78.0, confidence=0.88),
-            BidderScore(bidder_code='openx', total_score=75.0, confidence=0.85),
-            BidderScore(bidder_code='ix', total_score=72.0, confidence=0.82),
-
+            BidderScore(bidder_code="rubicon", total_score=85.0, confidence=0.95),
+            BidderScore(bidder_code="appnexus", total_score=82.0, confidence=0.92),
+            BidderScore(bidder_code="pubmatic", total_score=78.0, confidence=0.88),
+            BidderScore(bidder_code="openx", total_score=75.0, confidence=0.85),
+            BidderScore(bidder_code="ix", total_score=72.0, confidence=0.82),
             # Mid-tier bidders
-            BidderScore(bidder_code='triplelift', total_score=65.0, confidence=0.75),
-            BidderScore(bidder_code='sovrn', total_score=58.0, confidence=0.70),
-            BidderScore(bidder_code='sharethrough', total_score=52.0, confidence=0.65),
-
+            BidderScore(bidder_code="triplelift", total_score=65.0, confidence=0.75),
+            BidderScore(bidder_code="sovrn", total_score=58.0, confidence=0.70),
+            BidderScore(bidder_code="sharethrough", total_score=52.0, confidence=0.65),
             # Lower scorers
-            BidderScore(bidder_code='gumgum', total_score=45.0, confidence=0.60),
-            BidderScore(bidder_code='33across', total_score=40.0, confidence=0.55),
-
+            BidderScore(bidder_code="gumgum", total_score=45.0, confidence=0.60),
+            BidderScore(bidder_code="33across", total_score=40.0, confidence=0.55),
             # Below threshold
-            BidderScore(bidder_code='lowbidder1', total_score=20.0, confidence=0.40),
-            BidderScore(bidder_code='lowbidder2', total_score=15.0, confidence=0.35),
-
+            BidderScore(bidder_code="lowbidder1", total_score=20.0, confidence=0.40),
+            BidderScore(bidder_code="lowbidder2", total_score=15.0, confidence=0.35),
             # Low confidence (exploration candidates)
-            BidderScore(bidder_code='newbidder1', total_score=50.0, confidence=0.20),
-            BidderScore(bidder_code='newbidder2', total_score=48.0, confidence=0.15),
-            BidderScore(bidder_code='newbidder3', total_score=45.0, confidence=0.10),
+            BidderScore(bidder_code="newbidder1", total_score=50.0, confidence=0.20),
+            BidderScore(bidder_code="newbidder2", total_score=48.0, confidence=0.15),
+            BidderScore(bidder_code="newbidder3", total_score=45.0, confidence=0.10),
         ]
 
-    def test_select_partners_returns_result(self, selector, sample_request, sample_scores):
+    def test_select_partners_returns_result(
+        self, selector, sample_request, sample_scores
+    ):
         """Test that selection returns a proper result."""
         result = selector.select_partners(sample_scores, sample_request)
 
@@ -82,28 +80,29 @@ class TestPartnerSelector:
         assert len(result.selected) <= selector.config.max_bidders
         assert result.total_candidates == len(sample_scores)
 
-    def test_anchor_bidders_always_included(self, selector, sample_request, sample_scores):
+    def test_anchor_bidders_always_included(
+        self, selector, sample_request, sample_scores
+    ):
         """Test that anchor bidders are always selected."""
         result = selector.select_partners(sample_scores, sample_request)
 
         selected_codes = result.selected_bidder_codes
 
         # Default anchors are rubicon, appnexus, pubmatic
-        assert 'rubicon' in selected_codes
-        assert 'appnexus' in selected_codes
-        assert 'pubmatic' in selected_codes
+        assert "rubicon" in selected_codes
+        assert "appnexus" in selected_codes
+        assert "pubmatic" in selected_codes
 
         # Verify they're marked as anchors
         anchor_selected = [
-            b for b in result.selected
-            if b.reason == SelectionReason.ANCHOR
+            b for b in result.selected if b.reason == SelectionReason.ANCHOR
         ]
         assert len(anchor_selected) == 3
 
     def test_custom_anchor_provider(self, config, sample_request, sample_scores):
         """Test with custom anchor provider."""
         provider = MockAnchorProvider()
-        provider.set_anchors('pub-123', ['openx', 'ix', 'triplelift'])
+        provider.set_anchors("pub-123", ["openx", "ix", "triplelift"])
 
         selector = PartnerSelector(
             config=config,
@@ -115,9 +114,9 @@ class TestPartnerSelector:
         selected_codes = result.selected_bidder_codes
 
         # Custom anchors should be selected
-        assert 'openx' in selected_codes
-        assert 'ix' in selected_codes
-        assert 'triplelift' in selected_codes
+        assert "openx" in selected_codes
+        assert "ix" in selected_codes
+        assert "triplelift" in selected_codes
 
     def test_respects_max_bidders(self, sample_request, sample_scores):
         """Test that max_bidders limit is respected."""
@@ -128,25 +127,30 @@ class TestPartnerSelector:
 
         assert len(result.selected) <= 5
 
-    def test_respects_min_score_threshold(self, selector, sample_request, sample_scores):
+    def test_respects_min_score_threshold(
+        self, selector, sample_request, sample_scores
+    ):
         """Test that bidders below threshold are excluded."""
         result = selector.select_partners(sample_scores, sample_request)
 
-        selected_codes = result.selected_bidder_codes
 
         # Bidders with score < 25 should not be selected (unless exploration)
         # lowbidder1 (20) and lowbidder2 (15) should be excluded
         for bidder in result.selected:
-            if bidder.reason not in (SelectionReason.EXPLORATION, SelectionReason.EXPLORATION_SLOT):
+            if bidder.reason not in (
+                SelectionReason.EXPLORATION,
+                SelectionReason.EXPLORATION_SLOT,
+            ):
                 assert bidder.score >= 25.0
 
-    def test_high_confidence_bidders_selected(self, selector, sample_request, sample_scores):
+    def test_high_confidence_bidders_selected(
+        self, selector, sample_request, sample_scores
+    ):
         """Test that high confidence bidders are selected as HIGH_SCORE."""
         result = selector.select_partners(sample_scores, sample_request)
 
         high_score_selected = [
-            b for b in result.selected
-            if b.reason == SelectionReason.HIGH_SCORE
+            b for b in result.selected if b.reason == SelectionReason.HIGH_SCORE
         ]
 
         # Should have some high-score selections
@@ -168,8 +172,7 @@ class TestPartnerSelector:
         result = selector.select_partners(sample_scores, sample_request)
 
         exploration_selected = [
-            b for b in result.selected
-            if b.reason == SelectionReason.EXPLORATION_SLOT
+            b for b in result.selected if b.reason == SelectionReason.EXPLORATION_SLOT
         ]
 
         # Should have exploration slots filled
@@ -179,13 +182,13 @@ class TestPartnerSelector:
         """Test that diversity is enforced across categories."""
         # Create scores with only premium bidders scoring high
         scores = [
-            BidderScore(bidder_code='rubicon', total_score=90.0, confidence=0.95),
-            BidderScore(bidder_code='appnexus', total_score=88.0, confidence=0.92),
-            BidderScore(bidder_code='pubmatic', total_score=85.0, confidence=0.90),
-            BidderScore(bidder_code='openx', total_score=82.0, confidence=0.88),
+            BidderScore(bidder_code="rubicon", total_score=90.0, confidence=0.95),
+            BidderScore(bidder_code="appnexus", total_score=88.0, confidence=0.92),
+            BidderScore(bidder_code="pubmatic", total_score=85.0, confidence=0.90),
+            BidderScore(bidder_code="openx", total_score=82.0, confidence=0.88),
             # Mid-tier with lower score
-            BidderScore(bidder_code='triplelift', total_score=40.0, confidence=0.70),
-            BidderScore(bidder_code='sovrn', total_score=35.0, confidence=0.65),
+            BidderScore(bidder_code="triplelift", total_score=40.0, confidence=0.70),
+            BidderScore(bidder_code="sovrn", total_score=35.0, confidence=0.65),
         ]
 
         config = SelectorConfig(
@@ -199,16 +202,16 @@ class TestPartnerSelector:
         selected_codes = result.selected_bidder_codes
 
         # Should include mid_tier for diversity even with lower score
-        assert 'triplelift' in selected_codes or 'sovrn' in selected_codes
+        assert "triplelift" in selected_codes or "sovrn" in selected_codes
 
     def test_diversity_disabled(self, sample_request):
         """Test that diversity can be disabled."""
         scores = [
-            BidderScore(bidder_code='rubicon', total_score=90.0, confidence=0.95),
-            BidderScore(bidder_code='appnexus', total_score=88.0, confidence=0.92),
-            BidderScore(bidder_code='pubmatic', total_score=85.0, confidence=0.90),
+            BidderScore(bidder_code="rubicon", total_score=90.0, confidence=0.95),
+            BidderScore(bidder_code="appnexus", total_score=88.0, confidence=0.92),
+            BidderScore(bidder_code="pubmatic", total_score=85.0, confidence=0.90),
             # Mid-tier below threshold
-            BidderScore(bidder_code='triplelift', total_score=20.0, confidence=0.70),
+            BidderScore(bidder_code="triplelift", total_score=20.0, confidence=0.70),
         ]
 
         config = SelectorConfig(
@@ -222,35 +225,36 @@ class TestPartnerSelector:
 
         # Should NOT have diversity selections
         diversity_selected = [
-            b for b in result.selected
-            if b.reason == SelectionReason.DIVERSITY
+            b for b in result.selected if b.reason == SelectionReason.DIVERSITY
         ]
         assert len(diversity_selected) == 0
 
     def test_video_request_includes_video_specialists(self, selector):
         """Test that video requests include video_specialist category."""
         video_request = ClassifiedRequest(
-            impression_id='video-1',
+            impression_id="video-1",
             ad_format=AdFormat.VIDEO,
-            ad_sizes=['640x480'],
+            ad_sizes=["640x480"],
             device_type=DeviceType.DESKTOP,
-            publisher_id='pub-123',
+            publisher_id="pub-123",
         )
 
         scores = [
-            BidderScore(bidder_code='rubicon', total_score=90.0, confidence=0.95),
-            BidderScore(bidder_code='appnexus', total_score=88.0, confidence=0.92),
-            BidderScore(bidder_code='pubmatic', total_score=85.0, confidence=0.90),
+            BidderScore(bidder_code="rubicon", total_score=90.0, confidence=0.95),
+            BidderScore(bidder_code="appnexus", total_score=88.0, confidence=0.92),
+            BidderScore(bidder_code="pubmatic", total_score=85.0, confidence=0.90),
             # Video specialist
-            BidderScore(bidder_code='spotx', total_score=40.0, confidence=0.70),
-            BidderScore(bidder_code='beachfront', total_score=35.0, confidence=0.65),
+            BidderScore(bidder_code="spotx", total_score=40.0, confidence=0.70),
+            BidderScore(bidder_code="beachfront", total_score=35.0, confidence=0.65),
         ]
 
         result = selector.select_partners(scores, video_request)
         selected_codes = result.selected_bidder_codes
 
         # Should include video specialist for diversity
-        has_video_specialist = 'spotx' in selected_codes or 'beachfront' in selected_codes
+        has_video_specialist = (
+            "spotx" in selected_codes or "beachfront" in selected_codes
+        )
         assert has_video_specialist
 
     def test_excluded_bidders_tracked(self, selector, sample_request, sample_scores):
@@ -270,12 +274,12 @@ class TestPartnerSelector:
         result = selector.select_partners(sample_scores, sample_request)
         result_dict = result.to_dict()
 
-        assert 'selected' in result_dict
-        assert 'excluded' in result_dict
-        assert 'total_candidates' in result_dict
-        assert 'summary' in result_dict
+        assert "selected" in result_dict
+        assert "excluded" in result_dict
+        assert "total_candidates" in result_dict
+        assert "summary" in result_dict
 
-        assert result_dict['summary']['selected_count'] == len(result.selected)
+        assert result_dict["summary"]["selected_count"] == len(result.selected)
 
     def test_selection_time_tracked(self, selector, sample_request, sample_scores):
         """Test that selection time is measured."""
@@ -329,7 +333,9 @@ class TestPartnerSelector:
         assert result.bypass_mode is True
         assert len(result.selected) == len(sample_scores)
 
-    def test_shadow_mode_returns_all_but_tracks_exclusions(self, sample_request, sample_scores):
+    def test_shadow_mode_returns_all_but_tracks_exclusions(
+        self, sample_request, sample_scores
+    ):
         """Test that shadow mode returns all bidders but tracks what would be excluded."""
         config = SelectorConfig.shadow()
         config.max_bidders = 5  # Limit to ensure some would be excluded
@@ -360,7 +366,9 @@ class TestPartnerSelector:
         real_reasons = reasons - {SelectionReason.BYPASS}
         assert len(real_reasons) > 0
 
-    def test_shadow_mode_result_dict_includes_analysis(self, sample_request, sample_scores):
+    def test_shadow_mode_result_dict_includes_analysis(
+        self, sample_request, sample_scores
+    ):
         """Test that shadow mode result dict includes analysis."""
         config = SelectorConfig(shadow_mode=True, max_bidders=5)
         selector = PartnerSelector(config=config, random_seed=42)
@@ -368,10 +376,10 @@ class TestPartnerSelector:
         result = selector.select_partners(sample_scores, sample_request)
         result_dict = result.to_dict()
 
-        assert result_dict['shadow_mode'] is True
-        assert 'shadow_analysis' in result_dict
-        assert 'would_exclude' in result_dict['shadow_analysis']
-        assert result_dict['shadow_analysis']['would_exclude_count'] > 0
+        assert result_dict["shadow_mode"] is True
+        assert "shadow_analysis" in result_dict
+        assert "would_exclude" in result_dict["shadow_analysis"]
+        assert result_dict["shadow_analysis"]["would_exclude_count"] > 0
 
     def test_normal_mode_is_filtered(self, config, sample_request, sample_scores):
         """Test that normal mode correctly sets is_filtered."""
@@ -419,9 +427,9 @@ class TestSelectorConfig:
     def test_from_dict(self):
         """Test creating config from dictionary."""
         config_dict = {
-            'max_bidders': 20,
-            'min_score_threshold': 30.0,
-            'exploration_rate': 0.15,
+            "max_bidders": 20,
+            "min_score_threshold": 30.0,
+            "exploration_rate": 0.15,
         }
 
         config = SelectorConfig.from_dict(config_dict)
@@ -439,23 +447,23 @@ class TestSelectionResult:
     def test_selected_bidder_codes(self):
         """Test selected_bidder_codes property."""
         selected = [
-            SelectedBidder('rubicon', 80.0, 0.9, SelectionReason.ANCHOR),
-            SelectedBidder('appnexus', 75.0, 0.85, SelectionReason.HIGH_SCORE),
+            SelectedBidder("rubicon", 80.0, 0.9, SelectionReason.ANCHOR),
+            SelectedBidder("appnexus", 75.0, 0.85, SelectionReason.HIGH_SCORE),
         ]
         result = SelectionResult(
             selected=selected,
-            excluded=['lowbidder'],
+            excluded=["lowbidder"],
             total_candidates=3,
         )
 
-        assert result.selected_bidder_codes == ['rubicon', 'appnexus']
+        assert result.selected_bidder_codes == ["rubicon", "appnexus"]
 
     def test_anchor_count(self):
         """Test anchor_count property."""
         selected = [
-            SelectedBidder('rubicon', 80.0, 0.9, SelectionReason.ANCHOR),
-            SelectedBidder('appnexus', 75.0, 0.85, SelectionReason.ANCHOR),
-            SelectedBidder('triplelift', 60.0, 0.7, SelectionReason.HIGH_SCORE),
+            SelectedBidder("rubicon", 80.0, 0.9, SelectionReason.ANCHOR),
+            SelectedBidder("appnexus", 75.0, 0.85, SelectionReason.ANCHOR),
+            SelectedBidder("triplelift", 60.0, 0.7, SelectionReason.HIGH_SCORE),
         ]
         result = SelectionResult(
             selected=selected,
@@ -468,9 +476,9 @@ class TestSelectionResult:
     def test_exploration_count(self):
         """Test exploration_count property."""
         selected = [
-            SelectedBidder('rubicon', 80.0, 0.9, SelectionReason.ANCHOR),
-            SelectedBidder('newbidder', 50.0, 0.2, SelectionReason.EXPLORATION),
-            SelectedBidder('newbidder2', 45.0, 0.15, SelectionReason.EXPLORATION_SLOT),
+            SelectedBidder("rubicon", 80.0, 0.9, SelectionReason.ANCHOR),
+            SelectedBidder("newbidder", 50.0, 0.2, SelectionReason.EXPLORATION),
+            SelectedBidder("newbidder2", 45.0, 0.15, SelectionReason.EXPLORATION_SLOT),
         ]
         result = SelectionResult(
             selected=selected,
@@ -488,24 +496,24 @@ class TestMockAnchorProvider:
         """Test default anchor bidders."""
         provider = MockAnchorProvider()
 
-        anchors = provider.get_top_bidders_by_revenue('any-pub')
+        anchors = provider.get_top_bidders_by_revenue("any-pub")
 
-        assert anchors == ['rubicon', 'appnexus', 'pubmatic']
+        assert anchors == ["rubicon", "appnexus", "pubmatic"]
 
     def test_custom_anchors(self):
         """Test setting custom anchors."""
         provider = MockAnchorProvider()
-        provider.set_anchors('pub-123', ['openx', 'ix', 'triplelift', 'sovrn'])
+        provider.set_anchors("pub-123", ["openx", "ix", "triplelift", "sovrn"])
 
-        anchors = provider.get_top_bidders_by_revenue('pub-123', limit=3)
+        anchors = provider.get_top_bidders_by_revenue("pub-123", limit=3)
 
-        assert anchors == ['openx', 'ix', 'triplelift']
+        assert anchors == ["openx", "ix", "triplelift"]
 
     def test_limit_respected(self):
         """Test that limit parameter is respected."""
         provider = MockAnchorProvider()
 
-        anchors = provider.get_top_bidders_by_revenue('any-pub', limit=2)
+        anchors = provider.get_top_bidders_by_revenue("any-pub", limit=2)
 
         assert len(anchors) == 2
 
@@ -531,11 +539,13 @@ class TestIntegrationWithScorer:
         # Sample OpenRTB request
         ortb_request = {
             "id": "auction-123",
-            "imp": [{
-                "id": "imp-1",
-                "banner": {"format": [{"w": 300, "h": 250}]},
-                "bidfloor": 0.50,
-            }],
+            "imp": [
+                {
+                    "id": "imp-1",
+                    "banner": {"format": [{"w": 300, "h": 250}]},
+                    "bidfloor": 0.50,
+                }
+            ],
             "site": {
                 "domain": "example.com",
                 "publisher": {"id": "pub-123"},
@@ -550,7 +560,7 @@ class TestIntegrationWithScorer:
         classified = classifier.classify(ortb_request)
 
         # Score bidders
-        bidders = ['rubicon', 'appnexus', 'pubmatic', 'openx', 'triplelift']
+        bidders = ["rubicon", "appnexus", "pubmatic", "openx", "triplelift"]
         scores = scorer.score_all_bidders(bidders, classified)
 
         # Select partners

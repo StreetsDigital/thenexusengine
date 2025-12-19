@@ -4,7 +4,9 @@ package middleware
 import (
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 // CORSConfig holds CORS configuration
@@ -61,6 +63,7 @@ func parseCommaSeparated(s string) []string {
 // CORS provides Cross-Origin Resource Sharing middleware
 type CORS struct {
 	config *CORSConfig
+	mu     sync.RWMutex
 }
 
 // NewCORS creates a new CORS middleware
@@ -74,7 +77,18 @@ func NewCORS(config *CORSConfig) *CORS {
 // Middleware returns the CORS middleware handler
 func (c *CORS) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !c.config.Enabled {
+		// Copy all needed config fields while holding the lock to prevent data race
+		c.mu.RLock()
+		enabled := c.config.Enabled
+		allowedOrigins := c.config.AllowedOrigins
+		exposedHeaders := c.config.ExposedHeaders
+		allowCredentials := c.config.AllowCredentials
+		allowedMethods := c.config.AllowedMethods
+		allowedHeaders := c.config.AllowedHeaders
+		maxAge := c.config.MaxAge
+		c.mu.RUnlock()
+
+		if !enabled {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -82,10 +96,10 @@ func (c *CORS) Middleware(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 
 		// Set CORS headers
-		if c.isOriginAllowed(origin) {
+		if c.isOriginAllowedWithList(origin, allowedOrigins) {
 			if origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-			} else if len(c.config.AllowedOrigins) == 0 {
+			} else if len(allowedOrigins) == 0 {
 				// No specific origins configured - allow all
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 			}
@@ -96,17 +110,17 @@ func (c *CORS) Middleware(next http.Handler) http.Handler {
 
 		// Handle preflight OPTIONS request
 		if r.Method == http.MethodOptions {
-			c.handlePreflight(w, r)
+			c.handlePreflightWithConfig(w, r, allowedMethods, allowedHeaders, allowCredentials, maxAge)
 			return
 		}
 
 		// Set exposed headers for non-preflight requests
-		if len(c.config.ExposedHeaders) > 0 {
-			w.Header().Set("Access-Control-Expose-Headers", strings.Join(c.config.ExposedHeaders, ", "))
+		if len(exposedHeaders) > 0 {
+			w.Header().Set("Access-Control-Expose-Headers", strings.Join(exposedHeaders, ", "))
 		}
 
 		// Set credentials header if allowed
-		if c.config.AllowCredentials {
+		if allowCredentials {
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
 
@@ -114,41 +128,41 @@ func (c *CORS) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// handlePreflight handles OPTIONS preflight requests
-func (c *CORS) handlePreflight(w http.ResponseWriter, r *http.Request) {
+// handlePreflightWithConfig handles OPTIONS preflight requests with pre-copied config values
+func (c *CORS) handlePreflightWithConfig(w http.ResponseWriter, r *http.Request, allowedMethods, allowedHeaders []string, allowCredentials bool, maxAge int) {
 	// Set allowed methods
-	w.Header().Set("Access-Control-Allow-Methods", strings.Join(c.config.AllowedMethods, ", "))
+	w.Header().Set("Access-Control-Allow-Methods", strings.Join(allowedMethods, ", "))
 
 	// Set allowed headers
 	requestedHeaders := r.Header.Get("Access-Control-Request-Headers")
 	if requestedHeaders != "" {
 		// Echo back requested headers if they're in our allowed list, or allow all configured
-		w.Header().Set("Access-Control-Allow-Headers", strings.Join(c.config.AllowedHeaders, ", "))
+		w.Header().Set("Access-Control-Allow-Headers", strings.Join(allowedHeaders, ", "))
 	}
 
 	// Set credentials header if allowed
-	if c.config.AllowCredentials {
+	if allowCredentials {
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 
 	// Set max age for preflight cache
-	if c.config.MaxAge > 0 {
-		w.Header().Set("Access-Control-Max-Age", formatInt(c.config.MaxAge))
+	if maxAge > 0 {
+		w.Header().Set("Access-Control-Max-Age", strconv.Itoa(maxAge))
 	}
 
 	// Respond with 204 No Content for preflight
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// isOriginAllowed checks if the origin is in the allowed list
-func (c *CORS) isOriginAllowed(origin string) bool {
+// isOriginAllowedWithList checks if the origin is in the provided allowed list
+func (c *CORS) isOriginAllowedWithList(origin string, allowedOrigins []string) bool {
 	// If no specific origins configured, allow all
-	if len(c.config.AllowedOrigins) == 0 {
+	if len(allowedOrigins) == 0 {
 		return true
 	}
 
 	// Check against allowed origins
-	for _, allowed := range c.config.AllowedOrigins {
+	for _, allowed := range allowedOrigins {
 		if allowed == "*" {
 			return true
 		}
@@ -167,36 +181,24 @@ func (c *CORS) isOriginAllowed(origin string) bool {
 	return false
 }
 
-// formatInt converts int to string without importing strconv
-func formatInt(n int) string {
-	if n == 0 {
-		return "0"
-	}
-
-	var digits []byte
-	negative := n < 0
-	if negative {
-		n = -n
-	}
-
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-
-	if negative {
-		digits = append([]byte{'-'}, digits...)
-	}
-
-	return string(digits)
+// isOriginAllowed checks if the origin is in the allowed list (thread-safe)
+func (c *CORS) isOriginAllowed(origin string) bool {
+	c.mu.RLock()
+	allowedOrigins := c.config.AllowedOrigins
+	c.mu.RUnlock()
+	return c.isOriginAllowedWithList(origin, allowedOrigins)
 }
 
 // SetEnabled enables or disables CORS
 func (c *CORS) SetEnabled(enabled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.config.Enabled = enabled
 }
 
 // SetAllowedOrigins updates the allowed origins list
 func (c *CORS) SetAllowedOrigins(origins []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.config.AllowedOrigins = origins
 }

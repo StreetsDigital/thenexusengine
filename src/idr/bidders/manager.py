@@ -5,15 +5,13 @@ This module provides a clean API for creating, updating, and managing
 custom OpenRTB bidder integrations.
 """
 
-import os
 import re
 from datetime import datetime
-from typing import Optional
 
 from .models import (
+    BidderCapabilities,
     BidderConfig,
     BidderEndpoint,
-    BidderCapabilities,
     BidderRateLimits,
     BidderStatus,
     RequestTransform,
@@ -24,21 +22,25 @@ from .storage import BidderStorage, get_bidder_storage
 
 class BidderManagerError(Exception):
     """Base exception for bidder manager errors."""
+
     pass
 
 
 class BidderNotFoundError(BidderManagerError):
     """Raised when a bidder is not found."""
+
     pass
 
 
 class BidderAlreadyExistsError(BidderManagerError):
     """Raised when trying to create a bidder that already exists."""
+
     pass
 
 
 class InvalidBidderConfigError(BidderManagerError):
     """Raised when bidder configuration is invalid."""
+
     pass
 
 
@@ -49,7 +51,7 @@ class BidderManager:
     Provides CRUD operations and validation for bidder integrations.
     """
 
-    def __init__(self, storage: Optional[BidderStorage] = None):
+    def __init__(self, storage: BidderStorage | None = None):
         """
         Initialize the bidder manager.
 
@@ -63,16 +65,16 @@ class BidderManager:
         name: str,
         endpoint_url: str,
         media_types: list[str] = None,
-        bidder_code: Optional[str] = None,
+        bidder_code: str | None = None,
         description: str = "",
         timeout_ms: int = 200,
         protocol_version: str = "2.6",
-        auth_type: Optional[str] = None,
-        auth_token: Optional[str] = None,
-        gvl_vendor_id: Optional[int] = None,
+        auth_type: str | None = None,
+        auth_token: str | None = None,
+        gvl_vendor_id: int | None = None,
         priority: int = 50,
         status: BidderStatus = BidderStatus.TESTING,
-        custom_headers: Optional[dict] = None,
+        custom_headers: dict | None = None,
         **kwargs,
     ) -> BidderConfig:
         """
@@ -285,7 +287,7 @@ class BidderManager:
     def get_bidders_for_publisher(
         self,
         publisher_id: str,
-        country: Optional[str] = None,
+        country: str | None = None,
     ) -> list[BidderConfig]:
         """
         Get bidders available for a specific publisher.
@@ -387,7 +389,9 @@ class BidderManager:
             headers["Authorization"] = f"Bearer {config.endpoint.auth_token}"
         elif config.endpoint.auth_type == "header":
             if config.endpoint.auth_header_name and config.endpoint.auth_header_value:
-                headers[config.endpoint.auth_header_name] = config.endpoint.auth_header_value
+                headers[config.endpoint.auth_header_name] = (
+                    config.endpoint.auth_header_value
+                )
 
         # Add custom headers
         headers.update(config.endpoint.custom_headers)
@@ -441,7 +445,7 @@ class BidderManager:
         self,
         source_code: str,
         new_name: str,
-        new_endpoint_url: Optional[str] = None,
+        new_endpoint_url: str | None = None,
     ) -> BidderConfig:
         """
         Create a copy of an existing bidder with a new name.
@@ -521,7 +525,9 @@ class BidderManager:
 
         # Ensure it doesn't exist
         if self.storage.exists(config.bidder_code):
-            raise BidderAlreadyExistsError(f"Bidder already exists: {config.bidder_code}")
+            raise BidderAlreadyExistsError(
+                f"Bidder already exists: {config.bidder_code}"
+            )
 
         # Reset timestamps
         config.created_at = datetime.utcnow().isoformat()
@@ -563,6 +569,7 @@ class BidderManager:
 
         # Basic URL validation
         import re
+
         pattern = r"^https?://[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+[/a-zA-Z0-9._~:/?#\[\]@!$&'()*+,;=%-]*$"
         return bool(re.match(pattern, url))
 
@@ -581,10 +588,10 @@ class BidderManager:
 
 
 # Global manager instance
-_bidder_manager: Optional[BidderManager] = None
+_bidder_manager: BidderManager | None = None
 
 
-def get_bidder_manager(storage: Optional[BidderStorage] = None) -> BidderManager:
+def get_bidder_manager(storage: BidderStorage | None = None) -> BidderManager:
     """Get the global bidder manager instance."""
     global _bidder_manager
 

@@ -6,24 +6,24 @@ Handles consent signal parsing and bidder filtering based on privacy regulations
 
 from src.idr.privacy.consent_models import (
     ConsentSignals,
-    TCFConsent,
-    USPrivacy,
     GPPConsent,
     PrivacyRegulation,
+    TCFConsent,
+    USPrivacy,
 )
 from src.idr.privacy.privacy_filter import (
-    PrivacyFilter,
     BidderPrivacyRequirements,
+    PrivacyFilter,
     PrivacyFilterResult,
 )
 
 __all__ = [
-    'ConsentSignals',
-    'TCFConsent',
-    'USPrivacy',
-    'GPPConsent',
-    'PrivacyRegulation',
-    'PrivacyFilter',
-    'BidderPrivacyRequirements',
-    'PrivacyFilterResult',
+    "ConsentSignals",
+    "TCFConsent",
+    "USPrivacy",
+    "GPPConsent",
+    "PrivacyRegulation",
+    "PrivacyFilter",
+    "BidderPrivacyRequirements",
+    "PrivacyFilterResult",
 ]

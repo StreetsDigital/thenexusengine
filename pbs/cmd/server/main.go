@@ -128,9 +128,13 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		if ex.GetIDRClient() != nil {
 			stats := ex.GetIDRClient().CircuitBreakerStats()
-			json.NewEncoder(w).Encode(stats)
+			if err := json.NewEncoder(w).Encode(stats); err != nil {
+				log.Error().Err(err).Msg("failed to encode circuit breaker stats")
+			}
 		} else {
-			json.NewEncoder(w).Encode(map[string]string{"status": "IDR disabled"})
+			if err := json.NewEncoder(w).Encode(map[string]string{"status": "IDR disabled"}); err != nil {
+				log.Error().Err(err).Msg("failed to encode IDR disabled status")
+			}
 		}
 	})
 
@@ -261,7 +265,9 @@ func healthHandler() http.Handler {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(health)
+		if err := json.NewEncoder(w).Encode(health); err != nil {
+			logger.Log.Error().Err(err).Msg("failed to encode health response")
+		}
 	})
 }
 

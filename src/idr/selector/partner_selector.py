@@ -24,30 +24,32 @@ from ..utils.constants import BIDDER_CATEGORIES
 
 if TYPE_CHECKING:
     from ..config.config_resolver import ResolvedConfig
-    from ..privacy.privacy_filter import PrivacyFilter, PrivacyFilterResult
+    from ..privacy.privacy_filter import PrivacyFilter
 
 
 class SelectionReason(str, Enum):
     """Reason why a bidder was selected."""
-    ANCHOR = 'anchor'                    # Top revenue performer
-    HIGH_SCORE = 'high_score'            # High score above threshold
-    EXPLORATION = 'exploration'          # Low confidence, exploring
-    DIVERSITY = 'diversity'              # Category diversity requirement
-    EXPLORATION_SLOT = 'exploration_slot'  # Reserved exploration slot
-    BYPASS = 'bypass'                    # Bypass mode - all bidders selected
+
+    ANCHOR = "anchor"  # Top revenue performer
+    HIGH_SCORE = "high_score"  # High score above threshold
+    EXPLORATION = "exploration"  # Low confidence, exploring
+    DIVERSITY = "diversity"  # Category diversity requirement
+    EXPLORATION_SLOT = "exploration_slot"  # Reserved exploration slot
+    BYPASS = "bypass"  # Bypass mode - all bidders selected
 
 
 class ExclusionReason(str, Enum):
     """Reason why a bidder was excluded."""
-    LOW_SCORE = 'low_score'
-    MAX_BIDDERS = 'max_bidders'
-    PRIVACY_NO_TCF = 'privacy_no_tcf'
-    PRIVACY_NO_VENDOR = 'privacy_no_vendor'
-    PRIVACY_NO_PURPOSE = 'privacy_no_purpose'
-    PRIVACY_CCPA_OPTOUT = 'privacy_ccpa_optout'
-    PRIVACY_COPPA = 'privacy_coppa'
-    PRIVACY_REGION = 'privacy_region'
-    PRIVACY_PERSONALIZATION = 'privacy_personalization'
+
+    LOW_SCORE = "low_score"
+    MAX_BIDDERS = "max_bidders"
+    PRIVACY_NO_TCF = "privacy_no_tcf"
+    PRIVACY_NO_VENDOR = "privacy_no_vendor"
+    PRIVACY_NO_PURPOSE = "privacy_no_purpose"
+    PRIVACY_CCPA_OPTOUT = "privacy_ccpa_optout"
+    PRIVACY_COPPA = "privacy_coppa"
+    PRIVACY_REGION = "privacy_region"
+    PRIVACY_PERSONALIZATION = "privacy_personalization"
 
 
 @dataclass
@@ -55,58 +57,58 @@ class SelectorConfig:
     """Configuration for the Partner Selector."""
 
     # Bypass/Shadow modes
-    bypass_enabled: bool = False         # If True, select ALL bidders (no filtering)
-    shadow_mode: bool = False            # If True, log decisions but return all bidders
+    bypass_enabled: bool = False  # If True, select ALL bidders (no filtering)
+    shadow_mode: bool = False  # If True, log decisions but return all bidders
 
     # Privacy settings
-    privacy_enabled: bool = True         # Enable privacy filtering
-    privacy_strict_mode: bool = False    # Strict mode: reject unknown GVL IDs
+    privacy_enabled: bool = True  # Enable privacy filtering
+    privacy_strict_mode: bool = False  # Strict mode: reject unknown GVL IDs
 
     # Selection limits
-    max_bidders: int = 15                # Maximum partners per auction
-    min_score_threshold: float = 25.0    # Minimum score to be considered
+    max_bidders: int = 15  # Maximum partners per auction
+    min_score_threshold: float = 25.0  # Minimum score to be considered
 
     # Exploration settings
-    exploration_rate: float = 0.1        # 10% chance to include low-confidence
-    exploration_slots: int = 2           # Reserved slots for data gathering
+    exploration_rate: float = 0.1  # 10% chance to include low-confidence
+    exploration_slots: int = 2  # Reserved slots for data gathering
     low_confidence_threshold: float = 0.5  # Below this = low confidence
     exploration_confidence_threshold: float = 0.3  # For exploration slots
 
     # Anchor bidders
-    anchor_bidder_count: int = 3         # Always-include top performers
+    anchor_bidder_count: int = 3  # Always-include top performers
 
     # Diversity settings
-    diversity_enabled: bool = True       # Enforce category diversity
+    diversity_enabled: bool = True  # Enforce category diversity
     diversity_categories: list[str] = field(
-        default_factory=lambda: ['premium', 'mid_tier', 'video_specialist', 'native']
+        default_factory=lambda: ["premium", "mid_tier", "video_specialist", "native"]
     )
 
     @classmethod
-    def from_dict(cls, config: dict) -> 'SelectorConfig':
+    def from_dict(cls, config: dict) -> "SelectorConfig":
         """Create config from dictionary."""
         return cls(
-            bypass_enabled=config.get('bypass_enabled', False),
-            shadow_mode=config.get('shadow_mode', False),
-            privacy_enabled=config.get('privacy_enabled', True),
-            privacy_strict_mode=config.get('privacy_strict_mode', False),
-            max_bidders=config.get('max_bidders', 15),
-            min_score_threshold=config.get('min_score_threshold', 25.0),
-            exploration_rate=config.get('exploration_rate', 0.1),
-            exploration_slots=config.get('exploration_slots', 2),
-            anchor_bidder_count=config.get('anchor_bidder_count', 3),
-            low_confidence_threshold=config.get('low_confidence_threshold', 0.5),
+            bypass_enabled=config.get("bypass_enabled", False),
+            shadow_mode=config.get("shadow_mode", False),
+            privacy_enabled=config.get("privacy_enabled", True),
+            privacy_strict_mode=config.get("privacy_strict_mode", False),
+            max_bidders=config.get("max_bidders", 15),
+            min_score_threshold=config.get("min_score_threshold", 25.0),
+            exploration_rate=config.get("exploration_rate", 0.1),
+            exploration_slots=config.get("exploration_slots", 2),
+            anchor_bidder_count=config.get("anchor_bidder_count", 3),
+            low_confidence_threshold=config.get("low_confidence_threshold", 0.5),
             exploration_confidence_threshold=config.get(
-                'exploration_confidence_threshold', 0.3
+                "exploration_confidence_threshold", 0.3
             ),
-            diversity_enabled=config.get('diversity_enabled', True),
+            diversity_enabled=config.get("diversity_enabled", True),
             diversity_categories=config.get(
-                'diversity_categories',
-                ['premium', 'mid_tier', 'video_specialist', 'native']
+                "diversity_categories",
+                ["premium", "mid_tier", "video_specialist", "native"],
             ),
         )
 
     @classmethod
-    def from_resolved_config(cls, resolved: "ResolvedConfig") -> 'SelectorConfig':
+    def from_resolved_config(cls, resolved: "ResolvedConfig") -> "SelectorConfig":
         """
         Create config from a hierarchically resolved configuration.
 
@@ -120,9 +122,15 @@ class SelectorConfig:
             privacy_strict_mode=resolved.privacy_strict_mode,
             max_bidders=resolved.max_bidders,
             min_score_threshold=resolved.min_score_threshold,
-            exploration_rate=resolved.exploration_rate if resolved.exploration_enabled else 0.0,
-            exploration_slots=resolved.exploration_slots if resolved.exploration_enabled else 0,
-            anchor_bidder_count=resolved.anchor_bidder_count if resolved.anchor_bidders_enabled else 0,
+            exploration_rate=resolved.exploration_rate
+            if resolved.exploration_enabled
+            else 0.0,
+            exploration_slots=resolved.exploration_slots
+            if resolved.exploration_enabled
+            else 0,
+            anchor_bidder_count=resolved.anchor_bidder_count
+            if resolved.anchor_bidders_enabled
+            else 0,
             low_confidence_threshold=resolved.low_confidence_threshold,
             exploration_confidence_threshold=resolved.exploration_confidence_threshold,
             diversity_enabled=resolved.diversity_enabled,
@@ -130,31 +138,31 @@ class SelectorConfig:
         )
 
     @classmethod
-    def bypass(cls) -> 'SelectorConfig':
+    def bypass(cls) -> "SelectorConfig":
         """Create a bypass configuration that selects all bidders."""
         return cls(bypass_enabled=True)
 
     @classmethod
-    def shadow(cls) -> 'SelectorConfig':
+    def shadow(cls) -> "SelectorConfig":
         """Create a shadow mode configuration for testing."""
         return cls(shadow_mode=True)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
-            'bypass_enabled': self.bypass_enabled,
-            'shadow_mode': self.shadow_mode,
-            'privacy_enabled': self.privacy_enabled,
-            'privacy_strict_mode': self.privacy_strict_mode,
-            'max_bidders': self.max_bidders,
-            'min_score_threshold': self.min_score_threshold,
-            'exploration_rate': self.exploration_rate,
-            'exploration_slots': self.exploration_slots,
-            'anchor_bidder_count': self.anchor_bidder_count,
-            'low_confidence_threshold': self.low_confidence_threshold,
-            'exploration_confidence_threshold': self.exploration_confidence_threshold,
-            'diversity_enabled': self.diversity_enabled,
-            'diversity_categories': self.diversity_categories,
+            "bypass_enabled": self.bypass_enabled,
+            "shadow_mode": self.shadow_mode,
+            "privacy_enabled": self.privacy_enabled,
+            "privacy_strict_mode": self.privacy_strict_mode,
+            "max_bidders": self.max_bidders,
+            "min_score_threshold": self.min_score_threshold,
+            "exploration_rate": self.exploration_rate,
+            "exploration_slots": self.exploration_slots,
+            "anchor_bidder_count": self.anchor_bidder_count,
+            "low_confidence_threshold": self.low_confidence_threshold,
+            "exploration_confidence_threshold": self.exploration_confidence_threshold,
+            "diversity_enabled": self.diversity_enabled,
+            "diversity_categories": self.diversity_categories,
         }
 
 
@@ -166,12 +174,13 @@ class SelectedBidder:
     score: float
     confidence: float
     reason: SelectionReason
-    category: Optional[str] = None
+    category: str | None = None
 
 
 @dataclass
 class ExcludedBidder:
     """A bidder that was excluded with reason."""
+
     bidder_code: str
     reason: ExclusionReason
     details: str = ""
@@ -189,9 +198,11 @@ class SelectionResult:
     excluded: list[str]
     total_candidates: int
     selection_time_ms: float = 0.0
-    bypass_mode: bool = False            # True if bypass was active
-    shadow_mode: bool = False            # True if shadow mode was active
-    shadow_would_exclude: list[str] = field(default_factory=list)  # What would be excluded
+    bypass_mode: bool = False  # True if bypass was active
+    shadow_mode: bool = False  # True if shadow mode was active
+    shadow_would_exclude: list[str] = field(
+        default_factory=list
+    )  # What would be excluded
 
     # Privacy filtering results
     privacy_filtered: list[ExcludedBidder] = field(default_factory=list)
@@ -211,8 +222,10 @@ class SelectionResult:
     def exploration_count(self) -> int:
         """Count of exploration bidders selected."""
         return sum(
-            1 for b in self.selected
-            if b.reason in (SelectionReason.EXPLORATION, SelectionReason.EXPLORATION_SLOT)
+            1
+            for b in self.selected
+            if b.reason
+            in (SelectionReason.EXPLORATION, SelectionReason.EXPLORATION_SLOT)
         )
 
     @property
@@ -233,49 +246,49 @@ class SelectionResult:
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
         result = {
-            'selected': [
+            "selected": [
                 {
-                    'bidder_code': b.bidder_code,
-                    'score': round(b.score, 2),
-                    'confidence': round(b.confidence, 3),
-                    'reason': b.reason.value,
-                    'category': b.category,
+                    "bidder_code": b.bidder_code,
+                    "score": round(b.score, 2),
+                    "confidence": round(b.confidence, 3),
+                    "reason": b.reason.value,
+                    "category": b.category,
                 }
                 for b in self.selected
             ],
-            'excluded': self.excluded,
-            'total_candidates': self.total_candidates,
-            'selection_time_ms': round(self.selection_time_ms, 2),
-            'bypass_mode': self.bypass_mode,
-            'shadow_mode': self.shadow_mode,
-            'summary': {
-                'selected_count': len(self.selected),
-                'anchor_count': self.anchor_count,
-                'exploration_count': self.exploration_count,
-                'diversity_count': self.diversity_count,
-                'privacy_filtered_count': self.privacy_filtered_count,
+            "excluded": self.excluded,
+            "total_candidates": self.total_candidates,
+            "selection_time_ms": round(self.selection_time_ms, 2),
+            "bypass_mode": self.bypass_mode,
+            "shadow_mode": self.shadow_mode,
+            "summary": {
+                "selected_count": len(self.selected),
+                "anchor_count": self.anchor_count,
+                "exploration_count": self.exploration_count,
+                "diversity_count": self.diversity_count,
+                "privacy_filtered_count": self.privacy_filtered_count,
             },
         }
 
         # Include shadow analysis if in shadow mode
         if self.shadow_mode and self.shadow_would_exclude:
-            result['shadow_analysis'] = {
-                'would_exclude': self.shadow_would_exclude,
-                'would_exclude_count': len(self.shadow_would_exclude),
+            result["shadow_analysis"] = {
+                "would_exclude": self.shadow_would_exclude,
+                "would_exclude_count": len(self.shadow_would_exclude),
             }
 
         # Include privacy filtering details
         if self.privacy_filtered:
-            result['privacy'] = {
-                'filtered': [
+            result["privacy"] = {
+                "filtered": [
                     {
-                        'bidder_code': b.bidder_code,
-                        'reason': b.reason.value,
-                        'details': b.details,
+                        "bidder_code": b.bidder_code,
+                        "reason": b.reason.value,
+                        "details": b.details,
                     }
                     for b in self.privacy_filtered
                 ],
-                'summary': self.privacy_summary,
+                "summary": self.privacy_summary,
             }
 
         return result
@@ -285,9 +298,7 @@ class AnchorBidderProvider(Protocol):
     """Protocol for providing anchor bidders."""
 
     def get_top_bidders_by_revenue(
-        self,
-        publisher_id: str,
-        limit: int = 3
+        self, publisher_id: str, limit: int = 3
     ) -> list[str]:
         """Get top revenue-generating bidders for a publisher."""
         ...
@@ -308,10 +319,10 @@ class PartnerSelector:
 
     def __init__(
         self,
-        config: Optional[SelectorConfig] = None,
-        anchor_provider: Optional[AnchorBidderProvider] = None,
+        config: SelectorConfig | None = None,
+        anchor_provider: AnchorBidderProvider | None = None,
         privacy_filter: Optional["PrivacyFilter"] = None,
-        random_seed: Optional[int] = None,
+        random_seed: int | None = None,
     ):
         """
         Initialize the partner selector.
@@ -343,6 +354,7 @@ class PartnerSelector:
             SelectionResult with selected bidders and metadata
         """
         import time
+
         start_time = time.perf_counter()
 
         # Sort by score descending
@@ -353,7 +365,11 @@ class PartnerSelector:
         privacy_filtered: list[ExcludedBidder] = []
         privacy_summary: dict = {}
 
-        if self.config.privacy_enabled and self.privacy_filter and request.consent_signals:
+        if (
+            self.config.privacy_enabled
+            and self.privacy_filter
+            and request.consent_signals
+        ):
             ranked, privacy_filtered, privacy_summary = self._apply_privacy_filter(
                 ranked, request
             )
@@ -423,8 +439,7 @@ class PartnerSelector:
 
         # Build excluded list
         excluded = [
-            s.bidder_code for s in ranked
-            if s.bidder_code not in selected_codes
+            s.bidder_code for s in ranked if s.bidder_code not in selected_codes
         ]
 
         selection_time = (time.perf_counter() - start_time) * 1000
@@ -435,13 +450,15 @@ class PartnerSelector:
             shadow_selected = list(selected)  # Keep original selections
             for bidder_code in excluded:
                 score = score_lookup[bidder_code]
-                shadow_selected.append(SelectedBidder(
-                    bidder_code=bidder_code,
-                    score=score.total_score,
-                    confidence=score.confidence,
-                    reason=SelectionReason.BYPASS,
-                    category=BIDDER_CATEGORIES.get(bidder_code),
-                ))
+                shadow_selected.append(
+                    SelectedBidder(
+                        bidder_code=bidder_code,
+                        score=score.total_score,
+                        confidence=score.confidence,
+                        reason=SelectionReason.BYPASS,
+                        category=BIDDER_CATEGORIES.get(bidder_code),
+                    )
+                )
 
             return SelectionResult(
                 selected=shadow_selected,
@@ -478,13 +495,15 @@ class PartnerSelector:
             if bidder_code in available and bidder_code not in selected_codes:
                 score = score_lookup.get(bidder_code)
                 if score:
-                    selected.append(SelectedBidder(
-                        bidder_code=bidder_code,
-                        score=score.total_score,
-                        confidence=score.confidence,
-                        reason=SelectionReason.ANCHOR,
-                        category=BIDDER_CATEGORIES.get(bidder_code),
-                    ))
+                    selected.append(
+                        SelectedBidder(
+                            bidder_code=bidder_code,
+                            score=score.total_score,
+                            confidence=score.confidence,
+                            reason=SelectionReason.ANCHOR,
+                            category=BIDDER_CATEGORIES.get(bidder_code),
+                        )
+                    )
                     selected_codes.add(bidder_code)
 
     def _add_high_scorers(
@@ -514,13 +533,15 @@ class PartnerSelector:
             else:
                 reason = SelectionReason.HIGH_SCORE
 
-            selected.append(SelectedBidder(
-                bidder_code=score.bidder_code,
-                score=score.total_score,
-                confidence=score.confidence,
-                reason=reason,
-                category=BIDDER_CATEGORIES.get(score.bidder_code),
-            ))
+            selected.append(
+                SelectedBidder(
+                    bidder_code=score.bidder_code,
+                    score=score.total_score,
+                    confidence=score.confidence,
+                    reason=reason,
+                    category=BIDDER_CATEGORIES.get(score.bidder_code),
+                )
+            )
             selected_codes.add(score.bidder_code)
 
     def _ensure_diversity(
@@ -550,14 +571,19 @@ class PartnerSelector:
             # Find best scorer in this category
             for score in ranked:
                 bidder_category = BIDDER_CATEGORIES.get(score.bidder_code)
-                if bidder_category == category and score.bidder_code not in selected_codes:
-                    selected.append(SelectedBidder(
-                        bidder_code=score.bidder_code,
-                        score=score.total_score,
-                        confidence=score.confidence,
-                        reason=SelectionReason.DIVERSITY,
-                        category=category,
-                    ))
+                if (
+                    bidder_category == category
+                    and score.bidder_code not in selected_codes
+                ):
+                    selected.append(
+                        SelectedBidder(
+                            bidder_code=score.bidder_code,
+                            score=score.total_score,
+                            confidence=score.confidence,
+                            reason=SelectionReason.DIVERSITY,
+                            category=category,
+                        )
+                    )
                     selected_codes.add(score.bidder_code)
                     categories_present.add(category)
                     break
@@ -570,12 +596,12 @@ class PartnerSelector:
         For native requests, include native.
         Always include premium and mid_tier.
         """
-        categories = ['premium', 'mid_tier']
+        categories = ["premium", "mid_tier"]
 
         if request.ad_format == AdFormat.VIDEO:
-            categories.append('video_specialist')
+            categories.append("video_specialist")
         elif request.ad_format == AdFormat.NATIVE:
-            categories.append('native')
+            categories.append("native")
 
         # Filter to only configured categories
         return [c for c in categories if c in self.config.diversity_categories]
@@ -592,7 +618,8 @@ class PartnerSelector:
 
         # Find exploration candidates (low confidence, not already selected)
         exploration_candidates = [
-            score for score in ranked
+            score
+            for score in ranked
             if score.bidder_code not in selected_codes
             and score.confidence < self.config.exploration_confidence_threshold
         ]
@@ -614,13 +641,15 @@ class PartnerSelector:
         chosen = self._rng.sample(exploration_candidates, exploration_count)
 
         for score in chosen:
-            selected.append(SelectedBidder(
-                bidder_code=score.bidder_code,
-                score=score.total_score,
-                confidence=score.confidence,
-                reason=SelectionReason.EXPLORATION_SLOT,
-                category=BIDDER_CATEGORIES.get(score.bidder_code),
-            ))
+            selected.append(
+                SelectedBidder(
+                    bidder_code=score.bidder_code,
+                    score=score.total_score,
+                    confidence=score.confidence,
+                    reason=SelectionReason.EXPLORATION_SLOT,
+                    category=BIDDER_CATEGORIES.get(score.bidder_code),
+                )
+            )
             selected_codes.add(score.bidder_code)
 
     def _get_anchor_bidders(self, publisher_id: str) -> list[str]:
@@ -636,7 +665,7 @@ class PartnerSelector:
             )
 
         # Default anchor bidders when no provider
-        return ['rubicon', 'appnexus', 'pubmatic'][:self.config.anchor_bidder_count]
+        return ["rubicon", "appnexus", "pubmatic"][: self.config.anchor_bidder_count]
 
     def _apply_privacy_filter(
         self,
@@ -684,22 +713,22 @@ class PartnerSelector:
         for result in filter_results:
             if not result.allowed:
                 exclusion_reason = reason_map.get(
-                    result.reason,
-                    ExclusionReason.PRIVACY_NO_TCF
+                    result.reason, ExclusionReason.PRIVACY_NO_TCF
                 )
-                excluded.append(ExcludedBidder(
-                    bidder_code=result.bidder_code,
-                    reason=exclusion_reason,
-                    details=result.details,
-                ))
+                excluded.append(
+                    ExcludedBidder(
+                        bidder_code=result.bidder_code,
+                        reason=exclusion_reason,
+                        details=result.details,
+                    )
+                )
 
         # Filter the ranked list
         filtered_ranked = [s for s in ranked if s.bidder_code in allowed_set]
 
         # Get summary from privacy filter
         summary = self.privacy_filter.get_privacy_summary(
-            request.consent_signals,
-            filter_results
+            request.consent_signals, filter_results
         )
 
         return filtered_ranked, excluded, summary
@@ -708,19 +737,17 @@ class PartnerSelector:
 class MockAnchorProvider:
     """Mock anchor provider for testing."""
 
-    def __init__(self, anchors_by_publisher: Optional[dict[str, list[str]]] = None):
+    def __init__(self, anchors_by_publisher: dict[str, list[str]] | None = None):
         """Initialize with optional publisher-specific anchors."""
         self._anchors = anchors_by_publisher or {}
-        self._default = ['rubicon', 'appnexus', 'pubmatic']
+        self._default = ["rubicon", "appnexus", "pubmatic"]
 
     def set_anchors(self, publisher_id: str, bidders: list[str]) -> None:
         """Set anchor bidders for a publisher."""
         self._anchors[publisher_id] = bidders
 
     def get_top_bidders_by_revenue(
-        self,
-        publisher_id: str,
-        limit: int = 3
+        self, publisher_id: str, limit: int = 3
     ) -> list[str]:
         """Get anchor bidders for publisher."""
         bidders = self._anchors.get(publisher_id, self._default)
@@ -728,12 +755,12 @@ class MockAnchorProvider:
 
 
 def create_selector_for_context(
-    publisher_id: Optional[str] = None,
-    site_id: Optional[str] = None,
-    unit_id: Optional[str] = None,
-    anchor_provider: Optional[AnchorBidderProvider] = None,
+    publisher_id: str | None = None,
+    site_id: str | None = None,
+    unit_id: str | None = None,
+    anchor_provider: AnchorBidderProvider | None = None,
     privacy_filter: Optional["PrivacyFilter"] = None,
-    random_seed: Optional[int] = None,
+    random_seed: int | None = None,
 ) -> PartnerSelector:
     """
     Create a PartnerSelector with hierarchically resolved configuration.
@@ -781,9 +808,9 @@ def create_selector_for_context(
     # Use custom anchor bidders if specified in config
     effective_anchor_provider = anchor_provider
     if resolved.custom_anchor_bidders:
-        effective_anchor_provider = MockAnchorProvider({
-            publisher_id or "default": resolved.custom_anchor_bidders
-        })
+        effective_anchor_provider = MockAnchorProvider(
+            {publisher_id or "default": resolved.custom_anchor_bidders}
+        )
 
     return PartnerSelector(
         config=config,
@@ -796,7 +823,7 @@ def create_selector_for_context(
 def select_partners_for_request(
     scores: list[BidderScore],
     request: ClassifiedRequest,
-    anchor_provider: Optional[AnchorBidderProvider] = None,
+    anchor_provider: AnchorBidderProvider | None = None,
     privacy_filter: Optional["PrivacyFilter"] = None,
 ) -> SelectionResult:
     """
@@ -815,14 +842,14 @@ def select_partners_for_request(
         SelectionResult with selected bidders and metadata
     """
     # Extract context from request
-    publisher_id = request.publisher_id if hasattr(request, 'publisher_id') else None
-    site_id = request.site_id if hasattr(request, 'site_id') else None
+    publisher_id = request.publisher_id if hasattr(request, "publisher_id") else None
+    site_id = request.site_id if hasattr(request, "site_id") else None
 
     # Ad unit ID might be in different places depending on request structure
     unit_id = None
-    if hasattr(request, 'ad_unit_id'):
+    if hasattr(request, "ad_unit_id"):
         unit_id = request.ad_unit_id
-    elif hasattr(request, 'impression_id'):
+    elif hasattr(request, "impression_id"):
         unit_id = request.impression_id
 
     selector = create_selector_for_context(

@@ -10,19 +10,21 @@ Reference: https://github.com/InteractiveAdvertisingBureau/openrtb2.x
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class BidderStatus(str, Enum):
     """Bidder operational status."""
-    ACTIVE = "active"           # Bidder is enabled and receiving traffic
-    PAUSED = "paused"           # Temporarily disabled
-    TESTING = "testing"         # Only receives test traffic
-    DISABLED = "disabled"       # Fully disabled
+
+    ACTIVE = "active"  # Bidder is enabled and receiving traffic
+    PAUSED = "paused"  # Temporarily disabled
+    TESTING = "testing"  # Only receives test traffic
+    DISABLED = "disabled"  # Fully disabled
 
 
 class MediaType(str, Enum):
     """Supported media types per OpenRTB 2.6."""
+
     BANNER = "banner"
     VIDEO = "video"
     AUDIO = "audio"
@@ -31,12 +33,14 @@ class MediaType(str, Enum):
 
 class AuctionType(int, Enum):
     """OpenRTB auction types."""
+
     FIRST_PRICE = 1
     SECOND_PRICE = 2
 
 
 class ProtocolVersion(str, Enum):
     """Supported OpenRTB protocol versions."""
+
     ORTB_2_5 = "2.5"
     ORTB_2_6 = "2.6"
 
@@ -52,18 +56,19 @@ class BidderEndpoint:
         timeout_ms: Request timeout in milliseconds
         protocol_version: OpenRTB version (2.5 or 2.6)
     """
+
     url: str
     method: str = "POST"
     timeout_ms: int = 200
     protocol_version: str = "2.6"
 
     # Optional authentication
-    auth_type: Optional[str] = None  # "none", "basic", "bearer", "header"
-    auth_username: Optional[str] = None
-    auth_password: Optional[str] = None
-    auth_token: Optional[str] = None
-    auth_header_name: Optional[str] = None
-    auth_header_value: Optional[str] = None
+    auth_type: str | None = None  # "none", "basic", "bearer", "header"
+    auth_username: str | None = None
+    auth_password: str | None = None
+    auth_token: str | None = None
+    auth_header_name: str | None = None
+    auth_header_value: str | None = None
 
     # Additional headers
     custom_headers: dict[str, str] = field(default_factory=dict)
@@ -113,6 +118,7 @@ class BidderCapabilities:
         protocols: Supported video protocols (VAST versions)
         apis: Supported APIs (VPAID, MRAID, etc.)
     """
+
     media_types: list[str] = field(default_factory=lambda: ["banner"])
     currencies: list[str] = field(default_factory=lambda: ["USD"])
 
@@ -125,8 +131,8 @@ class BidderCapabilities:
     video_mimes: list[str] = field(default_factory=list)
     video_linearity: list[int] = field(default_factory=list)
     video_playback_methods: list[int] = field(default_factory=list)
-    video_max_duration: Optional[int] = None
-    video_min_duration: Optional[int] = None
+    video_max_duration: int | None = None
+    video_min_duration: int | None = None
 
     # Banner capabilities
     banner_mimes: list[str] = field(default_factory=lambda: ["text/html"])
@@ -225,6 +231,7 @@ class BidderRateLimits:
         daily_limit: Maximum requests per day (0 = unlimited)
         concurrent_limit: Maximum concurrent requests
     """
+
     qps_limit: int = 1000
     daily_limit: int = 0  # 0 = unlimited
     concurrent_limit: int = 100
@@ -265,6 +272,7 @@ class RequestTransform:
         imp_ext_template: Template for imp.ext object
         request_ext_template: Template for request.ext object
     """
+
     field_mappings: dict[str, str] = field(default_factory=dict)
     field_additions: dict[str, Any] = field(default_factory=dict)
     field_removals: list[str] = field(default_factory=list)
@@ -276,7 +284,7 @@ class RequestTransform:
     user_ext_template: dict[str, Any] = field(default_factory=dict)
 
     # Bidder-specific seat ID
-    seat_id: Optional[str] = None
+    seat_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -317,6 +325,7 @@ class ResponseTransform:
         price_adjustment: Price adjustment (e.g., 0.95 for 5% fee)
         currency_conversion: Whether to convert currencies
     """
+
     bid_field_mappings: dict[str, str] = field(default_factory=dict)
     price_adjustment: float = 1.0  # Multiplier for bid price
     currency_conversion: bool = True
@@ -368,6 +377,7 @@ class BidderConfig:
         gvl_vendor_id: IAB Global Vendor List ID (for privacy)
         priority: Bidder priority (higher = preferred)
     """
+
     bidder_code: str
     name: str
     endpoint: BidderEndpoint
@@ -381,7 +391,7 @@ class BidderConfig:
 
     # Status and metadata
     status: BidderStatus = BidderStatus.TESTING
-    gvl_vendor_id: Optional[int] = None  # IAB GVL ID
+    gvl_vendor_id: int | None = None  # IAB GVL ID
     priority: int = 50  # 0-100, higher = more preferred
 
     # Contact information
@@ -397,9 +407,9 @@ class BidderConfig:
     blocked_countries: list[str] = field(default_factory=list)
 
     # Timestamps
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    last_active_at: Optional[str] = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_active_at: str | None = None
 
     # Statistics (updated by system)
     total_requests: int = 0
@@ -423,6 +433,7 @@ class BidderConfig:
     def _normalize_code(code: str) -> str:
         """Normalize bidder code to lowercase alphanumeric with hyphens."""
         import re
+
         # Replace spaces and underscores with hyphens
         code = code.lower().replace(" ", "-").replace("_", "-")
         # Remove any non-alphanumeric characters except hyphens
@@ -499,8 +510,12 @@ class BidderConfig:
             endpoint=BidderEndpoint.from_dict(data.get("endpoint", {})),
             capabilities=BidderCapabilities.from_dict(data.get("capabilities", {})),
             rate_limits=BidderRateLimits.from_dict(data.get("rate_limits", {})),
-            request_transform=RequestTransform.from_dict(data.get("request_transform", {})),
-            response_transform=ResponseTransform.from_dict(data.get("response_transform", {})),
+            request_transform=RequestTransform.from_dict(
+                data.get("request_transform", {})
+            ),
+            response_transform=ResponseTransform.from_dict(
+                data.get("response_transform", {})
+            ),
             status=BidderStatus(data.get("status", "testing")),
             gvl_vendor_id=data.get("gvl_vendor_id"),
             priority=data.get("priority", 50),
@@ -524,10 +539,12 @@ class BidderConfig:
     def to_json(self) -> str:
         """Convert to JSON string."""
         import json
+
         return json.dumps(self.to_dict())
 
     @classmethod
     def from_json(cls, json_str: str) -> "BidderConfig":
         """Create from JSON string."""
         import json
+
         return cls.from_dict(json.loads(json_str))

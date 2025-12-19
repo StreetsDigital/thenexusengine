@@ -9,15 +9,14 @@ With 10% sampling (sample_rate=0.1), you get statistically accurate metrics
 while using 90% fewer Redis commands.
 """
 
-import json
 import random
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 try:
     import redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -30,6 +29,7 @@ DEFAULT_SAMPLE_RATE = 1.0
 @dataclass
 class RealTimeMetrics:
     """Real-time metrics for a bidder in a specific context."""
+
     bidder_code: str
 
     # Counts (last hour)
@@ -102,7 +102,7 @@ class RedisMetricsClient:
         host: str = "localhost",
         port: int = 6379,
         db: int = 0,
-        password: Optional[str] = None,
+        password: str | None = None,
         decode_responses: bool = True,
         sample_rate: float = DEFAULT_SAMPLE_RATE,
     ):
@@ -181,7 +181,7 @@ class RedisMetricsClient:
         context_hash: str,
         latency_ms: float,
         had_bid: bool,
-        bid_cpm: Optional[float] = None,
+        bid_cpm: float | None = None,
         timed_out: bool = False,
         had_error: bool = False,
     ) -> bool:
@@ -260,7 +260,7 @@ class RedisMetricsClient:
         bidder: str,
         context_hash: str,
         win_cpm: float,
-        clearing_price: Optional[float] = None,
+        clearing_price: float | None = None,
     ) -> bool:
         """
         Record a win event (subject to sampling).
@@ -305,7 +305,7 @@ class RedisMetricsClient:
     # =========================================================================
 
     def get_metrics(
-        self, bidder: str, context_hash: Optional[str] = None, extrapolate: bool = True
+        self, bidder: str, context_hash: str | None = None, extrapolate: bool = True
     ) -> RealTimeMetrics:
         """
         Get metrics for a bidder.
@@ -461,9 +461,16 @@ class MockRedisClient:
     def record_request(self, bidder: str, context_hash: str, **kwargs) -> bool:
         key = f"global:{bidder}"
         if key not in self._data:
-            self._data[key] = {"requests": 0, "bids": 0, "wins": 0, "timeouts": 0,
-                              "errors": 0, "total_bid_value": 0.0, "total_win_value": 0.0,
-                              "total_latency_ms": 0.0}
+            self._data[key] = {
+                "requests": 0,
+                "bids": 0,
+                "wins": 0,
+                "timeouts": 0,
+                "errors": 0,
+                "total_bid_value": 0.0,
+                "total_win_value": 0.0,
+                "total_latency_ms": 0.0,
+            }
 
         self._data[key]["requests"] += 1
         self._data[key]["total_latency_ms"] += kwargs.get("latency_ms", 0)
@@ -480,18 +487,29 @@ class MockRedisClient:
 
         return True
 
-    def record_win(self, bidder: str, context_hash: str, win_cpm: float, **kwargs) -> bool:
+    def record_win(
+        self, bidder: str, context_hash: str, win_cpm: float, **kwargs
+    ) -> bool:
         key = f"global:{bidder}"
         if key not in self._data:
-            self._data[key] = {"requests": 0, "bids": 0, "wins": 0, "timeouts": 0,
-                              "errors": 0, "total_bid_value": 0.0, "total_win_value": 0.0,
-                              "total_latency_ms": 0.0}
+            self._data[key] = {
+                "requests": 0,
+                "bids": 0,
+                "wins": 0,
+                "timeouts": 0,
+                "errors": 0,
+                "total_bid_value": 0.0,
+                "total_win_value": 0.0,
+                "total_latency_ms": 0.0,
+            }
 
         self._data[key]["wins"] += 1
         self._data[key]["total_win_value"] += win_cpm
         return True
 
-    def get_metrics(self, bidder: str, context_hash: Optional[str] = None, extrapolate: bool = True) -> RealTimeMetrics:
+    def get_metrics(
+        self, bidder: str, context_hash: str | None = None, extrapolate: bool = True
+    ) -> RealTimeMetrics:
         key = f"global:{bidder}"
         data = self._data.get(key, {})
 

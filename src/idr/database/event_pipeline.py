@@ -8,16 +8,18 @@ for high-throughput auction environments.
 import queue
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any
 
 from src.idr.database.metrics_store import MetricsStore
 
 
 class EventType(Enum):
     """Types of events in the pipeline."""
+
     BID_REQUEST = "bid_request"
     BID_RESPONSE = "bid_response"
     WIN = "win"
@@ -29,6 +31,7 @@ class EventType(Enum):
 @dataclass
 class AuctionEvent:
     """Represents an event in the auction lifecycle."""
+
     event_type: EventType
     timestamp: datetime
     auction_id: str
@@ -42,11 +45,11 @@ class AuctionEvent:
     publisher_id: str = ""
 
     # Event data
-    latency_ms: Optional[float] = None
-    bid_cpm: Optional[float] = None
-    win_cpm: Optional[float] = None
-    floor_price: Optional[float] = None
-    error_message: Optional[str] = None
+    latency_ms: float | None = None
+    bid_cpm: float | None = None
+    win_cpm: float | None = None
+    floor_price: float | None = None
+    error_message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""
@@ -71,11 +74,12 @@ class AuctionEvent:
 @dataclass
 class PipelineStats:
     """Statistics for pipeline monitoring."""
+
     events_received: int = 0
     events_processed: int = 0
     events_failed: int = 0
     batches_flushed: int = 0
-    last_flush_time: Optional[datetime] = None
+    last_flush_time: datetime | None = None
     avg_batch_size: float = 0.0
     queue_depth: int = 0
 
@@ -101,7 +105,7 @@ class EventPipeline:
         batch_size: int = DEFAULT_BATCH_SIZE,
         flush_interval: float = DEFAULT_FLUSH_INTERVAL,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
-        on_error: Optional[Callable[[Exception, list[AuctionEvent]], None]] = None,
+        on_error: Callable[[Exception, list[AuctionEvent]], None] | None = None,
     ):
         self.metrics_store = metrics_store
         self.batch_size = batch_size
@@ -111,7 +115,7 @@ class EventPipeline:
 
         self._queue: queue.Queue[AuctionEvent] = queue.Queue(maxsize=max_queue_size)
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._stats = PipelineStats()
         self._lock = threading.Lock()
 
@@ -159,15 +163,15 @@ class EventPipeline:
         bidder_code: str,
         had_bid: bool,
         latency_ms: float,
-        bid_cpm: Optional[float] = None,
-        floor_price: Optional[float] = None,
+        bid_cpm: float | None = None,
+        floor_price: float | None = None,
         country: str = "",
         device_type: str = "",
         media_type: str = "",
         ad_size: str = "",
         publisher_id: str = "",
         timed_out: bool = False,
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ) -> bool:
         """Convenience method to submit a bid response event."""
         event_type = EventType.BID_RESPONSE
@@ -176,21 +180,23 @@ class EventPipeline:
         elif error_message:
             event_type = EventType.ERROR
 
-        return self.submit(AuctionEvent(
-            event_type=event_type,
-            timestamp=datetime.now(),
-            auction_id=auction_id,
-            bidder_code=bidder_code,
-            country=country,
-            device_type=device_type,
-            media_type=media_type,
-            ad_size=ad_size,
-            publisher_id=publisher_id,
-            latency_ms=latency_ms,
-            bid_cpm=bid_cpm if had_bid else None,
-            floor_price=floor_price,
-            error_message=error_message,
-        ))
+        return self.submit(
+            AuctionEvent(
+                event_type=event_type,
+                timestamp=datetime.now(),
+                auction_id=auction_id,
+                bidder_code=bidder_code,
+                country=country,
+                device_type=device_type,
+                media_type=media_type,
+                ad_size=ad_size,
+                publisher_id=publisher_id,
+                latency_ms=latency_ms,
+                bid_cpm=bid_cpm if had_bid else None,
+                floor_price=floor_price,
+                error_message=error_message,
+            )
+        )
 
     def submit_win(
         self,
@@ -204,18 +210,20 @@ class EventPipeline:
         publisher_id: str = "",
     ) -> bool:
         """Convenience method to submit a win event."""
-        return self.submit(AuctionEvent(
-            event_type=EventType.WIN,
-            timestamp=datetime.now(),
-            auction_id=auction_id,
-            bidder_code=bidder_code,
-            country=country,
-            device_type=device_type,
-            media_type=media_type,
-            ad_size=ad_size,
-            publisher_id=publisher_id,
-            win_cpm=win_cpm,
-        ))
+        return self.submit(
+            AuctionEvent(
+                event_type=EventType.WIN,
+                timestamp=datetime.now(),
+                auction_id=auction_id,
+                bidder_code=bidder_code,
+                country=country,
+                device_type=device_type,
+                media_type=media_type,
+                ad_size=ad_size,
+                publisher_id=publisher_id,
+                win_cpm=win_cpm,
+            )
+        )
 
     def get_stats(self) -> PipelineStats:
         """Get current pipeline statistics."""
@@ -246,9 +254,8 @@ class EventPipeline:
                     pass
 
                 # Check if we should flush
-                should_flush = (
-                    len(batch) >= self.batch_size or
-                    (len(batch) > 0 and time.time() - last_flush >= self.flush_interval)
+                should_flush = len(batch) >= self.batch_size or (
+                    len(batch) > 0 and time.time() - last_flush >= self.flush_interval
                 )
 
                 if should_flush:
@@ -374,17 +381,13 @@ class SyncEventPipeline:
 
     def submit_bid_response(self, **kwargs) -> bool:
         event = AuctionEvent(
-            event_type=EventType.BID_RESPONSE,
-            timestamp=datetime.now(),
-            **kwargs
+            event_type=EventType.BID_RESPONSE, timestamp=datetime.now(), **kwargs
         )
         return self.submit(event)
 
     def submit_win(self, **kwargs) -> bool:
         event = AuctionEvent(
-            event_type=EventType.WIN,
-            timestamp=datetime.now(),
-            **kwargs
+            event_type=EventType.WIN, timestamp=datetime.now(), **kwargs
         )
         return self.submit(event)
 

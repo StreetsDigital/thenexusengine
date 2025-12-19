@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 )
 
 // SecurityConfig holds security headers configuration
@@ -83,6 +84,7 @@ func envOrDefault(key, defaultValue string) string {
 // Security provides security headers middleware
 type Security struct {
 	config *SecurityConfig
+	mu     sync.RWMutex
 }
 
 // NewSecurity creates a new Security middleware
@@ -96,7 +98,20 @@ func NewSecurity(config *SecurityConfig) *Security {
 // Middleware returns the security headers middleware handler
 func (s *Security) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.config.Enabled {
+		// Copy all needed config fields while holding the lock to prevent data race
+		s.mu.RLock()
+		enabled := s.config.Enabled
+		xFrameOptions := s.config.XFrameOptions
+		xContentTypeOptions := s.config.XContentTypeOptions
+		xXSSProtection := s.config.XXSSProtection
+		csp := s.config.ContentSecurityPolicy
+		referrerPolicy := s.config.ReferrerPolicy
+		hsts := s.config.StrictTransportSecurity
+		permissionsPolicy := s.config.PermissionsPolicy
+		cacheControl := s.config.CacheControl
+		s.mu.RUnlock()
+
+		if !enabled {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -104,38 +119,38 @@ func (s *Security) Middleware(next http.Handler) http.Handler {
 		// Set security headers
 		h := w.Header()
 
-		if s.config.XFrameOptions != "" {
-			h.Set("X-Frame-Options", s.config.XFrameOptions)
+		if xFrameOptions != "" {
+			h.Set("X-Frame-Options", xFrameOptions)
 		}
 
-		if s.config.XContentTypeOptions != "" {
-			h.Set("X-Content-Type-Options", s.config.XContentTypeOptions)
+		if xContentTypeOptions != "" {
+			h.Set("X-Content-Type-Options", xContentTypeOptions)
 		}
 
-		if s.config.XXSSProtection != "" {
-			h.Set("X-XSS-Protection", s.config.XXSSProtection)
+		if xXSSProtection != "" {
+			h.Set("X-XSS-Protection", xXSSProtection)
 		}
 
-		if s.config.ContentSecurityPolicy != "" {
-			h.Set("Content-Security-Policy", s.config.ContentSecurityPolicy)
+		if csp != "" {
+			h.Set("Content-Security-Policy", csp)
 		}
 
-		if s.config.ReferrerPolicy != "" {
-			h.Set("Referrer-Policy", s.config.ReferrerPolicy)
+		if referrerPolicy != "" {
+			h.Set("Referrer-Policy", referrerPolicy)
 		}
 
-		if s.config.StrictTransportSecurity != "" {
-			h.Set("Strict-Transport-Security", s.config.StrictTransportSecurity)
+		if hsts != "" {
+			h.Set("Strict-Transport-Security", hsts)
 		}
 
-		if s.config.PermissionsPolicy != "" {
-			h.Set("Permissions-Policy", s.config.PermissionsPolicy)
+		if permissionsPolicy != "" {
+			h.Set("Permissions-Policy", permissionsPolicy)
 		}
 
-		if s.config.CacheControl != "" {
+		if cacheControl != "" {
 			// Only set cache control for non-static paths
 			if !isStaticPath(r.URL.Path) {
-				h.Set("Cache-Control", s.config.CacheControl)
+				h.Set("Cache-Control", cacheControl)
 			}
 		}
 
@@ -157,21 +172,29 @@ func isStaticPath(path string) bool {
 
 // SetEnabled enables or disables security headers
 func (s *Security) SetEnabled(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.config.Enabled = enabled
 }
 
 // SetHSTS sets the HSTS header value
 // Example: "max-age=31536000; includeSubDomains"
 func (s *Security) SetHSTS(value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.config.StrictTransportSecurity = value
 }
 
 // SetCSP sets the Content-Security-Policy header
 func (s *Security) SetCSP(value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.config.ContentSecurityPolicy = value
 }
 
 // GetConfig returns a copy of the current configuration
 func (s *Security) GetConfig() SecurityConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return *s.config
 }

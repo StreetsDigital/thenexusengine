@@ -8,28 +8,27 @@ These tests verify the functionality of the dynamic bidder system including:
 - Bidder configuration validation
 """
 
-import json
+from unittest.mock import MagicMock
+
 import pytest
-from datetime import datetime
-from unittest.mock import MagicMock, patch
+
+from src.idr.bidders.manager import (
+    BidderAlreadyExistsError,
+    BidderManager,
+    BidderNotFoundError,
+    InvalidBidderConfigError,
+)
 
 # Import the bidder modules
 from src.idr.bidders.models import (
+    BidderCapabilities,
     BidderConfig,
     BidderEndpoint,
-    BidderCapabilities,
-    BidderRateLimits,
     BidderStatus,
     RequestTransform,
     ResponseTransform,
 )
 from src.idr.bidders.storage import BidderStorage
-from src.idr.bidders.manager import (
-    BidderManager,
-    BidderNotFoundError,
-    BidderAlreadyExistsError,
-    InvalidBidderConfigError,
-)
 
 
 class TestBidderModels:

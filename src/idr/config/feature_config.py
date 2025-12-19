@@ -11,12 +11,12 @@ over IDR behavior and feature flags at any level of the hierarchy.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
-import copy
+from typing import Any
 
 
 class ConfigLevel(str, Enum):
     """Configuration hierarchy levels."""
+
     GLOBAL = "global"
     PUBLISHER = "publisher"
     SITE = "site"
@@ -31,42 +31,43 @@ class IDRSettings:
     All fields are Optional to support partial overrides - None means
     "inherit from parent".
     """
+
     # Enable/Disable IDR
-    enabled: Optional[bool] = None
+    enabled: bool | None = None
 
     # Operating modes
-    bypass_enabled: Optional[bool] = None      # Select ALL bidders (testing)
-    shadow_mode: Optional[bool] = None         # Log decisions but don't filter
+    bypass_enabled: bool | None = None  # Select ALL bidders (testing)
+    shadow_mode: bool | None = None  # Log decisions but don't filter
 
     # Selection limits
-    max_bidders: Optional[int] = None          # Maximum partners per auction
-    min_score_threshold: Optional[float] = None  # Minimum score to be considered
+    max_bidders: int | None = None  # Maximum partners per auction
+    min_score_threshold: float | None = None  # Minimum score to be considered
 
     # Exploration settings
-    exploration_enabled: Optional[bool] = None
-    exploration_rate: Optional[float] = None   # Probability to include low-confidence
-    exploration_slots: Optional[int] = None    # Reserved slots for data gathering
-    low_confidence_threshold: Optional[float] = None
-    exploration_confidence_threshold: Optional[float] = None
+    exploration_enabled: bool | None = None
+    exploration_rate: float | None = None  # Probability to include low-confidence
+    exploration_slots: int | None = None  # Reserved slots for data gathering
+    low_confidence_threshold: float | None = None
+    exploration_confidence_threshold: float | None = None
 
     # Anchor bidders
-    anchor_bidders_enabled: Optional[bool] = None
-    anchor_bidder_count: Optional[int] = None  # Always-include top performers
-    custom_anchor_bidders: Optional[list[str]] = None  # Override anchor bidders
+    anchor_bidders_enabled: bool | None = None
+    anchor_bidder_count: int | None = None  # Always-include top performers
+    custom_anchor_bidders: list[str] | None = None  # Override anchor bidders
 
     # Diversity settings
-    diversity_enabled: Optional[bool] = None   # Enforce category diversity
-    diversity_categories: Optional[list[str]] = None
+    diversity_enabled: bool | None = None  # Enforce category diversity
+    diversity_categories: list[str] | None = None
 
     # Scoring weights (must sum to 1.0)
-    scoring_weights: Optional[dict[str, float]] = None
+    scoring_weights: dict[str, float] | None = None
 
     # Latency thresholds
-    latency_excellent_ms: Optional[int] = None
-    latency_poor_ms: Optional[int] = None
+    latency_excellent_ms: int | None = None
+    latency_poor_ms: int | None = None
 
     # Timeout
-    selection_timeout_ms: Optional[int] = None
+    selection_timeout_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -89,7 +90,9 @@ class IDRSettings:
             exploration_rate=data.get("exploration_rate"),
             exploration_slots=data.get("exploration_slots"),
             low_confidence_threshold=data.get("low_confidence_threshold"),
-            exploration_confidence_threshold=data.get("exploration_confidence_threshold"),
+            exploration_confidence_threshold=data.get(
+                "exploration_confidence_threshold"
+            ),
             anchor_bidders_enabled=data.get("anchor_bidders_enabled"),
             anchor_bidder_count=data.get("anchor_bidder_count"),
             custom_anchor_bidders=data.get("custom_anchor_bidders"),
@@ -107,18 +110,19 @@ class PrivacySettings:
     """
     Privacy settings configurable at any level.
     """
+
     # Privacy filter
-    privacy_enabled: Optional[bool] = None
-    privacy_strict_mode: Optional[bool] = None
+    privacy_enabled: bool | None = None
+    privacy_strict_mode: bool | None = None
 
     # Regulation applicability
-    gdpr_applies: Optional[bool] = None
-    ccpa_applies: Optional[bool] = None
-    coppa_applies: Optional[bool] = None
+    gdpr_applies: bool | None = None
+    ccpa_applies: bool | None = None
+    coppa_applies: bool | None = None
 
     # Consent handling
-    require_consent: Optional[bool] = None
-    allow_legitimate_interest: Optional[bool] = None
+    require_consent: bool | None = None
+    allow_legitimate_interest: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -147,16 +151,17 @@ class BidderSettings:
     """
     Bidder-specific settings that can be configured at any level.
     """
+
     # Enable/disable specific bidders
-    enabled_bidders: Optional[list[str]] = None
-    disabled_bidders: Optional[list[str]] = None
+    enabled_bidders: list[str] | None = None
+    disabled_bidders: list[str] | None = None
 
     # Bidder-specific parameters (bidder_code -> params)
-    bidder_params: Optional[dict[str, dict[str, Any]]] = None
+    bidder_params: dict[str, dict[str, Any]] | None = None
 
     # Bidder allowlist/blocklist for this context
-    bidder_allowlist: Optional[list[str]] = None
-    bidder_blocklist: Optional[list[str]] = None
+    bidder_allowlist: list[str] | None = None
+    bidder_blocklist: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -183,20 +188,21 @@ class FloorSettings:
     """
     Floor price settings configurable at any level.
     """
+
     # Floor prices
-    floor_enabled: Optional[bool] = None
-    default_floor_price: Optional[float] = None
-    floor_currency: Optional[str] = None
+    floor_enabled: bool | None = None
+    default_floor_price: float | None = None
+    floor_currency: str | None = None
 
     # Dynamic floors
-    dynamic_floors_enabled: Optional[bool] = None
-    floor_adjustment_factor: Optional[float] = None
+    dynamic_floors_enabled: bool | None = None
+    floor_adjustment_factor: float | None = None
 
     # Per-format floors
-    banner_floor: Optional[float] = None
-    video_floor: Optional[float] = None
-    native_floor: Optional[float] = None
-    audio_floor: Optional[float] = None
+    banner_floor: float | None = None
+    video_floor: float | None = None
+    native_floor: float | None = None
+    audio_floor: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -227,9 +233,10 @@ class RateLimitSettings:
     """
     Rate limiting settings configurable at any level.
     """
-    rate_limit_enabled: Optional[bool] = None
-    requests_per_second: Optional[int] = None
-    burst: Optional[int] = None
+
+    rate_limit_enabled: bool | None = None
+    requests_per_second: int | None = None
+    burst: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -254,25 +261,26 @@ class FeatureFlags:
     """
     Feature flags that can be toggled at any level.
     """
+
     # Core features
-    prebid_enabled: Optional[bool] = None
-    header_bidding_enabled: Optional[bool] = None
+    prebid_enabled: bool | None = None
+    header_bidding_enabled: bool | None = None
 
     # Optimization features
-    lazy_loading_enabled: Optional[bool] = None
-    refresh_enabled: Optional[bool] = None
-    refresh_interval_seconds: Optional[int] = None
+    lazy_loading_enabled: bool | None = None
+    refresh_enabled: bool | None = None
+    refresh_interval_seconds: int | None = None
 
     # Analytics
-    analytics_enabled: Optional[bool] = None
-    detailed_logging_enabled: Optional[bool] = None
+    analytics_enabled: bool | None = None
+    detailed_logging_enabled: bool | None = None
 
     # A/B testing
-    ab_testing_enabled: Optional[bool] = None
-    ab_test_group: Optional[str] = None
+    ab_testing_enabled: bool | None = None
+    ab_test_group: str | None = None
 
     # Custom features (extensible)
-    custom_features: Optional[dict[str, bool]] = None
+    custom_features: dict[str, bool] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -307,17 +315,18 @@ class FeatureConfig:
     This is the main configuration object that contains all settings.
     All fields are optional to support partial overrides through inheritance.
     """
+
     # Metadata
     config_id: str = ""
     config_level: ConfigLevel = ConfigLevel.GLOBAL
-    parent_id: Optional[str] = None  # ID of parent config (for inheritance)
+    parent_id: str | None = None  # ID of parent config (for inheritance)
     name: str = ""
     description: str = ""
     enabled: bool = True
 
     # Timestamps
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     # Settings groups
     idr: IDRSettings = field(default_factory=IDRSettings)
@@ -390,6 +399,7 @@ class ResolvedConfig:
 
     This represents the effective configuration after inheritance resolution.
     """
+
     # Metadata
     config_id: str
     config_level: ConfigLevel
@@ -411,17 +421,19 @@ class ResolvedConfig:
     custom_anchor_bidders: list[str] = field(default_factory=list)
     diversity_enabled: bool = True
     diversity_categories: list[str] = field(
-        default_factory=lambda: ['premium', 'mid_tier', 'video_specialist', 'native']
+        default_factory=lambda: ["premium", "mid_tier", "video_specialist", "native"]
     )
-    scoring_weights: dict[str, float] = field(default_factory=lambda: {
-        'win_rate': 0.25,
-        'bid_rate': 0.20,
-        'cpm': 0.15,
-        'floor_clearance': 0.15,
-        'latency': 0.10,
-        'recency': 0.10,
-        'id_match': 0.05,
-    })
+    scoring_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "win_rate": 0.25,
+            "bid_rate": 0.20,
+            "cpm": 0.15,
+            "floor_clearance": 0.15,
+            "latency": 0.10,
+            "recency": 0.10,
+            "id_match": 0.05,
+        }
+    )
     latency_excellent_ms: int = 100
     latency_poor_ms: int = 500
     selection_timeout_ms: int = 50
@@ -571,15 +583,15 @@ def get_default_global_config() -> FeatureConfig:
             anchor_bidder_count=3,
             custom_anchor_bidders=[],
             diversity_enabled=True,
-            diversity_categories=['premium', 'mid_tier', 'video_specialist', 'native'],
+            diversity_categories=["premium", "mid_tier", "video_specialist", "native"],
             scoring_weights={
-                'win_rate': 0.25,
-                'bid_rate': 0.20,
-                'cpm': 0.15,
-                'floor_clearance': 0.15,
-                'latency': 0.10,
-                'recency': 0.10,
-                'id_match': 0.05,
+                "win_rate": 0.25,
+                "bid_rate": 0.20,
+                "cpm": 0.15,
+                "floor_clearance": 0.15,
+                "latency": 0.10,
+                "recency": 0.10,
+                "id_match": 0.05,
             },
             latency_excellent_ms=100,
             latency_poor_ms=500,

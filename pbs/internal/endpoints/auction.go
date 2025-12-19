@@ -3,6 +3,7 @@ package endpoints
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -30,12 +31,12 @@ func (h *AuctionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read request body
+	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
 	// Parse OpenRTB request
 	var bidRequest openrtb.BidRequest
@@ -113,7 +114,7 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string {
 	if e.Index >= 0 {
-		return e.Field + ": " + e.Message
+		return fmt.Sprintf("%s[%d]: %s", e.Field, e.Index, e.Message)
 	}
 	return e.Field + ": " + e.Message
 }

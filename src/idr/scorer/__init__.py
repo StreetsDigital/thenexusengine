@@ -2,4 +2,4 @@
 
 from .bidder_scorer import BidderScorer
 
-__all__ = ['BidderScorer']
+__all__ = ["BidderScorer"]

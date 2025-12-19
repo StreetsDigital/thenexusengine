@@ -11,15 +11,14 @@ Redis Key Structure:
     nexus:bidders:stats:{code} (hash) - Real-time stats for bidder
 """
 
-import json
 import os
 from datetime import datetime
-from typing import Optional
 
 from .models import BidderConfig, BidderStatus
 
 try:
     import redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -47,7 +46,7 @@ class BidderStorage:
         Args:
             redis_url: Redis connection URL
         """
-        self._redis: Optional[redis.Redis] = None
+        self._redis: redis.Redis | None = None
         self._redis_url = redis_url
 
         if REDIS_AVAILABLE:
@@ -114,7 +113,7 @@ class BidderStorage:
             print(f"Failed to save bidder config: {e}")
             return False
 
-    def get(self, bidder_code: str) -> Optional[BidderConfig]:
+    def get(self, bidder_code: str) -> BidderConfig | None:
         """
         Get a bidder configuration by code.
 
@@ -383,8 +382,12 @@ class BidderStorage:
                 "total_errors": total_errors,
                 "bid_rate": total_bids / total_requests if total_requests > 0 else 0,
                 "win_rate": total_wins / total_bids if total_bids > 0 else 0,
-                "error_rate": total_errors / total_requests if total_requests > 0 else 0,
-                "avg_latency_ms": latency_sum / latency_count if latency_count > 0 else 0,
+                "error_rate": total_errors / total_requests
+                if total_requests > 0
+                else 0,
+                "avg_latency_ms": latency_sum / latency_count
+                if latency_count > 0
+                else 0,
                 "avg_bid_cpm": cpm_sum / cpm_count if cpm_count > 0 else 0,
                 "last_active_at": stats.get("last_active_at"),
             }
@@ -431,7 +434,7 @@ class BidderStorage:
     def get_for_publisher(
         self,
         publisher_id: str,
-        country: Optional[str] = None,
+        country: str | None = None,
     ) -> list[BidderConfig]:
         """
         Get bidders available for a specific publisher.
@@ -452,7 +455,10 @@ class BidderStorage:
             # Check publisher restrictions
             if config.blocked_publishers and publisher_id in config.blocked_publishers:
                 continue
-            if config.allowed_publishers and publisher_id not in config.allowed_publishers:
+            if (
+                config.allowed_publishers
+                and publisher_id not in config.allowed_publishers
+            ):
                 continue
 
             # Check geo restrictions
@@ -468,10 +474,10 @@ class BidderStorage:
 
 
 # Global storage instance
-_bidder_storage: Optional[BidderStorage] = None
+_bidder_storage: BidderStorage | None = None
 
 
-def get_bidder_storage(redis_url: Optional[str] = None) -> BidderStorage:
+def get_bidder_storage(redis_url: str | None = None) -> BidderStorage:
     """Get the global bidder storage instance."""
     global _bidder_storage
 

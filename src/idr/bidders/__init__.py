@@ -28,17 +28,17 @@ Usage:
     bidder = manager.get_bidder("my-dsp")
 """
 
+from .manager import BidderManager, get_bidder_manager
 from .models import (
+    BidderCapabilities,
     BidderConfig,
     BidderEndpoint,
-    BidderCapabilities,
     BidderRateLimits,
     BidderStatus,
     RequestTransform,
     ResponseTransform,
 )
 from .storage import BidderStorage
-from .manager import BidderManager, get_bidder_manager
 
 __all__ = [
     "BidderConfig",

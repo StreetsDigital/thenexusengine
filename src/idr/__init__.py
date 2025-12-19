@@ -15,20 +15,20 @@ from .models import (
     ScoreComponents,
 )
 from .scorer import BidderScorer
-from .selector import PartnerSelector, SelectorConfig, SelectionResult
+from .selector import PartnerSelector, SelectionResult, SelectorConfig
 
-__version__ = '1.0.0'
+__version__ = "1.0.0"
 
 __all__ = [
-    'RequestClassifier',
-    'BidderScorer',
-    'PartnerSelector',
-    'SelectorConfig',
-    'SelectionResult',
-    'ClassifiedRequest',
-    'BidderScore',
-    'ScoreComponents',
-    'RecentMetrics',
-    'BidderMetrics',
-    'LookupKey',
+    "RequestClassifier",
+    "BidderScorer",
+    "PartnerSelector",
+    "SelectorConfig",
+    "SelectionResult",
+    "ClassifiedRequest",
+    "BidderScore",
+    "ScoreComponents",
+    "RecentMetrics",
+    "BidderMetrics",
+    "LookupKey",
 ]
