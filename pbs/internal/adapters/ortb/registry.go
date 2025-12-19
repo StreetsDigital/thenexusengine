@@ -19,6 +19,70 @@ const (
 	redisBiddersActive = "nexus:bidders:active"
 )
 
+// P3-NEW-1: Metrics tracks operational metrics for the dynamic registry
+type Metrics struct {
+	mu sync.RWMutex
+
+	// Refresh operations
+	RefreshCount      int64         // Total refresh operations
+	RefreshErrors     int64         // Failed refresh operations
+	LastRefreshTime   time.Time     // Time of last successful refresh
+	LastRefreshLatency time.Duration // Duration of last refresh
+
+	// Lookup operations
+	GetHits   int64 // Successful adapter lookups
+	GetMisses int64 // Failed adapter lookups
+
+	// Adapter stats
+	TotalAdapters   int // Total registered adapters
+	EnabledAdapters int // Enabled adapters
+}
+
+// GetMetrics returns a copy of the current metrics (thread-safe)
+func (m *Metrics) GetMetrics() Metrics {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return Metrics{
+		RefreshCount:       m.RefreshCount,
+		RefreshErrors:      m.RefreshErrors,
+		LastRefreshTime:    m.LastRefreshTime,
+		LastRefreshLatency: m.LastRefreshLatency,
+		GetHits:            m.GetHits,
+		GetMisses:          m.GetMisses,
+		TotalAdapters:      m.TotalAdapters,
+		EnabledAdapters:    m.EnabledAdapters,
+	}
+}
+
+func (m *Metrics) recordRefreshSuccess(latency time.Duration, total, enabled int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.RefreshCount++
+	m.LastRefreshTime = time.Now()
+	m.LastRefreshLatency = latency
+	m.TotalAdapters = total
+	m.EnabledAdapters = enabled
+}
+
+func (m *Metrics) recordRefreshError() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.RefreshCount++
+	m.RefreshErrors++
+}
+
+func (m *Metrics) recordGetHit() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.GetHits++
+}
+
+func (m *Metrics) recordGetMiss() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.GetMisses++
+}
+
 // RedisClient interface for Redis operations
 type RedisClient interface {
 	HGetAll(ctx context.Context, key string) (map[string]string, error)
@@ -34,6 +98,7 @@ type DynamicRegistry struct {
 	refreshPeriod time.Duration
 	stopChan      chan struct{}
 	onUpdate      func(string, *BidderConfig) // Callback when a bidder is updated
+	metrics       *Metrics // P3-NEW-1: Operational metrics
 }
 
 // NewDynamicRegistry creates a new dynamic registry
@@ -43,7 +108,13 @@ func NewDynamicRegistry(redis RedisClient, refreshPeriod time.Duration) *Dynamic
 		redis:         redis,
 		refreshPeriod: refreshPeriod,
 		stopChan:      make(chan struct{}),
+		metrics:       &Metrics{}, // P3-NEW-1: Initialize metrics
 	}
+}
+
+// GetRegistryMetrics returns the current metrics for the dynamic registry
+func (r *DynamicRegistry) GetRegistryMetrics() Metrics {
+	return r.metrics.GetMetrics()
 }
 
 // SetUpdateCallback sets a callback function to be called when a bidder is updated
@@ -91,9 +162,12 @@ func (r *DynamicRegistry) refreshLoop(ctx context.Context) {
 
 // Refresh loads all bidder configurations from Redis
 func (r *DynamicRegistry) Refresh(ctx context.Context) error {
+	start := time.Now() // P3-NEW-1: Track refresh latency
+
 	// Get all bidder configs from Redis
 	configs, err := r.redis.HGetAll(ctx, redisBiddersHash)
 	if err != nil {
+		r.metrics.recordRefreshError() // P3-NEW-1: Record error
 		return fmt.Errorf("failed to get bidders from Redis: %w", err)
 	}
 
@@ -135,6 +209,15 @@ func (r *DynamicRegistry) Refresh(ctx context.Context) error {
 		}
 	}
 
+	// P3-NEW-1: Record successful refresh with stats
+	enabledCount := 0
+	for _, adapter := range r.adapters {
+		if adapter.IsEnabled() {
+			enabledCount++
+		}
+	}
+	r.metrics.recordRefreshSuccess(time.Since(start), len(r.adapters), enabledCount)
+
 	return nil
 }
 
@@ -143,6 +226,14 @@ func (r *DynamicRegistry) Get(bidderCode string) (*GenericAdapter, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	adapter, ok := r.adapters[bidderCode]
+
+	// P3-NEW-1: Record lookup metrics
+	if ok {
+		r.metrics.recordGetHit()
+	} else {
+		r.metrics.recordGetMiss()
+	}
+
 	return adapter, ok
 }
 

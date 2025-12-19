@@ -192,6 +192,9 @@ func (a *GenericAdapter) MakeBids(request *openrtb.BidRequest, responseData *ada
 		Bids:       make([]*adapters.TypedBid, 0),
 	}
 
+	// P2-NEW-1: Use BuildImpMap for O(1) bid type lookup instead of O(n) per bid
+	impMap := adapters.BuildImpMap(request.Imp)
+
 	// Process each bid
 	for _, seatBid := range bidResp.SeatBid {
 		for i := range seatBid.Bid {
@@ -200,12 +203,9 @@ func (a *GenericAdapter) MakeBids(request *openrtb.BidRequest, responseData *ada
 			// Apply response transformations
 			a.transformBid(bid, config)
 
-			// Determine bid type from impression
-			bidType := a.getBidType(bid, request)
-
 			response.Bids = append(response.Bids, &adapters.TypedBid{
 				Bid:     bid,
-				BidType: bidType,
+				BidType: adapters.GetBidTypeFromMap(bid, impMap),
 			})
 		}
 	}
@@ -317,25 +317,6 @@ func (a *GenericAdapter) buildHeaders(config *BidderConfig) http.Header {
 	}
 
 	return headers
-}
-
-// getBidType determines the bid type from the matching impression
-func (a *GenericAdapter) getBidType(bid *openrtb.Bid, request *openrtb.BidRequest) adapters.BidType {
-	for _, imp := range request.Imp {
-		if imp.ID == bid.ImpID {
-			if imp.Video != nil {
-				return adapters.BidTypeVideo
-			}
-			if imp.Native != nil {
-				return adapters.BidTypeNative
-			}
-			if imp.Audio != nil {
-				return adapters.BidTypeAudio
-			}
-			return adapters.BidTypeBanner
-		}
-	}
-	return adapters.BidTypeBanner
 }
 
 // Info returns bidder information based on the configuration

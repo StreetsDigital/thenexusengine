@@ -201,59 +201,45 @@ func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout ti
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	// Read body with size limit to prevent OOM from malicious bidders
-	body := make([]byte, 0, 4096) // Pre-allocate reasonable initial capacity
-	buf := make([]byte, 4096)
-	totalRead := 0
-
-	// P0-3: Channel for read results to enable context cancellation during read
+	// P1-NEW-1: Use single goroutine for entire read with proper cleanup on cancellation
+	// This prevents goroutine leaks that occurred when spawning per-read goroutines
 	type readResult struct {
-		n   int
-		err error
+		data []byte
+		err  error
 	}
 	readCh := make(chan readResult, 1)
 
-	for {
-		// P0-3: Perform read in goroutine to allow context cancellation during blocking read
-		go func() {
-			n, err := resp.Body.Read(buf)
-			readCh <- readResult{n: n, err: err}
-		}()
+	// Single goroutine for the entire read operation
+	go func() {
+		defer resp.Body.Close()
+		// Read with size limit to prevent OOM from malicious bidders
+		limitedReader := io.LimitReader(resp.Body, maxResponseSize+1) // +1 to detect overflow
+		data, err := io.ReadAll(limitedReader)
+		readCh <- readResult{data: data, err: err}
+	}()
 
-		// P0-3: Wait for either read completion or context cancellation
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case result := <-readCh:
-			if result.n > 0 {
-				totalRead += result.n
-				if totalRead > maxResponseSize {
-					return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
-				}
-				body = append(body, buf[:result.n]...)
-			}
-			if result.err != nil {
-				if result.err == io.EOF {
-					break // Normal end of response - exit select, then break outer loop
-				}
-				// For other errors, return what we have if we got some data
-				if totalRead > 0 {
-					break // Exit select, then break outer loop
-				}
-				return nil, result.err
-			}
-			continue // Continue the for loop
+	// Wait for read completion or context cancellation
+	select {
+	case <-ctx.Done():
+		// Close response body to unblock the read goroutine
+		resp.Body.Close()
+		// Drain channel to allow goroutine to complete cleanly
+		<-readCh
+		return nil, ctx.Err()
+	case result := <-readCh:
+		if result.err != nil {
+			return nil, result.err
 		}
-		break // Exit the for loop after EOF or partial read error
+		if len(result.data) > maxResponseSize {
+			return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
+		}
+		return &ResponseData{
+			StatusCode: resp.StatusCode,
+			Body:       result.data,
+			Headers:    resp.Header,
+		}, nil
 	}
-
-	return &ResponseData{
-		StatusCode: resp.StatusCode,
-		Body:       body,
-		Headers:    resp.Header,
-	}, nil
 }
 
 // bodyReader wraps bytes for http.Request.Body
