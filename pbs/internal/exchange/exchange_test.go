@@ -82,8 +82,9 @@ func TestExchangeRunAuctionNoBidders(t *testing.T) {
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
 			ID: "test-req-1",
+			Site: &openrtb.Site{ID: "site1"},
 			Imp: []openrtb.Imp{
-				{ID: "imp1"},
+				{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}},
 			},
 		},
 	}
@@ -112,15 +113,6 @@ func TestExchangeRunAuctionWithBidders(t *testing.T) {
 		Price: 2.50,
 		AdM:   "<div>test ad</div>",
 	}
-	mock := &mockAdapter{
-		bids: []*adapters.TypedBid{
-			{Bid: mockBid, BidType: adapters.BidTypeBanner},
-		},
-	}
-
-	registry.Register("test-bidder", mock, adapters.BidderInfo{
-		Enabled: true,
-	})
 
 	// Create mock HTTP server for bidder endpoint
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +129,17 @@ func TestExchangeRunAuctionWithBidders(t *testing.T) {
 	}))
 	defer server.Close()
 
+	mock := &mockAdapter{
+		bids: []*adapters.TypedBid{
+			{Bid: mockBid, BidType: adapters.BidTypeBanner},
+		},
+		requests: []*adapters.RequestData{{Method: "POST", URI: server.URL, Body: []byte(`{}`)}},
+	}
+
+	registry.Register("test-bidder", mock, adapters.BidderInfo{
+		Enabled: true,
+	})
+
 	ex := New(registry, &Config{
 		DefaultTimeout: 500 * time.Millisecond,
 		IDREnabled:     false,
@@ -145,6 +148,7 @@ func TestExchangeRunAuctionWithBidders(t *testing.T) {
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
 			ID: "test-req-2",
+			Site: &openrtb.Site{ID: "site1"},
 			Imp: []openrtb.Imp{
 				{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}},
 			},
@@ -204,7 +208,7 @@ func TestExchangeFPDProcessing(t *testing.T) {
 				Ext: json.RawMessage(`{"data":{"interests":["sports","tech"]}}`),
 			},
 			Imp: []openrtb.Imp{
-				{ID: "imp1"},
+				{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}},
 			},
 		},
 	}
@@ -240,6 +244,7 @@ func TestExchangeEIDFiltering(t *testing.T) {
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
 			ID: "test-eid",
+			Site: &openrtb.Site{ID: "site1"},
 			User: &openrtb.User{
 				ID: "user1",
 				EIDs: []openrtb.EID{
@@ -247,7 +252,7 @@ func TestExchangeEIDFiltering(t *testing.T) {
 					{Source: "blocked.com", UIDs: []openrtb.UID{{ID: "blk456"}}},
 				},
 			},
-			Imp: []openrtb.Imp{{ID: "imp1"}},
+			Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 	}
 
@@ -278,7 +283,8 @@ func TestExchangeTimeoutFromRequest(t *testing.T) {
 		BidRequest: &openrtb.BidRequest{
 			ID:   "test-timeout",
 			TMax: 100, // 100ms
-			Imp:  []openrtb.Imp{{ID: "imp1"}},
+			Site: &openrtb.Site{ID: "site1"},
+			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 	}
 
@@ -331,8 +337,9 @@ func TestExchangeDebugInfo(t *testing.T) {
 
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
-			ID:  "test-debug",
-			Imp: []openrtb.Imp{{ID: "imp1"}},
+			ID:   "test-debug",
+			Site: &openrtb.Site{ID: "site1"},
+			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 		Debug: true,
 	}
@@ -562,8 +569,9 @@ func TestBidDeduplication(t *testing.T) {
 
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
-			ID:  "test-dedup",
-			Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+			ID:   "test-dedup",
+			Site: &openrtb.Site{ID: "site1"},
+			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 	}
 
@@ -658,8 +666,9 @@ func TestSecondPriceAuction(t *testing.T) {
 
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
-			ID:  "test-second-price",
-			Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+			ID:   "test-second-price",
+			Site: &openrtb.Site{ID: "site1"},
+			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 	}
 
@@ -731,8 +740,9 @@ func TestFirstPriceAuction(t *testing.T) {
 
 	req := &AuctionRequest{
 		BidRequest: &openrtb.BidRequest{
-			ID:  "test-first-price",
-			Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+			ID:   "test-first-price",
+			Site: &openrtb.Site{ID: "site1"},
+			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
 		},
 	}
 

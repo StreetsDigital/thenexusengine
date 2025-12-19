@@ -433,6 +433,7 @@ func (e *Exchange) runAuctionLogic(validBids []ValidatedBid, impFloors map[strin
 
 		if e.config.AuctionType == SecondPriceAuction {
 			var winningPrice float64
+			originalBidPrice := bids[0].Bid.Bid.Price
 
 			if len(bids) > 1 {
 				// Multiple bids: winner pays second highest + increment
@@ -450,9 +451,12 @@ func (e *Exchange) runAuctionLogic(validBids []ValidatedBid, impFloors map[strin
 				}
 			}
 
-			// Ensure winning price doesn't exceed original bid (safety cap)
-			if winningPrice > bids[0].Bid.Bid.Price {
-				winningPrice = bids[0].Bid.Bid.Price
+			// P2-2: If winning price exceeds bid, reject the bid entirely
+			// A bid that can't meet the second-price threshold shouldn't win
+			if winningPrice > originalBidPrice {
+				// Bid doesn't meet floor requirements, remove from auction
+				bidsByImp[impID] = nil
+				continue
 			}
 			bids[0].Bid.Bid.Price = winningPrice
 		}
@@ -508,6 +512,23 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 		return nil, fmt.Errorf("invalid bid request: must have at least one impression")
 	}
 
+	// P1-2: Validate impression count early to prevent OOM from malicious requests
+	// This check must happen BEFORE allocating maps based on impression count
+	if len(req.BidRequest.Imp) > defaultMaxImpressionsPerRequest {
+		return nil, fmt.Errorf("invalid bid request: too many impressions (max %d, got %d)",
+			defaultMaxImpressionsPerRequest, len(req.BidRequest.Imp))
+	}
+
+	// P2-3: Validate Site/App mutual exclusivity per OpenRTB 2.5 section 3.2.1
+	hasSite := req.BidRequest.Site != nil
+	hasApp := req.BidRequest.App != nil
+	if !hasSite && !hasApp {
+		return nil, fmt.Errorf("invalid bid request: must have either 'site' or 'app' object (OpenRTB 2.5)")
+	}
+	if hasSite && hasApp {
+		return nil, fmt.Errorf("invalid bid request: cannot have both 'site' and 'app' objects (OpenRTB 2.5)")
+	}
+
 	// P1-NEW-2: Validate impression IDs are unique and non-empty per OpenRTB 2.5 section 3.2.4
 	seenImpIDs := make(map[string]bool, len(req.BidRequest.Imp))
 	for i, imp := range req.BidRequest.Imp {
@@ -518,6 +539,11 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			return nil, fmt.Errorf("invalid bid request: duplicate impression id %q (must be unique per OpenRTB 2.5)", imp.ID)
 		}
 		seenImpIDs[imp.ID] = true
+
+		// P2-1: Validate impression has at least one media type per OpenRTB 2.5 section 3.2.4
+		if imp.Banner == nil && imp.Video == nil && imp.Audio == nil && imp.Native == nil {
+			return nil, fmt.Errorf("invalid bid request: impression[%d] has no media type (banner/video/audio/native required)", i)
+		}
 	}
 
 	response := &AuctionResponse{
@@ -868,9 +894,10 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 					// Clone request and apply bidder-specific FPD
 					bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
 
-					// P1-4: Use dynamic adapter's timeout if smaller, with validation bounds
+					// P1-4: Use dynamic adapter's timeout with validation bounds
+					// P2-4: Always validate bounds, then use smaller of dynamic or parent timeout
 					bidderTimeout := timeout
-					if da.GetTimeout() > 0 && da.GetTimeout() < timeout {
+					if da.GetTimeout() > 0 {
 						dynamicTimeout := da.GetTimeout()
 						// Enforce minimum timeout to prevent crashes
 						if dynamicTimeout < minBidderTimeout {
@@ -880,7 +907,10 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 						if dynamicTimeout > maxBidderTimeout {
 							dynamicTimeout = maxBidderTimeout
 						}
-						bidderTimeout = dynamicTimeout
+						// Use the smaller of validated dynamic timeout or parent timeout
+						if dynamicTimeout < bidderTimeout {
+							bidderTimeout = dynamicTimeout
+						}
 					}
 
 					result := e.callBidder(ctx, bidderReq, code, da, bidderTimeout)
@@ -948,6 +978,15 @@ func deepCloneRequest(req *openrtb.BidRequest, limits *CloneLimits) *openrtb.Bid
 		}
 		if req.Site.Content != nil {
 			contentCopy := *req.Site.Content
+			// P2-5: Clone and limit Content.Data segments
+			if len(req.Site.Content.Data) > 0 {
+				dataCount := len(req.Site.Content.Data)
+				if dataCount > limits.MaxDataPerUser {
+					dataCount = limits.MaxDataPerUser
+				}
+				contentCopy.Data = make([]openrtb.Data, dataCount)
+				copy(contentCopy.Data, req.Site.Content.Data[:dataCount])
+			}
 			siteCopy.Content = &contentCopy
 		}
 		clone.Site = &siteCopy
@@ -962,6 +1001,15 @@ func deepCloneRequest(req *openrtb.BidRequest, limits *CloneLimits) *openrtb.Bid
 		}
 		if req.App.Content != nil {
 			contentCopy := *req.App.Content
+			// P2-5: Clone and limit Content.Data segments
+			if len(req.App.Content.Data) > 0 {
+				dataCount := len(req.App.Content.Data)
+				if dataCount > limits.MaxDataPerUser {
+					dataCount = limits.MaxDataPerUser
+				}
+				contentCopy.Data = make([]openrtb.Data, dataCount)
+				copy(contentCopy.Data, req.App.Content.Data[:dataCount])
+			}
 			appCopy.Content = &contentCopy
 		}
 		clone.App = &appCopy
