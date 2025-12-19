@@ -1,6 +1,6 @@
 module github.com/StreetsDigital/thenexusengine/pbs
 
-go 1.24.0
+go 1.23.0
 
 require (
 	github.com/prometheus/client_golang v1.23.2
