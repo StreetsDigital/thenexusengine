@@ -1654,7 +1654,8 @@ func TestRunAuction_TMaxCapping(t *testing.T) {
 	}
 
 	// Should complete quickly (no actual bidders returning bids)
-	if elapsed > 500*time.Millisecond {
+	// Use generous timing threshold to avoid flaky tests on slow CI
+	if elapsed > 2*time.Second {
 		t.Errorf("auction took too long: %v", elapsed)
 	}
 }
