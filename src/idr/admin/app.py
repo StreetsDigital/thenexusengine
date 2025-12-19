@@ -53,7 +53,7 @@ except ImportError:
 
 # Import database components
 try:
-    from src.idr.database.event_pipeline import EventPipeline, SyncEventPipeline
+    from src.idr.database.event_pipeline import SyncEventPipeline
     from src.idr.database.metrics_store import MetricsStore
 
     DB_AVAILABLE = True
@@ -1038,10 +1038,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     # Import publisher config manager
     try:
-        from src.idr.config.publisher_config import (
-            PublisherConfigManager,
-            get_publisher_config_manager,
-        )
+        from src.idr.config.publisher_config import get_publisher_config_manager
 
         PUBLISHER_CONFIG_AVAILABLE = True
     except ImportError:
@@ -1330,7 +1327,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     # Import API key manager
     try:
-        from src.idr.auth.api_keys import APIKeyManager, get_api_key_manager
+        from src.idr.auth.api_keys import get_api_key_manager
 
         API_KEY_MANAGER_AVAILABLE = True
     except ImportError:
@@ -1641,10 +1638,7 @@ def create_app(config_path: Path | None = None) -> Flask:
     try:
         from src.idr.bidders import (
             BidderAlreadyExistsError,
-            BidderConfig,
-            BidderManager,
             BidderNotFoundError,
-            BidderStatus,
             InvalidBidderConfigError,
             get_bidder_manager,
         )
