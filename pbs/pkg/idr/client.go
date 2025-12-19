@@ -25,7 +25,7 @@ type Client struct {
 // NewClient creates a new IDR client
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	if timeout == 0 {
-		timeout = 50 * time.Millisecond // IDR should be fast
+		timeout = 150 * time.Millisecond // IDR timeout - allows for Python processing
 	}
 	return &Client{
 		baseURL: baseURL,
@@ -40,7 +40,7 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 // NewClientWithCircuitBreaker creates a new IDR client with custom circuit breaker config
 func NewClientWithCircuitBreaker(baseURL string, timeout time.Duration, cbConfig *CircuitBreakerConfig) *Client {
 	if timeout == 0 {
-		timeout = 50 * time.Millisecond
+		timeout = 150 * time.Millisecond // IDR timeout - allows for Python processing
 	}
 	return &Client{
 		baseURL: baseURL,
@@ -70,7 +70,9 @@ type SelectPartnersResponse struct {
 type SelectedBidder struct {
 	BidderCode string  `json:"bidder_code"`
 	Score      float64 `json:"score"`
-	Reason     string  `json:"reason"` // ANCHOR, HIGH_SCORE, DIVERSITY, EXPLORATION, etc.
+	Confidence float64 `json:"confidence"`
+	Reason     string  `json:"reason"`            // ANCHOR, HIGH_SCORE, DIVERSITY, EXPLORATION, etc.
+	Category   string  `json:"category,omitempty"` // Bidder category for diversity
 }
 
 // ExcludedBidder represents an excluded bidder (shadow mode)
@@ -111,6 +113,11 @@ func (c *Client) SelectPartners(ctx context.Context, ortbRequest json.RawMessage
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			// Read error response body for better debugging
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			if len(errBody) > 0 {
+				return fmt.Errorf("IDR service returned status %d: %s", resp.StatusCode, string(errBody))
+			}
 			return fmt.Errorf("IDR service returned status %d", resp.StatusCode)
 		}
 
@@ -201,6 +208,11 @@ func (c *Client) setMode(ctx context.Context, path string, enabled bool) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// Read error response body for better debugging
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if len(errBody) > 0 {
+			return fmt.Errorf("IDR service returned status %d: %s", resp.StatusCode, string(errBody))
+		}
 		return fmt.Errorf("IDR service returned status %d", resp.StatusCode)
 	}
 

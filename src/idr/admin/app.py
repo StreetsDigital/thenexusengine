@@ -836,10 +836,10 @@ def create_app(config_path: Path | None = None) -> Flask:
             selected = [
                 {
                     "bidder_code": s.bidder_code,
-                    "score": s.final_score,
-                    "reason": s.selection_reason.name
-                    if hasattr(s, "selection_reason")
-                    else "SELECTED",
+                    "score": s.score,
+                    "confidence": s.confidence,
+                    "reason": s.reason.name if hasattr(s, "reason") else "SELECTED",
+                    "category": s.category,
                 }
                 for s in result.selected
             ]
@@ -849,7 +849,7 @@ def create_app(config_path: Path | None = None) -> Flask:
                 excluded = [
                     {
                         "bidder_code": e.bidder_code,
-                        "score": e.final_score,
+                        "score": e.score,
                         "reason": "EXCLUDED",
                     }
                     for e in result.shadow_log
