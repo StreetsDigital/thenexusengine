@@ -15,6 +15,7 @@ import (
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/fpd"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 	"github.com/StreetsDigital/thenexusengine/pbs/pkg/idr"
+	"github.com/StreetsDigital/thenexusengine/pbs/pkg/logger"
 )
 
 // Exchange orchestrates the auction process
@@ -538,7 +539,15 @@ func (e *Exchange) runAuctionLogic(validBids []ValidatedBid, impFloors map[strin
 			// P2-2: If winning price exceeds bid, reject the bid entirely
 			// A bid that can't meet the second-price threshold shouldn't win
 			if winningPrice > originalBidPrice {
-				// Bid doesn't meet floor requirements, remove from auction
+				// P2-3: Log bid rejection for debugging auction behavior
+				logger.Log.Debug().
+					Str("impID", impID).
+					Str("bidder", bids[0].BidderCode).
+					Float64("bidPrice", originalBidPrice).
+					Float64("clearingPrice", winningPrice).
+					Float64("floor", impFloors[impID]).
+					Float64("increment", e.config.PriceIncrement).
+					Msg("bid rejected: clearing price exceeds bid in second-price auction")
 				bidsByImp[impID] = nil
 				continue
 			}
@@ -860,6 +869,14 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 
 			// Validate bid
 			if validErr := e.validateBid(tb.Bid, bidderCode, impFloors); validErr != nil {
+				// P3-1: Log bid validation failures for debugging
+				logger.Log.Debug().
+					Str("bidder", bidderCode).
+					Str("bidID", tb.Bid.ID).
+					Str("impID", tb.Bid.ImpID).
+					Float64("price", tb.Bid.Price).
+					Err(validErr).
+					Msg("bid validation failed")
 				validationErrors = append(validationErrors, validErr)
 				response.DebugInfo.AppendError(bidderCode, validErr.Error())
 				continue
@@ -920,6 +937,19 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	}
 
 	response.DebugInfo.TotalLatency = time.Since(startTime)
+
+	// P3-1: Log auction completion with summary stats
+	totalBids := 0
+	for _, sb := range allBids {
+		totalBids += len(sb.Bid)
+	}
+	logger.Log.Debug().
+		Str("requestID", req.BidRequest.ID).
+		Int("bidders", len(selectedBidders)).
+		Int("impressions", len(req.BidRequest.Imp)).
+		Int("bids", totalBids).
+		Dur("latency", response.DebugInfo.TotalLatency).
+		Msg("auction completed")
 
 	return response, nil
 }
@@ -1281,6 +1311,11 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 	// P1-NEW-6: Check context after potentially expensive MakeRequests operation
 	select {
 	case <-ctx.Done():
+		// P3-1: Log bidder timeout after MakeRequests
+		logger.Log.Debug().
+			Str("bidder", bidderCode).
+			Dur("elapsed", time.Since(start)).
+			Msg("bidder timed out after MakeRequests")
 		result.Errors = append(result.Errors, ctx.Err())
 		result.Latency = time.Since(start)
 		result.TimedOut = true
@@ -1310,9 +1345,18 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 
 		resp, err := e.httpClient.Do(ctx, reqData, timeout)
 		if err != nil {
+			// P3-1: Log HTTP request failures with context
+			isTimeout := err == context.DeadlineExceeded || err == context.Canceled
+			logger.Log.Debug().
+				Str("bidder", bidderCode).
+				Str("uri", reqData.URI).
+				Dur("elapsed", time.Since(start)).
+				Bool("timeout", isTimeout).
+				Err(err).
+				Msg("bidder HTTP request failed")
 			result.Errors = append(result.Errors, err)
 			// P2-2: Check if this was a timeout error
-			if err == context.DeadlineExceeded || err == context.Canceled {
+			if isTimeout {
 				result.TimedOut = true
 			}
 			continue
