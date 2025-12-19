@@ -21,22 +21,22 @@ import (
 // BidderConfig represents a dynamic bidder configuration
 // loaded from Redis. This mirrors the Python BidderConfig model.
 type BidderConfig struct {
-	BidderCode  string          `json:"bidder_code"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Endpoint    EndpointConfig  `json:"endpoint"`
-	Capabilities CapabilitiesConfig `json:"capabilities"`
-	RateLimits  RateLimitsConfig  `json:"rate_limits"`
+	BidderCode        string                  `json:"bidder_code"`
+	Name              string                  `json:"name"`
+	Description       string                  `json:"description"`
+	Endpoint          EndpointConfig          `json:"endpoint"`
+	Capabilities      CapabilitiesConfig      `json:"capabilities"`
+	RateLimits        RateLimitsConfig        `json:"rate_limits"`
 	RequestTransform  RequestTransformConfig  `json:"request_transform"`
 	ResponseTransform ResponseTransformConfig `json:"response_transform"`
-	Status      string          `json:"status"`
-	GVLVendorID *int            `json:"gvl_vendor_id"`
-	Priority    int             `json:"priority"`
-	MaintainerEmail string      `json:"maintainer_email"`
-	AllowedPublishers []string  `json:"allowed_publishers"`
-	BlockedPublishers []string  `json:"blocked_publishers"`
-	AllowedCountries  []string  `json:"allowed_countries"`
-	BlockedCountries  []string  `json:"blocked_countries"`
+	Status            string                  `json:"status"`
+	GVLVendorID       *int                    `json:"gvl_vendor_id"`
+	Priority          int                     `json:"priority"`
+	MaintainerEmail   string                  `json:"maintainer_email"`
+	AllowedPublishers []string                `json:"allowed_publishers"`
+	BlockedPublishers []string                `json:"blocked_publishers"`
+	AllowedCountries  []string                `json:"allowed_countries"`
+	BlockedCountries  []string                `json:"blocked_countries"`
 }
 
 // EndpointConfig holds endpoint configuration
@@ -56,21 +56,21 @@ type EndpointConfig struct {
 
 // CapabilitiesConfig holds capability information
 type CapabilitiesConfig struct {
-	MediaTypes         []string `json:"media_types"`
-	Currencies         []string `json:"currencies"`
-	SiteEnabled        bool     `json:"site_enabled"`
-	AppEnabled         bool     `json:"app_enabled"`
-	VideoProtocols     []int    `json:"video_protocols"`
-	VideoMimes         []string `json:"video_mimes"`
-	SupportsGDPR       bool     `json:"supports_gdpr"`
-	SupportsCCPA       bool     `json:"supports_ccpa"`
-	SupportsCOPPA      bool     `json:"supports_coppa"`
-	SupportsGPP        bool     `json:"supports_gpp"`
-	SupportsSChain     bool     `json:"supports_schain"`
-	SupportsEIDs       bool     `json:"supports_eids"`
-	SupportsFPD        bool     `json:"supports_first_party_data"`
-	SupportsCTV        bool     `json:"supports_ctv"`
-	SupportsAdPods     bool     `json:"supports_ad_pods"`
+	MediaTypes     []string `json:"media_types"`
+	Currencies     []string `json:"currencies"`
+	SiteEnabled    bool     `json:"site_enabled"`
+	AppEnabled     bool     `json:"app_enabled"`
+	VideoProtocols []int    `json:"video_protocols"`
+	VideoMimes     []string `json:"video_mimes"`
+	SupportsGDPR   bool     `json:"supports_gdpr"`
+	SupportsCCPA   bool     `json:"supports_ccpa"`
+	SupportsCOPPA  bool     `json:"supports_coppa"`
+	SupportsGPP    bool     `json:"supports_gpp"`
+	SupportsSChain bool     `json:"supports_schain"`
+	SupportsEIDs   bool     `json:"supports_eids"`
+	SupportsFPD    bool     `json:"supports_first_party_data"`
+	SupportsCTV    bool     `json:"supports_ctv"`
+	SupportsAdPods bool     `json:"supports_ad_pods"`
 }
 
 // RateLimitsConfig holds rate limiting configuration
@@ -94,11 +94,11 @@ type RequestTransformConfig struct {
 
 // ResponseTransformConfig holds response transformation rules
 type ResponseTransformConfig struct {
-	BidFieldMappings      map[string]string `json:"bid_field_mappings"`
-	PriceAdjustment       float64           `json:"price_adjustment"`
-	CurrencyConversion    bool              `json:"currency_conversion"`
-	CreativeTypeMappings  map[string]string `json:"creative_type_mappings"`
-	ExtractDurationFromVAST bool            `json:"extract_duration_from_vast"`
+	BidFieldMappings        map[string]string `json:"bid_field_mappings"`
+	PriceAdjustment         float64           `json:"price_adjustment"`
+	CurrencyConversion      bool              `json:"currency_conversion"`
+	CreativeTypeMappings    map[string]string `json:"creative_type_mappings"`
+	ExtractDurationFromVAST bool              `json:"extract_duration_from_vast"`
 }
 
 // GenericAdapter implements the Adapter interface for dynamic bidders

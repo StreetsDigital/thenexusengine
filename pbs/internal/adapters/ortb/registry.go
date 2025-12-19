@@ -15,7 +15,7 @@ import (
 
 const (
 	// Redis keys for bidder storage
-	redisBiddersHash  = "nexus:bidders"
+	redisBiddersHash   = "nexus:bidders"
 	redisBiddersActive = "nexus:bidders:active"
 )
 
@@ -24,9 +24,9 @@ type Metrics struct {
 	mu sync.RWMutex
 
 	// Refresh operations
-	RefreshCount      int64         // Total refresh operations
-	RefreshErrors     int64         // Failed refresh operations
-	LastRefreshTime   time.Time     // Time of last successful refresh
+	RefreshCount       int64         // Total refresh operations
+	RefreshErrors      int64         // Failed refresh operations
+	LastRefreshTime    time.Time     // Time of last successful refresh
 	LastRefreshLatency time.Duration // Duration of last refresh
 
 	// Lookup operations
@@ -98,7 +98,7 @@ type DynamicRegistry struct {
 	refreshPeriod time.Duration
 	stopChan      chan struct{}
 	onUpdate      func(string, *BidderConfig) // Callback when a bidder is updated
-	metrics       *Metrics // P3-NEW-1: Operational metrics
+	metrics       *Metrics                    // P3-NEW-1: Operational metrics
 }
 
 // NewDynamicRegistry creates a new dynamic registry

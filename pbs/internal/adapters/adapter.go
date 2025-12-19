@@ -26,18 +26,18 @@ type Adapter interface {
 
 // ExtraRequestInfo contains additional info for request building
 type ExtraRequestInfo struct {
-	PbsEntryPoint string
-	GlobalPrivacy GlobalPrivacy
+	PbsEntryPoint  string
+	GlobalPrivacy  GlobalPrivacy
 	BidderCoreName string
 }
 
 // GlobalPrivacy contains privacy settings
 type GlobalPrivacy struct {
-	GDPR      bool
+	GDPR        bool
 	GDPRConsent string
-	CCPA      string
-	GPP       string
-	GPPSID    []int
+	CCPA        string
+	GPP         string
+	GPPSID      []int
 }
 
 // RequestData represents an HTTP request to a bidder
@@ -64,10 +64,10 @@ type BidderResponse struct {
 
 // TypedBid is a bid with its type
 type TypedBid struct {
-	Bid      *openrtb.Bid
-	BidType  BidType
-	BidVideo *BidVideo
-	BidMeta  *openrtb.ExtBidPrebidMeta
+	Bid          *openrtb.Bid
+	BidType      BidType
+	BidVideo     *BidVideo
+	BidMeta      *openrtb.ExtBidPrebidMeta
 	DealPriority int
 }
 
@@ -128,8 +128,8 @@ type SyncerInfo struct {
 
 // AdapterConfig holds runtime adapter configuration
 type AdapterConfig struct {
-	Endpoint string
-	Disabled bool
+	Endpoint  string
+	Disabled  bool
 	ExtraInfo string
 }
 
