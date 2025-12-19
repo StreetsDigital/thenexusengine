@@ -15,7 +15,8 @@ import (
 
 // Redis key patterns (must match IDR's api_keys.py)
 const (
-	RedisAPIKeysHash = "nexus:api_keys" // hash: api_key -> publisher_id // #nosec G101 -- This is a Redis key name, not a credential
+	// #nosec G101 -- Redis key name, not a credential
+	RedisAPIKeysHash = "nexus:api_keys" // hash: api_key -> publisher_id
 )
 
 // RedisClient interface for API key validation
