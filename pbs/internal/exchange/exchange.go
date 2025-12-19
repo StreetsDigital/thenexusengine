@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,24 +39,79 @@ const (
 	SecondPriceAuction AuctionType = 2
 )
 
+// Default clone allocation limits (P1-3: prevent OOM from malicious requests)
+// P3-1: These are now defaults; can be overridden via CloneLimits config
+const (
+	defaultMaxImpressionsPerRequest = 100 // Maximum impressions to clone
+	defaultMaxEIDsPerUser           = 50  // Maximum EIDs to clone
+	defaultMaxDataPerUser           = 20  // Maximum Data segments to clone
+	defaultMaxDealsPerImp           = 50  // Maximum deals per impression
+	defaultMaxSChainNodes           = 20  // Maximum supply chain nodes
+)
+
+// P1-4: Timeout bounds for dynamic adapter validation
+const (
+	minBidderTimeout = 10 * time.Millisecond  // Minimum reasonable timeout
+	maxBidderTimeout = 5 * time.Second        // Maximum to prevent resource exhaustion
+)
+
+// P2-NEW-2: OpenRTB 2.5 No-Bid Reason (NBR) codes per Section 5.24
+// These explain why an exchange returned no bid for a request
+const (
+	NBRUnknownError     = 0  // Unknown Error
+	NBRTechnicalError   = 1  // Technical Error
+	NBRInvalidRequest   = 2  // Invalid Request
+	NBRKnownWebSpider   = 3  // Known Web Spider
+	NBRNonHumanTraffic  = 4  // Suspected Non-Human Traffic
+	NBRProxyIP          = 5  // Cloud, Data Center, or Proxy IP
+	NBRUnsupportedDevice = 6 // Unsupported Device
+	NBRBlockedPublisher = 7  // Blocked Publisher or Site
+	NBRUnmatchedUser    = 8  // Unmatched User
+	// 500+ reserved for exchange-specific reasons
+	NBRNoBiddersAvailable = 500 // Exchange-specific: No bidders configured/available
+	NBRTimeout            = 501 // Exchange-specific: Request processing timed out
+)
+
+// CloneLimits holds configurable limits for request cloning (P3-1)
+type CloneLimits struct {
+	MaxImpressionsPerRequest int // Maximum impressions to clone (default: 100)
+	MaxEIDsPerUser           int // Maximum EIDs to clone (default: 50)
+	MaxDataPerUser           int // Maximum Data segments to clone (default: 20)
+	MaxDealsPerImp           int // Maximum deals per impression (default: 50)
+	MaxSChainNodes           int // Maximum supply chain nodes (default: 20)
+}
+
+// DefaultCloneLimits returns default clone limits
+func DefaultCloneLimits() *CloneLimits {
+	return &CloneLimits{
+		MaxImpressionsPerRequest: defaultMaxImpressionsPerRequest,
+		MaxEIDsPerUser:           defaultMaxEIDsPerUser,
+		MaxDataPerUser:           defaultMaxDataPerUser,
+		MaxDealsPerImp:           defaultMaxDealsPerImp,
+		MaxSChainNodes:           defaultMaxSChainNodes,
+	}
+}
+
 // Config holds exchange configuration
 type Config struct {
-	DefaultTimeout     time.Duration
-	MaxBidders         int
-	IDREnabled         bool
-	IDRServiceURL      string
-	EventRecordEnabled bool
-	EventBufferSize    int
-	CurrencyConv       bool
-	DefaultCurrency    string
-	FPD                *fpd.Config
+	DefaultTimeout       time.Duration
+	MaxBidders           int
+	MaxConcurrentBidders int // P0-4: Limit concurrent bidder goroutines (0 = unlimited)
+	IDREnabled           bool
+	IDRServiceURL        string
+	EventRecordEnabled   bool
+	EventBufferSize      int
+	CurrencyConv         bool
+	DefaultCurrency      string
+	FPD                  *fpd.Config
+	CloneLimits          *CloneLimits // P3-1: Configurable clone limits
 	// Dynamic bidder configuration
 	DynamicBiddersEnabled bool
 	DynamicRefreshPeriod  time.Duration
 	// Auction configuration
-	AuctionType      AuctionType
-	PriceIncrement   float64 // For second-price auctions (typically 0.01)
-	MinBidPrice      float64 // Minimum valid bid price
+	AuctionType    AuctionType
+	PriceIncrement float64 // For second-price auctions (typically 0.01)
+	MinBidPrice    float64 // Minimum valid bid price
 }
 
 // DefaultConfig returns default configuration
@@ -62,6 +119,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		DefaultTimeout:        1000 * time.Millisecond,
 		MaxBidders:            50,
+		MaxConcurrentBidders:  10, // P0-4: Limit concurrent HTTP requests per auction
 		IDREnabled:            true,
 		IDRServiceURL:         "http://localhost:5050",
 		EventRecordEnabled:    true,
@@ -69,6 +127,7 @@ func DefaultConfig() *Config {
 		CurrencyConv:          false,
 		DefaultCurrency:       "USD",
 		FPD:                   fpd.DefaultConfig(),
+		CloneLimits:           DefaultCloneLimits(), // P3-1: Configurable clone limits
 		DynamicBiddersEnabled: true,
 		DynamicRefreshPeriod:  30 * time.Second,
 		AuctionType:           FirstPriceAuction,
@@ -77,11 +136,79 @@ func DefaultConfig() *Config {
 	}
 }
 
+// validateConfig validates config values and applies sensible defaults for invalid values
+// P1-2: Prevent runtime panics or silent failures from bad configuration
+func validateConfig(config *Config) *Config {
+	defaults := DefaultConfig()
+
+	// Timeout must be positive
+	if config.DefaultTimeout <= 0 {
+		config.DefaultTimeout = defaults.DefaultTimeout
+	}
+
+	// MaxBidders must be positive
+	if config.MaxBidders <= 0 {
+		config.MaxBidders = defaults.MaxBidders
+	}
+
+	// MaxConcurrentBidders must be non-negative (0 means unlimited)
+	if config.MaxConcurrentBidders < 0 {
+		config.MaxConcurrentBidders = defaults.MaxConcurrentBidders
+	}
+
+	// AuctionType must be valid
+	if config.AuctionType != FirstPriceAuction && config.AuctionType != SecondPriceAuction {
+		config.AuctionType = FirstPriceAuction
+	}
+
+	// PriceIncrement must be positive for second-price auctions
+	if config.AuctionType == SecondPriceAuction && config.PriceIncrement <= 0 {
+		config.PriceIncrement = defaults.PriceIncrement
+	}
+
+	// MinBidPrice should not be negative
+	if config.MinBidPrice < 0 {
+		config.MinBidPrice = 0
+	}
+
+	// EventBufferSize must be positive if event recording is enabled
+	if config.EventRecordEnabled && config.EventBufferSize <= 0 {
+		config.EventBufferSize = defaults.EventBufferSize
+	}
+
+	// P3-1: Initialize CloneLimits if nil and validate values
+	if config.CloneLimits == nil {
+		config.CloneLimits = DefaultCloneLimits()
+	} else {
+		defaultLimits := DefaultCloneLimits()
+		if config.CloneLimits.MaxImpressionsPerRequest <= 0 {
+			config.CloneLimits.MaxImpressionsPerRequest = defaultLimits.MaxImpressionsPerRequest
+		}
+		if config.CloneLimits.MaxEIDsPerUser <= 0 {
+			config.CloneLimits.MaxEIDsPerUser = defaultLimits.MaxEIDsPerUser
+		}
+		if config.CloneLimits.MaxDataPerUser <= 0 {
+			config.CloneLimits.MaxDataPerUser = defaultLimits.MaxDataPerUser
+		}
+		if config.CloneLimits.MaxDealsPerImp <= 0 {
+			config.CloneLimits.MaxDealsPerImp = defaultLimits.MaxDealsPerImp
+		}
+		if config.CloneLimits.MaxSChainNodes <= 0 {
+			config.CloneLimits.MaxSChainNodes = defaultLimits.MaxSChainNodes
+		}
+	}
+
+	return config
+}
+
 // New creates a new exchange
 func New(registry *adapters.Registry, config *Config) *Exchange {
 	if config == nil {
 		config = DefaultConfig()
 	}
+
+	// P1-2: Validate and apply defaults for critical config fields
+	config = validateConfig(config)
 
 	// Initialize FPD config if not provided
 	fpdConfig := config.FPD
@@ -150,6 +277,7 @@ type BidderResult struct {
 	Latency    time.Duration
 	Selected   bool
 	Score      float64
+	TimedOut   bool // P2-2: indicates if the bidder request timed out
 }
 
 // DebugInfo contains debug information
@@ -339,6 +467,17 @@ func (e *Exchange) validateBid(bid *openrtb.Bid, bidderCode string, impIDs map[s
 		}
 	}
 
+	// P2-1: Validate that bid has creative content (AdM or NURL required)
+	// OpenRTB 2.x requires either inline markup (adm) or a URL to fetch it (nurl)
+	if bid.AdM == "" && bid.NURL == "" {
+		return &BidValidationError{
+			BidID:      bid.ID,
+			ImpID:      bid.ImpID,
+			BidderCode: bidderCode,
+			Reason:     "bid must have either adm or nurl",
+		}
+	}
+
 	return nil
 }
 
@@ -359,7 +498,7 @@ type ValidatedBid struct {
 
 // runAuctionLogic applies auction rules (first-price or second-price) to validated bids
 // Returns bids grouped by impression with prices adjusted according to auction type
-func (e *Exchange) runAuctionLogic(validBids []ValidatedBid) map[string][]ValidatedBid {
+func (e *Exchange) runAuctionLogic(validBids []ValidatedBid, impFloors map[string]float64) map[string][]ValidatedBid {
 	// Group bids by impression
 	bidsByImp := make(map[string][]ValidatedBid)
 	for _, vb := range validBids {
@@ -376,13 +515,32 @@ func (e *Exchange) runAuctionLogic(validBids []ValidatedBid) map[string][]Valida
 		// Sort by price descending
 		sortBidsByPrice(bids)
 
-		if e.config.AuctionType == SecondPriceAuction && len(bids) > 1 {
-			// Second-price: winner pays second highest + increment
-			secondPrice := bids[1].Bid.Bid.Price
-			winningPrice := secondPrice + e.config.PriceIncrement
-			// Ensure winning price doesn't exceed original bid
-			if winningPrice > bids[0].Bid.Bid.Price {
-				winningPrice = bids[0].Bid.Bid.Price
+		if e.config.AuctionType == SecondPriceAuction {
+			var winningPrice float64
+			originalBidPrice := bids[0].Bid.Bid.Price
+
+			if len(bids) > 1 {
+				// Multiple bids: winner pays second highest + increment
+				// Use integer arithmetic to avoid floating-point precision errors (P0-2)
+				secondPrice := bids[1].Bid.Bid.Price
+				winningPrice = roundToCents(secondPrice + e.config.PriceIncrement)
+			} else {
+				// P0-6: Single bid - use floor as "second price" for consistent auction semantics
+				floor := impFloors[impID]
+				if floor > 0 {
+					winningPrice = roundToCents(floor + e.config.PriceIncrement)
+				} else {
+					// No floor - winner pays minimum bid price + increment
+					winningPrice = roundToCents(e.config.MinBidPrice + e.config.PriceIncrement)
+				}
+			}
+
+			// P2-2: If winning price exceeds bid, reject the bid entirely
+			// A bid that can't meet the second-price threshold shouldn't win
+			if winningPrice > originalBidPrice {
+				// Bid doesn't meet floor requirements, remove from auction
+				bidsByImp[impID] = nil
+				continue
 			}
 			bids[0].Bid.Bid.Price = winningPrice
 		}
@@ -395,20 +553,91 @@ func (e *Exchange) runAuctionLogic(validBids []ValidatedBid) map[string][]Valida
 }
 
 // sortBidsByPrice sorts bids in descending order by price (highest first)
+// Includes defensive nil checks to prevent panics
 func sortBidsByPrice(bids []ValidatedBid) {
 	// Simple insertion sort - typically small number of bids per impression
 	for i := 1; i < len(bids); i++ {
 		j := i
-		for j > 0 && bids[j].Bid.Bid.Price > bids[j-1].Bid.Bid.Price {
-			bids[j], bids[j-1] = bids[j-1], bids[j]
-			j--
+		for j > 0 {
+			// Defensive nil checks (P1-5)
+			if bids[j].Bid == nil || bids[j].Bid.Bid == nil ||
+				bids[j-1].Bid == nil || bids[j-1].Bid.Bid == nil {
+				break
+			}
+			if bids[j].Bid.Bid.Price > bids[j-1].Bid.Bid.Price {
+				bids[j], bids[j-1] = bids[j-1], bids[j]
+				j--
+			} else {
+				break
+			}
 		}
 	}
+}
+
+// roundToCents rounds a price to 2 decimal places
+// P2-NEW-3: Use math.Round for correct rounding of all values including edge cases
+func roundToCents(price float64) float64 {
+	// math.Round correctly handles all cases including negative numbers and .5 values
+	return math.Round(price*100) / 100.0
 }
 
 // RunAuction executes the auction
 func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*AuctionResponse, error) {
 	startTime := time.Now()
+
+	// P0-7: Validate required BidRequest fields per OpenRTB 2.x spec
+	if req.BidRequest == nil {
+		return nil, fmt.Errorf("invalid auction request: missing bid request")
+	}
+	if req.BidRequest.ID == "" {
+		return nil, fmt.Errorf("invalid bid request: missing required field 'id'")
+	}
+	if len(req.BidRequest.Imp) == 0 {
+		return nil, fmt.Errorf("invalid bid request: must have at least one impression")
+	}
+
+	// P1-2: Validate impression count early to prevent OOM from malicious requests
+	// This check must happen BEFORE allocating maps based on impression count
+	if len(req.BidRequest.Imp) > defaultMaxImpressionsPerRequest {
+		return nil, fmt.Errorf("invalid bid request: too many impressions (max %d, got %d)",
+			defaultMaxImpressionsPerRequest, len(req.BidRequest.Imp))
+	}
+
+	// P2-3: Validate Site/App mutual exclusivity per OpenRTB 2.5 section 3.2.1
+	hasSite := req.BidRequest.Site != nil
+	hasApp := req.BidRequest.App != nil
+	if !hasSite && !hasApp {
+		return nil, fmt.Errorf("invalid bid request: must have either 'site' or 'app' object (OpenRTB 2.5)")
+	}
+	if hasSite && hasApp {
+		return nil, fmt.Errorf("invalid bid request: cannot have both 'site' and 'app' objects (OpenRTB 2.5)")
+	}
+
+	// P1-NEW-2: Validate impression IDs are unique and non-empty per OpenRTB 2.5 section 3.2.4
+	seenImpIDs := make(map[string]bool, len(req.BidRequest.Imp))
+	for i, imp := range req.BidRequest.Imp {
+		if imp.ID == "" {
+			return nil, fmt.Errorf("invalid bid request: impression[%d] has empty id (required by OpenRTB 2.5)", i)
+		}
+		if seenImpIDs[imp.ID] {
+			return nil, fmt.Errorf("invalid bid request: duplicate impression id %q (must be unique per OpenRTB 2.5)", imp.ID)
+		}
+		seenImpIDs[imp.ID] = true
+
+		// P2-1: Validate impression has at least one media type per OpenRTB 2.5 section 3.2.4
+		if imp.Banner == nil && imp.Video == nil && imp.Audio == nil && imp.Native == nil {
+			return nil, fmt.Errorf("invalid bid request: impression[%d] has no media type (banner/video/audio/native required)", i)
+		}
+
+		// P1-NEW-4: Validate banner dimensions per OpenRTB 2.5 section 3.2.6
+		if imp.Banner != nil {
+			hasExplicitSize := imp.Banner.W > 0 && imp.Banner.H > 0
+			hasFormat := len(imp.Banner.Format) > 0
+			if !hasExplicitSize && !hasFormat {
+				return nil, fmt.Errorf("invalid bid request: impression[%d] banner must have either w/h or format array (OpenRTB 2.5)", i)
+			}
+		}
+	}
 
 	response := &AuctionResponse{
 		BidderResults: make(map[string]*BidderResult),
@@ -426,9 +655,16 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	}
 
 	// Get timeout from request or config
+	// P1-NEW-1: Validate TMax bounds to prevent abuse
 	timeout := req.Timeout
 	if timeout == 0 && req.BidRequest.TMax > 0 {
-		timeout = time.Duration(req.BidRequest.TMax) * time.Millisecond
+		tmax := req.BidRequest.TMax
+		// Cap TMax at reasonable maximum (10 seconds) to prevent resource exhaustion
+		const maxAllowedTMax = 10000 // 10 seconds in milliseconds
+		if tmax > maxAllowedTMax {
+			tmax = maxAllowedTMax
+		}
+		timeout = time.Duration(tmax) * time.Millisecond
 	}
 	if timeout == 0 {
 		timeout = e.config.DefaultTimeout
@@ -448,7 +684,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	}
 
 	if len(availableBidders) == 0 {
-		response.BidResponse = e.buildEmptyResponse(req.BidRequest)
+		response.BidResponse = e.buildEmptyResponse(req.BidRequest, NBRNoBiddersAvailable)
 		return response, nil
 	}
 
@@ -457,23 +693,31 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	if e.idrClient != nil && e.config.IDREnabled {
 		idrStart := time.Now()
 
-		reqJSON, _ := json.Marshal(req.BidRequest)
-		idrResult, err := e.idrClient.SelectPartners(ctx, reqJSON, availableBidders)
+		// P1-5: Handle JSON marshaling errors properly
+		reqJSON, marshalErr := json.Marshal(req.BidRequest)
+		if marshalErr != nil {
+			// Log error but continue with all bidders as fallback
+			response.DebugInfo.AddError("idr", []string{
+				fmt.Sprintf("failed to marshal request for IDR: %v", marshalErr),
+			})
+		} else {
+			idrResult, err := e.idrClient.SelectPartners(ctx, reqJSON, availableBidders)
 
-		response.DebugInfo.IDRLatency = time.Since(idrStart)
+			response.DebugInfo.IDRLatency = time.Since(idrStart)
 
-		if err == nil && idrResult != nil {
-			response.IDRResult = idrResult
-			selectedBidders = make([]string, 0, len(idrResult.SelectedBidders))
-			for _, sb := range idrResult.SelectedBidders {
-				selectedBidders = append(selectedBidders, sb.BidderCode)
+			if err == nil && idrResult != nil {
+				response.IDRResult = idrResult
+				selectedBidders = make([]string, 0, len(idrResult.SelectedBidders))
+				for _, sb := range idrResult.SelectedBidders {
+					selectedBidders = append(selectedBidders, sb.BidderCode)
+				}
+
+				for _, eb := range idrResult.ExcludedBidders {
+					response.DebugInfo.ExcludedBidders = append(response.DebugInfo.ExcludedBidders, eb.BidderCode)
+				}
 			}
-
-			for _, eb := range idrResult.ExcludedBidders {
-				response.DebugInfo.ExcludedBidders = append(response.DebugInfo.ExcludedBidders, eb.BidderCode)
-			}
+			// If IDR fails, fall back to all bidders
 		}
-		// If IDR fails, fall back to all bidders
 	}
 
 	response.DebugInfo.SelectedBidders = selectedBidders
@@ -532,6 +776,17 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 		publisherID = req.BidRequest.Site.Publisher.ID
 	}
 
+	// P1-2: Check context deadline before expensive validation work
+	// If we've already timed out, return early with whatever we have
+	select {
+	case <-ctx.Done():
+		response.DebugInfo.TotalLatency = time.Since(startTime)
+		response.BidResponse = e.buildEmptyResponse(req.BidRequest, NBRTimeout)
+		return response, nil // Return empty response rather than error on timeout
+	default:
+		// Context still valid, proceed with validation
+	}
+
 	// Build impression floor map for bid validation
 	impFloors := buildImpFloorMap(req.BidRequest)
 
@@ -566,7 +821,16 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			hadError := len(result.Errors) > 0
 			var errorMsg string
 			if hadError {
-				errorMsg = result.Errors[0].Error()
+				// P2-7: Aggregate all errors instead of just the first
+				if len(result.Errors) == 1 {
+					errorMsg = result.Errors[0].Error()
+				} else {
+					errMsgs := make([]string, len(result.Errors))
+					for i, err := range result.Errors {
+						errMsgs[i] = err.Error()
+					}
+					errorMsg = fmt.Sprintf("%d errors: %s", len(result.Errors), strings.Join(errMsgs, "; "))
+				}
 			}
 
 			e.eventRecorder.RecordBidResponse(
@@ -581,7 +845,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 				mediaType,
 				adSize,
 				publisherID,
-				false, // timedOut - would need to check context
+				result.TimedOut, // P2-2: use actual timeout status
 				hadError,
 				errorMsg,
 			)
@@ -624,7 +888,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	}
 
 	// Apply auction logic (first-price or second-price)
-	auctionedBids := e.runAuctionLogic(validBids)
+	auctionedBids := e.runAuctionLogic(validBids, impFloors)
 
 	// Build seat bids from auctioned results
 	seatBidMap := make(map[string]*openrtb.SeatBid)
@@ -666,10 +930,18 @@ func (e *Exchange) callBidders(ctx context.Context, req *openrtb.BidRequest, bid
 }
 
 // callBiddersWithFPD calls all selected bidders in parallel with FPD support
+// P0-1: Uses sync.Map for thread-safe result collection
+// P0-4: Uses semaphore to limit concurrent bidder goroutines
 func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidRequest, bidders []string, timeout time.Duration, bidderFPD fpd.BidderFPD) map[string]*BidderResult {
-	results := make(map[string]*BidderResult)
-	var mu sync.Mutex
+	var results sync.Map // P0-1: Thread-safe map for concurrent writes
 	var wg sync.WaitGroup
+
+	// P0-4: Create semaphore to limit concurrent bidder calls
+	maxConcurrent := e.config.MaxConcurrentBidders
+	if maxConcurrent <= 0 {
+		maxConcurrent = 10 // Default limit
+	}
+	sem := make(chan struct{}, maxConcurrent)
 
 	for _, bidderCode := range bidders {
 		// Try static registry first
@@ -679,14 +951,26 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 			go func(code string, awi adapters.AdapterWithInfo) {
 				defer wg.Done()
 
+				// P0-4: Acquire semaphore (blocks if at capacity)
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }() // Release on completion
+				case <-ctx.Done():
+					// Context cancelled while waiting for semaphore
+					results.Store(code, &BidderResult{
+						BidderCode: code,
+						Errors:     []error{ctx.Err()},
+						TimedOut:   true,
+					})
+					return
+				}
+
 				// Clone request and apply bidder-specific FPD
 				bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
 
 				result := e.callBidder(ctx, bidderReq, code, awi.Adapter, timeout)
 
-				mu.Lock()
-				results[code] = result
-				mu.Unlock()
+				results.Store(code, result) // P0-1: Thread-safe store
 			}(bidderCode, adapterWithInfo)
 			continue
 		}
@@ -699,34 +983,66 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 				go func(code string, da *ortb.GenericAdapter) {
 					defer wg.Done()
 
+					// P0-4: Acquire semaphore (blocks if at capacity)
+					select {
+					case sem <- struct{}{}:
+						defer func() { <-sem }() // Release on completion
+					case <-ctx.Done():
+						// Context cancelled while waiting for semaphore
+						results.Store(code, &BidderResult{
+							BidderCode: code,
+							Errors:     []error{ctx.Err()},
+							TimedOut:   true,
+						})
+						return
+					}
+
 					// Clone request and apply bidder-specific FPD
 					bidderReq := e.cloneRequestWithFPD(req, code, bidderFPD)
 
-					// Use dynamic adapter's timeout if smaller
+					// P1-4: Use dynamic adapter's timeout with validation bounds
+					// P2-4: Always validate bounds, then use smaller of dynamic or parent timeout
 					bidderTimeout := timeout
-					if da.GetTimeout() > 0 && da.GetTimeout() < timeout {
-						bidderTimeout = da.GetTimeout()
+					if da.GetTimeout() > 0 {
+						dynamicTimeout := da.GetTimeout()
+						// Enforce minimum timeout to prevent crashes
+						if dynamicTimeout < minBidderTimeout {
+							dynamicTimeout = minBidderTimeout
+						}
+						// Enforce maximum timeout to prevent resource exhaustion
+						if dynamicTimeout > maxBidderTimeout {
+							dynamicTimeout = maxBidderTimeout
+						}
+						// Use the smaller of validated dynamic timeout or parent timeout
+						if dynamicTimeout < bidderTimeout {
+							bidderTimeout = dynamicTimeout
+						}
 					}
 
 					result := e.callBidder(ctx, bidderReq, code, da, bidderTimeout)
 
-					mu.Lock()
-					results[code] = result
-					mu.Unlock()
+					results.Store(code, result) // P0-1: Thread-safe store
 				}(bidderCode, dynamicAdapter)
 			}
 		}
 	}
 
 	wg.Wait()
-	return results
+
+	// P0-1: Convert sync.Map to regular map for return
+	finalResults := make(map[string]*BidderResult)
+	results.Range(func(key, value interface{}) bool {
+		finalResults[key.(string)] = value.(*BidderResult)
+		return true
+	})
+	return finalResults
 }
 
 // cloneRequestWithFPD creates a deep copy of the request with bidder-specific FPD applied
 // and enforces USD currency for all bid requests
 func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode string, bidderFPD fpd.BidderFPD) *openrtb.BidRequest {
 	// Always clone to ensure thread safety and allow currency normalization
-	clone := deepCloneRequest(req)
+	clone := deepCloneRequest(req, e.config.CloneLimits)
 
 	// Enforce USD currency on all outgoing requests
 	// This ensures all bidders compete in the same currency without needing forex conversion
@@ -755,8 +1071,39 @@ func (e *Exchange) cloneRequestWithFPD(req *openrtb.BidRequest, bidderCode strin
 
 // deepCloneRequest creates a deep copy of the BidRequest to avoid race conditions
 // when multiple bidders modify request data concurrently
-func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
+// P3-1: Uses configurable limits to bound allocations
+func deepCloneRequest(req *openrtb.BidRequest, limits *CloneLimits) *openrtb.BidRequest {
 	clone := *req
+
+	// P1-NEW-2: Deep copy top-level string slices to prevent shared references
+	if len(req.Cur) > 0 {
+		clone.Cur = make([]string, len(req.Cur))
+		copy(clone.Cur, req.Cur)
+	}
+	if len(req.WSeat) > 0 {
+		clone.WSeat = make([]string, len(req.WSeat))
+		copy(clone.WSeat, req.WSeat)
+	}
+	if len(req.BSeat) > 0 {
+		clone.BSeat = make([]string, len(req.BSeat))
+		copy(clone.BSeat, req.BSeat)
+	}
+	if len(req.WLang) > 0 {
+		clone.WLang = make([]string, len(req.WLang))
+		copy(clone.WLang, req.WLang)
+	}
+	if len(req.BCat) > 0 {
+		clone.BCat = make([]string, len(req.BCat))
+		copy(clone.BCat, req.BCat)
+	}
+	if len(req.BAdv) > 0 {
+		clone.BAdv = make([]string, len(req.BAdv))
+		copy(clone.BAdv, req.BAdv)
+	}
+	if len(req.BApp) > 0 {
+		clone.BApp = make([]string, len(req.BApp))
+		copy(clone.BApp, req.BApp)
+	}
 
 	// Deep copy Site
 	if req.Site != nil {
@@ -767,6 +1114,15 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 		}
 		if req.Site.Content != nil {
 			contentCopy := *req.Site.Content
+			// P2-5: Clone and limit Content.Data segments
+			if len(req.Site.Content.Data) > 0 {
+				dataCount := len(req.Site.Content.Data)
+				if dataCount > limits.MaxDataPerUser {
+					dataCount = limits.MaxDataPerUser
+				}
+				contentCopy.Data = make([]openrtb.Data, dataCount)
+				copy(contentCopy.Data, req.Site.Content.Data[:dataCount])
+			}
 			siteCopy.Content = &contentCopy
 		}
 		clone.Site = &siteCopy
@@ -781,6 +1137,15 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 		}
 		if req.App.Content != nil {
 			contentCopy := *req.App.Content
+			// P2-5: Clone and limit Content.Data segments
+			if len(req.App.Content.Data) > 0 {
+				dataCount := len(req.App.Content.Data)
+				if dataCount > limits.MaxDataPerUser {
+					dataCount = limits.MaxDataPerUser
+				}
+				contentCopy.Data = make([]openrtb.Data, dataCount)
+				copy(contentCopy.Data, req.App.Content.Data[:dataCount])
+			}
 			appCopy.Content = &contentCopy
 		}
 		clone.App = &appCopy
@@ -793,15 +1158,23 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 			geoCopy := *req.User.Geo
 			userCopy.Geo = &geoCopy
 		}
-		// Deep copy EIDs slice
+		// Deep copy EIDs slice (P1-3: bounded allocation)
 		if len(req.User.EIDs) > 0 {
-			userCopy.EIDs = make([]openrtb.EID, len(req.User.EIDs))
-			copy(userCopy.EIDs, req.User.EIDs)
+			eidCount := len(req.User.EIDs)
+			if eidCount > limits.MaxEIDsPerUser {
+				eidCount = limits.MaxEIDsPerUser
+			}
+			userCopy.EIDs = make([]openrtb.EID, eidCount)
+			copy(userCopy.EIDs, req.User.EIDs[:eidCount])
 		}
-		// Deep copy Data slice
+		// Deep copy Data slice (P1-3: bounded allocation)
 		if len(req.User.Data) > 0 {
-			userCopy.Data = make([]openrtb.Data, len(req.User.Data))
-			copy(userCopy.Data, req.User.Data)
+			dataCount := len(req.User.Data)
+			if dataCount > limits.MaxDataPerUser {
+				dataCount = limits.MaxDataPerUser
+			}
+			userCopy.Data = make([]openrtb.Data, dataCount)
+			copy(userCopy.Data, req.User.Data[:dataCount])
 		}
 		clone.User = &userCopy
 	}
@@ -827,19 +1200,29 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 		sourceCopy := *req.Source
 		if req.Source.SChain != nil {
 			schainCopy := *req.Source.SChain
+			// P1-3: bounded allocation for supply chain nodes
 			if len(req.Source.SChain.Nodes) > 0 {
-				schainCopy.Nodes = make([]openrtb.SupplyChainNode, len(req.Source.SChain.Nodes))
-				copy(schainCopy.Nodes, req.Source.SChain.Nodes)
+				nodeCount := len(req.Source.SChain.Nodes)
+				if nodeCount > limits.MaxSChainNodes {
+					nodeCount = limits.MaxSChainNodes
+				}
+				schainCopy.Nodes = make([]openrtb.SupplyChainNode, nodeCount)
+				copy(schainCopy.Nodes, req.Source.SChain.Nodes[:nodeCount])
 			}
 			sourceCopy.SChain = &schainCopy
 		}
 		clone.Source = &sourceCopy
 	}
 
-	// Deep copy Imp slice
+	// Deep copy Imp slice (P1-3: bounded allocation)
 	if len(req.Imp) > 0 {
-		clone.Imp = make([]openrtb.Imp, len(req.Imp))
-		for i, imp := range req.Imp {
+		impCount := len(req.Imp)
+		if impCount > limits.MaxImpressionsPerRequest {
+			impCount = limits.MaxImpressionsPerRequest
+		}
+		clone.Imp = make([]openrtb.Imp, impCount)
+		for i := 0; i < impCount; i++ {
+			imp := req.Imp[i]
 			impCopy := imp
 			if imp.Banner != nil {
 				bannerCopy := *imp.Banner
@@ -859,9 +1242,14 @@ func deepCloneRequest(req *openrtb.BidRequest) *openrtb.BidRequest {
 			}
 			if imp.PMP != nil {
 				pmpCopy := *imp.PMP
+				// P1-3: bounded allocation for deals
 				if len(imp.PMP.Deals) > 0 {
-					pmpCopy.Deals = make([]openrtb.Deal, len(imp.PMP.Deals))
-					copy(pmpCopy.Deals, imp.PMP.Deals)
+					dealCount := len(imp.PMP.Deals)
+					if dealCount > limits.MaxDealsPerImp {
+						dealCount = limits.MaxDealsPerImp
+					}
+					pmpCopy.Deals = make([]openrtb.Deal, dealCount)
+					copy(pmpCopy.Deals, imp.PMP.Deals[:dealCount])
 				}
 				impCopy.PMP = &pmpCopy
 			}
@@ -890,6 +1278,17 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 		result.Errors = append(result.Errors, errs...)
 	}
 
+	// P1-NEW-6: Check context after potentially expensive MakeRequests operation
+	select {
+	case <-ctx.Done():
+		result.Errors = append(result.Errors, ctx.Err())
+		result.Latency = time.Since(start)
+		result.TimedOut = true
+		return result
+	default:
+		// Context still valid, continue
+	}
+
 	if len(requests) == 0 {
 		result.Latency = time.Since(start)
 		return result
@@ -903,6 +1302,7 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 		case <-ctx.Done():
 			result.Errors = append(result.Errors, ctx.Err())
 			result.Latency = time.Since(start)
+			result.TimedOut = true // P2-2: mark as timed out
 			return result
 		default:
 			// Context still valid, proceed with request
@@ -911,6 +1311,10 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 		resp, err := e.httpClient.Do(ctx, reqData, timeout)
 		if err != nil {
 			result.Errors = append(result.Errors, err)
+			// P2-2: Check if this was a timeout error
+			if err == context.DeadlineExceeded || err == context.Canceled {
+				result.TimedOut = true
+			}
 			continue
 		}
 
@@ -920,14 +1324,31 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 		}
 
 		if bidderResp != nil {
-			// Validate BidResponse.ID matches BidRequest.ID (OpenRTB 2.x requirement)
+			// P2-5: Validate BidResponse.ID matches BidRequest.ID (OpenRTB 2.x requirement)
+			// Per spec, response ID must echo request ID - reject on mismatch
 			if bidderResp.ResponseID != "" && bidderResp.ResponseID != req.ID {
 				result.Errors = append(result.Errors, fmt.Errorf(
-					"response ID mismatch from %s: expected %q, got %q",
+					"response ID mismatch from %s: expected %q, got %q (bids rejected)",
 					bidderCode, req.ID, bidderResp.ResponseID,
 				))
-				// Still collect bids but log the mismatch as a warning
+				continue // Reject all bids from this response
 			}
+
+			// P1-NEW-3: Normalize and validate response currency
+			// Per OpenRTB 2.5 spec section 7.2, empty currency means USD
+			responseCurrency := bidderResp.Currency
+			if responseCurrency == "" {
+				responseCurrency = "USD" // OpenRTB 2.5 default
+			}
+			if responseCurrency != e.config.DefaultCurrency {
+				result.Errors = append(result.Errors, fmt.Errorf(
+					"currency mismatch from %s: expected %s, got %s (bids rejected)",
+					bidderCode, e.config.DefaultCurrency, responseCurrency,
+				))
+				// Skip bids with wrong currency - can't safely compare prices
+				continue
+			}
+
 			allBids = append(allBids, bidderResp.Bids...)
 		}
 	}
@@ -937,12 +1358,14 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 	return result
 }
 
-// buildEmptyResponse creates an empty bid response
-func (e *Exchange) buildEmptyResponse(req *openrtb.BidRequest) *openrtb.BidResponse {
+// buildEmptyResponse creates an empty bid response with optional NBR code
+// P2-NEW-2: Include NBR (No-Bid Reason) for debugging per OpenRTB 2.5
+func (e *Exchange) buildEmptyResponse(req *openrtb.BidRequest, nbr int) *openrtb.BidResponse {
 	return &openrtb.BidResponse{
 		ID:      req.ID,
 		SeatBid: []openrtb.SeatBid{},
 		Cur:     e.config.DefaultCurrency,
+		NBR:     nbr,
 	}
 }
 

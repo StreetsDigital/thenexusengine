@@ -74,14 +74,18 @@ func (a *Adapter) MakeBids(request *openrtb.BidRequest, responseData *adapters.R
 	}
 
 	response := &adapters.BidderResponse{
-		Currency: bidResp.Cur,
-		Bids:     make([]*adapters.TypedBid, 0),
+		Currency:   bidResp.Cur,
+		ResponseID: bidResp.ID, // P1-1: Include ResponseID for validation
+		Bids:       make([]*adapters.TypedBid, 0),
 	}
+
+	// P2-3: Build impression map once for O(1) lookups instead of O(n) per bid
+	impMap := adapters.BuildImpMap(request.Imp)
 
 	for _, seatBid := range bidResp.SeatBid {
 		for i := range seatBid.Bid {
 			bid := &seatBid.Bid[i]
-			bidType := getBidType(bid, request)
+			bidType := adapters.GetBidTypeFromMap(bid, impMap)
 
 			response.Bids = append(response.Bids, &adapters.TypedBid{
 				Bid:     bid,
@@ -91,25 +95,6 @@ func (a *Adapter) MakeBids(request *openrtb.BidRequest, responseData *adapters.R
 	}
 
 	return response, nil
-}
-
-// getBidType determines bid type from impression
-func getBidType(bid *openrtb.Bid, request *openrtb.BidRequest) adapters.BidType {
-	for _, imp := range request.Imp {
-		if imp.ID == bid.ImpID {
-			if imp.Video != nil {
-				return adapters.BidTypeVideo
-			}
-			if imp.Native != nil {
-				return adapters.BidTypeNative
-			}
-			if imp.Audio != nil {
-				return adapters.BidTypeAudio
-			}
-			return adapters.BidTypeBanner
-		}
-	}
-	return adapters.BidTypeBanner
 }
 
 // Info returns bidder information

@@ -58,7 +58,7 @@ type ResponseData struct {
 type BidderResponse struct {
 	Bids       []*TypedBid
 	Currency   string
-	ResponseID string // OpenRTB response ID - should match request ID
+	ResponseID string // P2-5: Original BidResponse.ID for validation against request
 }
 
 // TypedBid is a bid with its type
@@ -167,11 +167,20 @@ func NewHTTPClient(timeout time.Duration) *DefaultHTTPClient {
 
 // Do executes an HTTP request with proper timeout handling
 func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout time.Duration) (*ResponseData, error) {
-	// Create timeout context for this specific request if timeout is provided
+	// P1-3: Respect parent context deadline - use shorter of parent deadline or specified timeout
 	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+		if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
+			remaining := time.Until(deadline)
+			if remaining < timeout {
+				timeout = remaining // Use parent's shorter deadline
+			}
+		}
+		// Only create new context if we still have positive timeout
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URI, nil)
@@ -192,46 +201,45 @@ func (c *DefaultHTTPClient) Do(ctx context.Context, req *RequestData, timeout ti
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	// Read body with size limit to prevent OOM from malicious bidders
-	body := make([]byte, 0, 4096) // Pre-allocate reasonable initial capacity
-	buf := make([]byte, 4096)
-	totalRead := 0
-
-	for {
-		// Check context before each read to avoid blocking on slow responses
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			totalRead += n
-			if totalRead > maxResponseSize {
-				return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
-			}
-			body = append(body, buf[:n]...)
-		}
-		if err != nil {
-			if err == io.EOF {
-				break // Normal end of response
-			}
-			// For other errors, return what we have if we got some data
-			if totalRead > 0 {
-				break
-			}
-			return nil, err
-		}
+	// P1-NEW-1: Use single goroutine for entire read with proper cleanup on cancellation
+	// This prevents goroutine leaks that occurred when spawning per-read goroutines
+	type readResult struct {
+		data []byte
+		err  error
 	}
+	readCh := make(chan readResult, 1)
 
-	return &ResponseData{
-		StatusCode: resp.StatusCode,
-		Body:       body,
-		Headers:    resp.Header,
-	}, nil
+	// Single goroutine for the entire read operation
+	go func() {
+		defer resp.Body.Close()
+		// Read with size limit to prevent OOM from malicious bidders
+		limitedReader := io.LimitReader(resp.Body, maxResponseSize+1) // +1 to detect overflow
+		data, err := io.ReadAll(limitedReader)
+		readCh <- readResult{data: data, err: err}
+	}()
+
+	// Wait for read completion or context cancellation
+	select {
+	case <-ctx.Done():
+		// Close response body to unblock the read goroutine
+		resp.Body.Close()
+		// Drain channel to allow goroutine to complete cleanly
+		<-readCh
+		return nil, ctx.Err()
+	case result := <-readCh:
+		if result.err != nil {
+			return nil, result.err
+		}
+		if len(result.data) > maxResponseSize {
+			return nil, fmt.Errorf("response too large: exceeded %d bytes", maxResponseSize)
+		}
+		return &ResponseData{
+			StatusCode: resp.StatusCode,
+			Body:       result.data,
+			Headers:    resp.Header,
+		}, nil
+	}
 }
 
 // bodyReader wraps bytes for http.Request.Body
