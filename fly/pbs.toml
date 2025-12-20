@@ -36,8 +36,8 @@ primary_region = "iad"  # US East - change based on your users
 
   [http_service.concurrency]
     type = "requests"
-    hard_limit = 500
-    soft_limit = 400
+    hard_limit = 200  # Realistic for 75 RPS peak × 200ms = 15 concurrent
+    soft_limit = 150
 
 [[http_service.checks]]
   grace_period = "5s"
