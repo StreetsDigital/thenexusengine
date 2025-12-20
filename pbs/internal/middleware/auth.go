@@ -42,7 +42,7 @@ func DefaultAuthConfig() *AuthConfig {
 		Enabled:     os.Getenv("AUTH_ENABLED") == "true",
 		APIKeys:     parseAPIKeys(os.Getenv("API_KEYS")),
 		HeaderName:  "X-API-Key",
-		BypassPaths: []string{"/health", "/status", "/metrics", "/info/bidders", "/cookie_sync", "/setuid", "/optout"},
+		BypassPaths: []string{"/health", "/status", "/metrics", "/info/bidders", "/cookie_sync", "/setuid", "/optout", "/openrtb2/auction"},
 		RedisURL:    redisURL,
 		UseRedis:    redisURL != "" && os.Getenv("AUTH_USE_REDIS") != "false",
 	}
