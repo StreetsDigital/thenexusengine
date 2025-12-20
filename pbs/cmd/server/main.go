@@ -112,7 +112,12 @@ func main() {
 	auctionHandler := endpoints.NewAuctionHandler(ex)
 	statusHandler := endpoints.NewStatusHandler()
 	// Use dynamic handler that queries registries at request time
-	biddersHandler := endpoints.NewDynamicInfoBiddersHandler(adapters.DefaultRegistry, dynamicRegistry)
+	// Note: Pass nil explicitly if dynamicRegistry is nil to avoid typed-nil interface issues
+	var dynamicBidderLister endpoints.DynamicBidderLister
+	if dynamicRegistry != nil {
+		dynamicBidderLister = dynamicRegistry
+	}
+	biddersHandler := endpoints.NewDynamicInfoBiddersHandler(adapters.DefaultRegistry, dynamicBidderLister)
 
 	// Cookie sync handlers
 	hostURL := os.Getenv("PBS_HOST_URL")
