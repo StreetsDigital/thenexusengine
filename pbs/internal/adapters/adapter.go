@@ -3,8 +3,10 @@ package adapters
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -157,11 +159,40 @@ type DefaultHTTPClient struct {
 	client *http.Client
 }
 
-// NewHTTPClient creates a new HTTP client
+// NewHTTPClient creates a new HTTP client with connection pooling
+// Connection pooling reduces latency by reusing TCP connections and TLS sessions
+// for repeated requests to the same bidder endpoints.
 func NewHTTPClient(timeout time.Duration) *DefaultHTTPClient {
+	transport := &http.Transport{
+		// Connection pooling settings
+		MaxIdleConns:        100,              // Total idle connections across all hosts
+		MaxIdleConnsPerHost: 10,               // Idle connections per bidder endpoint
+		MaxConnsPerHost:     50,               // Max concurrent connections per host
+		IdleConnTimeout:     90 * time.Second, // Keep idle connections for 90s
+
+		// TLS session caching reduces handshake overhead for repeated connections
+		TLSClientConfig: &tls.Config{
+			ClientSessionCache: tls.NewLRUClientSessionCache(100),
+			MinVersion:         tls.VersionTLS12, // Require TLS 1.2+
+		},
+
+		// Timeouts for connection establishment
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,  // Connection timeout
+			KeepAlive: 30 * time.Second, // TCP keepalive interval
+		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+
+		// Disable compression to avoid CPU overhead for small JSON payloads
+		DisableCompression: false,
+	}
+
 	return &DefaultHTTPClient{
 		client: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
+			Transport: transport,
 		},
 	}
 }
