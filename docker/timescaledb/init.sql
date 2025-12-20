@@ -133,15 +133,15 @@ SELECT add_continuous_aggregate_policy('bidder_performance_daily',
 -- Data Retention Policies
 -- ===========================================
 
--- Keep raw events for 7 days
+-- Keep raw events for 3 days (hourly aggregates make raw data redundant after 2 days)
 SELECT add_retention_policy('auction_events',
-    INTERVAL '7 days',
+    INTERVAL '3 days',
     if_not_exists => TRUE
 );
 
--- Keep hourly aggregates for 30 days
+-- Keep hourly aggregates for 14 days (daily aggregates sufficient after 7 days)
 SELECT add_retention_policy('bidder_performance_hourly',
-    INTERVAL '30 days',
+    INTERVAL '14 days',
     if_not_exists => TRUE
 );
 
