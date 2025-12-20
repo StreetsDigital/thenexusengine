@@ -14,6 +14,7 @@ primary_region = "iad"  # US East - change based on your users
 
 [env]
   PBS_PORT = "8000"
+  LOG_LEVEL = "warn"  # Reduce log volume in production
   # Internal Fly.io DNS for IDR service
   IDR_URL = "http://nexus-idr.internal:5050"
   IDR_ENABLED = "true"
