@@ -253,7 +253,7 @@
                 debug: true,  // Enable for development
                 s2sConfig: {
                     accountId: 'demo-publisher',
-                    bidders: ['appnexus', 'rubicon', 'pubmatic'],
+                    bidders: ['appnexus', 'rubicon', 'pubmatic'],  // Only these 3 are registered
                     defaultVendor: 'pbs',
                     timeout: 1000,
                     endpoint: {
@@ -287,14 +287,14 @@
                     bids: [
                         {
                             bidder: 'appnexus',
-                            params: { placementId: 13144370 }  // Test placement
+                            params: { placementId: 00000001 }  // Demo - replace with your placement ID
                         },
                         {
                             bidder: 'rubicon',
                             params: {
-                                accountId: 1001,
-                                siteId: 113932,
-                                zoneId: 535510
+                                accountId: 0001,    // Demo - replace with your account
+                                siteId: 000001,
+                                zoneId: 000001
                             }
                         }
                     ]
@@ -309,13 +309,13 @@
                     bids: [
                         {
                             bidder: 'appnexus',
-                            params: { placementId: 13144370 }
+                            params: { placementId: 00000002 }  // Demo - replace with your placement ID
                         },
                         {
                             bidder: 'pubmatic',
                             params: {
-                                publisherId: '156209',
-                                adSlot: 'test-slot'
+                                publisherId: '000001',  // Demo - replace with your publisher ID
+                                adSlot: 'demo-slot'
                             }
                         }
                     ]

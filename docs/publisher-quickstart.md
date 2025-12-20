@@ -32,7 +32,7 @@ pbjs.que.push(function() {
   pbjs.setConfig({
     s2sConfig: {
       accountId: 'YOUR_PUBLISHER_ID',  // <-- Replace with your Publisher ID
-      bidders: ['appnexus', 'rubicon', 'pubmatic', 'openx', 'ix'],
+      bidders: ['appnexus', 'rubicon', 'pubmatic'],  // Currently available bidders
       defaultVendor: 'pbs',
       timeout: 1000,
       endpoint: {
@@ -120,20 +120,21 @@ Each site needs its own ad units. Just update the `code` and bidder `params`:
 
 ## Getting Bidder Credentials
 
-To receive real bids, you need accounts with demand partners (SSPs/DSPs). Here's how to get started:
+To receive real bids, you need accounts with demand partners (SSPs/DSPs).
+
+### Currently Available Bidders
 
 | Bidder | Sign Up | What You'll Get |
 |--------|---------|-----------------|
 | **AppNexus/Xandr** | [xandr.com](https://www.xandr.com/) | `placementId` |
 | **Rubicon/Magnite** | [magnite.com](https://www.magnite.com/) | `accountId`, `siteId`, `zoneId` |
 | **PubMatic** | [pubmatic.com](https://pubmatic.com/) | `publisherId`, `adSlot` |
-| **OpenX** | [openx.com](https://www.openx.com/) | `unit`, `delDomain` |
-| **Index Exchange** | [indexexchange.com](https://www.indexexchange.com/) | `siteId` |
-| **TripleLift** | [triplelift.com](https://triplelift.com/) | `inventoryCode` |
 
 **Typical onboarding time:** 1-2 weeks per partner
 
-**Tip:** Start with 2-3 bidders and add more once you see consistent fill rates.
+### Need More Bidders?
+
+Contact us to enable additional demand partners including OpenX, Index Exchange, TripleLift, and others.
 
 ---
 
