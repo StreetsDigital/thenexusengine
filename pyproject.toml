@@ -42,6 +42,7 @@ db = [
 admin = [
     "flask>=3.0.0",
     "pyyaml>=6.0.0",
+    "requests>=2.31.0",
 ]
 
 [tool.setuptools.packages.find]
