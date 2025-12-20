@@ -7,7 +7,9 @@ Get header bidding running on your site in 5 minutes.
 | Setting | Value |
 |---------|-------|
 | Publisher ID | `[PROVIDED BY NEXUS ENGINE]` |
-| PBS Endpoint | `https://[YOUR_PBS_DOMAIN]/openrtb2/auction` |
+| API Key | `[PROVIDED BY NEXUS ENGINE]` |
+| PBS Endpoint | `https://nexus-pbs.fly.dev/openrtb2/auction` |
+| Cookie Sync | `https://nexus-pbs.fly.dev/cookie_sync` |
 
 ---
 
@@ -29,13 +31,17 @@ pbjs.que.push(function() {
   // ========================================
   pbjs.setConfig({
     s2sConfig: {
-      accountId: 'YOUR_PUBLISHER_ID',  // <-- Replace this
+      accountId: 'YOUR_PUBLISHER_ID',  // <-- Replace with your Publisher ID
       bidders: ['appnexus', 'rubicon', 'pubmatic', 'openx', 'ix'],
       defaultVendor: 'pbs',
       timeout: 1000,
       endpoint: {
-        p1Consent: 'https://YOUR_PBS_DOMAIN/openrtb2/auction',  // <-- Replace this
-        noP1Consent: 'https://YOUR_PBS_DOMAIN/openrtb2/auction'
+        p1Consent: 'https://nexus-pbs.fly.dev/openrtb2/auction',
+        noP1Consent: 'https://nexus-pbs.fly.dev/openrtb2/auction'
+      },
+      syncEndpoint: {
+        p1Consent: 'https://nexus-pbs.fly.dev/cookie_sync',
+        noP1Consent: 'https://nexus-pbs.fly.dev/cookie_sync'
       }
     },
     priceGranularity: 'medium'
@@ -109,6 +115,25 @@ Each site needs its own ad units. Just update the `code` and bidder `params`:
 2. Open browser console (F12)
 3. Look for bid requests and responses
 4. Verify ads are rendering
+
+---
+
+## Getting Bidder Credentials
+
+To receive real bids, you need accounts with demand partners (SSPs/DSPs). Here's how to get started:
+
+| Bidder | Sign Up | What You'll Get |
+|--------|---------|-----------------|
+| **AppNexus/Xandr** | [xandr.com](https://www.xandr.com/) | `placementId` |
+| **Rubicon/Magnite** | [magnite.com](https://www.magnite.com/) | `accountId`, `siteId`, `zoneId` |
+| **PubMatic** | [pubmatic.com](https://pubmatic.com/) | `publisherId`, `adSlot` |
+| **OpenX** | [openx.com](https://www.openx.com/) | `unit`, `delDomain` |
+| **Index Exchange** | [indexexchange.com](https://www.indexexchange.com/) | `siteId` |
+| **TripleLift** | [triplelift.com](https://triplelift.com/) | `inventoryCode` |
+
+**Typical onboarding time:** 1-2 weeks per partner
+
+**Tip:** Start with 2-3 bidders and add more once you see consistent fill rates.
 
 ---
 
