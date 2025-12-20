@@ -55,6 +55,7 @@ func main() {
 	auth := middleware.NewAuth(middleware.DefaultAuthConfig())
 	rateLimiter := middleware.NewRateLimiter(middleware.DefaultRateLimitConfig())
 	sizeLimiter := middleware.NewSizeLimiter(middleware.DefaultSizeLimitConfig())
+	gzipMiddleware := middleware.NewGzip(middleware.DefaultGzipConfig())
 
 	log.Info().
 		Bool("cors_enabled", true).
@@ -138,11 +139,13 @@ func main() {
 		}
 	})
 
-	// Build middleware chain: CORS -> Security -> Logging -> Size Limit -> Auth -> Rate Limit -> Metrics -> Handler
+	// Build middleware chain: CORS -> Security -> Logging -> Size Limit -> Auth -> Rate Limit -> Metrics -> Gzip -> Handler
 	// Note: CORS must be outermost to handle preflight OPTIONS requests
 	// Note: Security headers applied early to ensure all responses have them
 	// Note: Auth must run before Rate Limit so publisher ID is available for rate limiting
+	// Note: Gzip is innermost so responses are compressed before being sent
 	handler := http.Handler(mux)
+	handler = gzipMiddleware.Middleware(handler) // Compress responses
 	handler = m.Middleware(handler)
 	handler = rateLimiter.Middleware(handler)
 	handler = auth.Middleware(handler)
