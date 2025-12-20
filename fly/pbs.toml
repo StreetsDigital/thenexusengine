@@ -46,7 +46,7 @@ primary_region = "iad"  # US East - change based on your users
   path = "/health"
 
 [[vm]]
-  memory = "512mb"
+  memory = "256mb"
   cpu_kind = "shared"
   cpus = 1
 
