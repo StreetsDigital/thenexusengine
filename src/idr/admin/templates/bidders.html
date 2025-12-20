@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenRTB Bidders - The Nexus Engine</title>
+    <title>Bidder Management - The Nexus Engine</title>
     <style>
         :root {
             --primary: #2563eb;
@@ -299,6 +299,106 @@
         .loading { opacity: 0.6; pointer-events: none; }
 
         .code { font-family: monospace; font-size: 0.8125rem; color: var(--gray-700); }
+
+        /* PBS Bidders Section */
+        .section-divider {
+            margin: 2rem 0;
+            border: none;
+            border-top: 2px solid var(--gray-200);
+        }
+
+        .pbs-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 0.25rem;
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .gvl-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.125rem 0.5rem;
+            background: var(--gray-100);
+            border: 1px solid var(--gray-200);
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            color: var(--gray-600);
+        }
+
+        .pbs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+            padding: 1.5rem;
+        }
+
+        .pbs-card {
+            background: var(--gray-50);
+            border: 1px solid var(--gray-200);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            transition: all 0.15s;
+        }
+
+        .pbs-card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1);
+        }
+
+        .pbs-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .pbs-card-title {
+            font-weight: 600;
+            font-size: 0.9375rem;
+        }
+
+        .pbs-card-code {
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: var(--gray-600);
+        }
+
+        .pbs-card-meta {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-top: 0.25rem;
+        }
+
+        .search-input {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--gray-300);
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            min-width: 250px;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .filter-bar {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
     </style>
 </head>
 <body>
@@ -309,6 +409,7 @@
         </div>
         <div class="header-right">
             <a href="/" class="nav-link">Dashboard</a>
+            <a href="/publishers" class="nav-link">Publishers</a>
             <a href="/bidders" class="nav-link active">Bidders</a>
             {% if user %}
             <a href="/logout" class="nav-link">Logout</a>
@@ -321,8 +422,39 @@
 
         <div class="page-header">
             <div>
-                <h1 class="page-title">OpenRTB Bidders</h1>
-                <p class="page-subtitle">Manage custom OpenRTB demand integrations</p>
+                <h1 class="page-title">Bidder Management</h1>
+                <p class="page-subtitle">PBS adapters and custom OpenRTB demand integrations</p>
+            </div>
+        </div>
+
+        <!-- PBS Bidders Section -->
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <h2 style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span class="pbs-badge">PBS</span>
+                        Prebid Server Bidders
+                    </h2>
+                    <span id="pbs-bidder-count" class="stat-label" style="margin-top: 0.25rem; display: block;">Loading...</span>
+                </div>
+                <div class="filter-bar">
+                    <input type="text" id="pbs-search" class="search-input" placeholder="Search PBS bidders..." oninput="filterPbsBidders()">
+                </div>
+            </div>
+            <div id="pbs-bidders-container" class="pbs-grid">
+                <div class="empty-state" style="grid-column: 1 / -1;">
+                    <p>Loading PBS bidders...</p>
+                </div>
+            </div>
+        </div>
+
+        <hr class="section-divider">
+
+        <!-- Custom ORTB Bidders Section -->
+        <div class="page-header" style="margin-top: 0;">
+            <div>
+                <h2 class="page-title" style="font-size: 1.5rem;">Custom OpenRTB Bidders</h2>
+                <p class="page-subtitle">Manage your own demand integrations</p>
             </div>
             <div style="display: flex; gap: 0.75rem;">
                 <button class="btn btn-secondary" onclick="exportBidders()">Export All</button>
@@ -476,9 +608,81 @@
 
     <script>
         let editingBidderCode = null;
+        let allPbsBidders = [];
 
         // Load bidders on page load
-        document.addEventListener('DOMContentLoaded', loadBidders);
+        document.addEventListener('DOMContentLoaded', () => {
+            loadPbsBidders();
+            loadBidders();
+        });
+
+        // PBS Bidders Functions
+        async function loadPbsBidders() {
+            try {
+                const response = await fetch('/api/pbs/bidders');
+                const data = await response.json();
+
+                allPbsBidders = data.bidders || [];
+                renderPbsBidders(allPbsBidders);
+
+                const countEl = document.getElementById('pbs-bidder-count');
+                const source = data.source === 'live' ? '(live from PBS)' : '(built-in adapters)';
+                countEl.textContent = `${allPbsBidders.length} bidders available ${source}`;
+
+            } catch (error) {
+                console.error('Failed to load PBS bidders:', error);
+                document.getElementById('pbs-bidders-container').innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <p style="color: var(--danger);">Failed to load PBS bidders</p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderPbsBidders(bidders) {
+            const container = document.getElementById('pbs-bidders-container');
+
+            if (!bidders || bidders.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <p>No PBS bidders found</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = bidders.map(b => `
+                <div class="pbs-card">
+                    <div class="pbs-card-header">
+                        <div>
+                            <div class="pbs-card-title">${escapeHtml(b.name)}</div>
+                            <div class="pbs-card-code">${escapeHtml(b.bidder_code)}</div>
+                        </div>
+                        <span class="status-badge status-active">${b.status || 'available'}</span>
+                    </div>
+                    <div class="pbs-card-meta">
+                        ${b.gvl_vendor_id ? `<span class="gvl-badge" title="IAB Global Vendor List ID">GVL: ${b.gvl_vendor_id}</span>` : ''}
+                        <span class="gvl-badge">PBS Adapter</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function filterPbsBidders() {
+            const searchTerm = document.getElementById('pbs-search').value.toLowerCase().trim();
+
+            if (!searchTerm) {
+                renderPbsBidders(allPbsBidders);
+                return;
+            }
+
+            const filtered = allPbsBidders.filter(b =>
+                b.name.toLowerCase().includes(searchTerm) ||
+                b.bidder_code.toLowerCase().includes(searchTerm)
+            );
+
+            renderPbsBidders(filtered);
+        }
 
         async function loadBidders() {
             try {

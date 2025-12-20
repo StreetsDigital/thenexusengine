@@ -414,6 +414,14 @@ def create_app(config_path: Path | None = None) -> Flask:
             "bidders.html", user=getattr(g, "user", None), auth_enabled=auth_enabled
         )
 
+    @app.route("/publishers")
+    @login_required
+    def publishers_page():
+        """Publisher taxonomy management page."""
+        return render_template(
+            "publishers.html", user=getattr(g, "user", None), auth_enabled=auth_enabled
+        )
+
     @app.route("/api/config", methods=["GET"])
     @login_required
     def get_config():
@@ -2315,6 +2323,267 @@ def create_app(config_path: Path | None = None) -> Flask:
             return jsonify(
                 {"bidders": [], "error": "Failed to list active bidders"}
             ), 500
+
+    # =========================================
+    # PBS Bidders (Standard Prebid Server Adapters)
+    # =========================================
+
+    @app.route("/api/pbs/bidders", methods=["GET"])
+    @login_required
+    def list_pbs_bidders():
+        """
+        List all available PBS (Prebid Server) bidders.
+
+        These are the standard adapters that come with Prebid Server,
+        separate from custom ORTB bidders.
+        """
+        import requests as http_requests
+
+        # Try to fetch from PBS first
+        pbs_url = os.environ.get("PBS_URL", "https://nexus-pbs.fly.dev")
+
+        try:
+            response = http_requests.get(
+                f"{pbs_url}/info/bidders", timeout=5.0
+            )
+            if response.status_code == 200:
+                bidder_codes = response.json()
+
+                # Get detailed info for each bidder
+                bidders = []
+                for code in bidder_codes:
+                    try:
+                        info_response = http_requests.get(
+                            f"{pbs_url}/info/bidders/{code}", timeout=5.0
+                        )
+                        if info_response.status_code == 200:
+                            info = info_response.json()
+                            bidders.append(
+                                {
+                                    "bidder_code": code,
+                                    "name": info.get(
+                                        "maintainer", {}
+                                    ).get("name", code.title()),
+                                    "status": (
+                                        "active"
+                                        if info.get("status") == "active"
+                                        else "available"
+                                    ),
+                                    "capabilities": {
+                                        "banner": info.get(
+                                            "capabilities", {}
+                                        )
+                                        .get("app", {})
+                                        .get("mediaTypes", []),
+                                        "video": "video"
+                                        in info.get("capabilities", {})
+                                        .get("app", {})
+                                        .get("mediaTypes", []),
+                                    },
+                                    "gvl_vendor_id": info.get(
+                                        "gvlVendorID"
+                                    ),
+                                    "source": "pbs",
+                                }
+                            )
+                        else:
+                            bidders.append(
+                                {
+                                    "bidder_code": code,
+                                    "name": code.title(),
+                                    "status": "available",
+                                    "source": "pbs",
+                                }
+                            )
+                    except Exception:
+                        bidders.append(
+                            {
+                                "bidder_code": code,
+                                "name": code.title(),
+                                "status": "available",
+                                "source": "pbs",
+                            }
+                        )
+
+                return jsonify(
+                    {
+                        "status": "success",
+                        "bidders": bidders,
+                        "count": len(bidders),
+                        "source": "pbs_live",
+                    }
+                )
+
+        except Exception as e:
+            # Fall back to hardcoded list if PBS is unavailable
+            pass
+
+        # Fallback: Return known PBS adapters
+        pbs_adapters = [
+            {
+                "bidder_code": "appnexus",
+                "name": "AppNexus/Xandr",
+                "status": "available",
+                "gvl_vendor_id": 32,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "rubicon",
+                "name": "Magnite (Rubicon)",
+                "status": "available",
+                "gvl_vendor_id": 52,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "pubmatic",
+                "name": "PubMatic",
+                "status": "available",
+                "gvl_vendor_id": 76,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "openx",
+                "name": "OpenX",
+                "status": "available",
+                "gvl_vendor_id": 69,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "ix",
+                "name": "Index Exchange",
+                "status": "available",
+                "gvl_vendor_id": 10,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "criteo",
+                "name": "Criteo",
+                "status": "available",
+                "gvl_vendor_id": 91,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "triplelift",
+                "name": "TripleLift",
+                "status": "available",
+                "gvl_vendor_id": 28,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "sharethrough",
+                "name": "Sharethrough",
+                "status": "available",
+                "gvl_vendor_id": 80,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "sovrn",
+                "name": "Sovrn",
+                "status": "available",
+                "gvl_vendor_id": 13,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "33across",
+                "name": "33Across",
+                "status": "available",
+                "gvl_vendor_id": 58,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "gumgum",
+                "name": "GumGum",
+                "status": "available",
+                "gvl_vendor_id": 61,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "medianet",
+                "name": "Media.net",
+                "status": "available",
+                "gvl_vendor_id": 142,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "adform",
+                "name": "Adform",
+                "status": "available",
+                "gvl_vendor_id": 50,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "beachfront",
+                "name": "Beachfront",
+                "status": "available",
+                "gvl_vendor_id": 335,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "conversant",
+                "name": "Conversant",
+                "status": "available",
+                "gvl_vendor_id": 24,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "improvedigital",
+                "name": "Improve Digital",
+                "status": "available",
+                "gvl_vendor_id": 253,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "smartadserver",
+                "name": "Smart AdServer",
+                "status": "available",
+                "gvl_vendor_id": 45,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "taboola",
+                "name": "Taboola",
+                "status": "available",
+                "gvl_vendor_id": 42,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "teads",
+                "name": "Teads",
+                "status": "available",
+                "gvl_vendor_id": 132,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "outbrain",
+                "name": "Outbrain",
+                "status": "available",
+                "gvl_vendor_id": 164,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "unruly",
+                "name": "Unruly",
+                "status": "available",
+                "gvl_vendor_id": 36,
+                "source": "pbs",
+            },
+            {
+                "bidder_code": "spotx",
+                "name": "SpotX",
+                "status": "available",
+                "gvl_vendor_id": 165,
+                "source": "pbs",
+            },
+        ]
+
+        return jsonify(
+            {
+                "status": "success",
+                "bidders": pbs_adapters,
+                "count": len(pbs_adapters),
+                "source": "fallback",
+            }
+        )
 
     return app
 
