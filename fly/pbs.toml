@@ -40,9 +40,9 @@ primary_region = "iad"  # US East - change based on your users
 
 [[http_service.checks]]
   grace_period = "5s"
-  interval = "15s"
+  interval = "30s"
   method = "GET"
-  timeout = "3s"
+  timeout = "2s"
   path = "/health"
 
 [[vm]]
