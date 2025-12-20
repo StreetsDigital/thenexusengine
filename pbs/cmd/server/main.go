@@ -114,12 +114,32 @@ func main() {
 	// Use dynamic handler that queries registries at request time
 	biddersHandler := endpoints.NewDynamicInfoBiddersHandler(adapters.DefaultRegistry, dynamicRegistry)
 
+	// Cookie sync handlers
+	hostURL := os.Getenv("PBS_HOST_URL")
+	if hostURL == "" {
+		hostURL = "https://nexus-pbs.fly.dev"
+	}
+	cookieSyncConfig := endpoints.DefaultCookieSyncConfig(hostURL)
+	cookieSyncHandler := endpoints.NewCookieSyncHandler(cookieSyncConfig)
+	setuidHandler := endpoints.NewSetUIDHandler(cookieSyncHandler.ListBidders())
+	optoutHandler := endpoints.NewOptOutHandler()
+
+	log.Info().
+		Str("host_url", hostURL).
+		Int("syncers", len(cookieSyncHandler.ListBidders())).
+		Msg("Cookie sync initialized")
+
 	// Setup routes
 	mux := http.NewServeMux()
 	mux.Handle("/openrtb2/auction", auctionHandler)
 	mux.Handle("/status", statusHandler)
 	mux.Handle("/health", healthHandler())
 	mux.Handle("/info/bidders", biddersHandler)
+
+	// Cookie sync endpoints
+	mux.Handle("/cookie_sync", cookieSyncHandler)
+	mux.Handle("/setuid", setuidHandler)
+	mux.Handle("/optout", optoutHandler)
 
 	// Prometheus metrics endpoint
 	mux.Handle("/metrics", metrics.Handler())
