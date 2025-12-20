@@ -21,12 +21,19 @@ from .feature_config import (
     FeatureConfig,
     IDRSettings,
 )
+from ..bidders.storage import get_bidder_storage
+from ..bidders.models import (
+    BidderConfig,
+    BidderEndpoint,
+    BidderStatus,
+)
 
 
 def create_config_api_blueprint() -> Blueprint:
     """Create Flask blueprint for configuration API."""
     bp = Blueprint("config_api", __name__, url_prefix="/api/v2/config")
     resolver = get_config_resolver()
+    bidder_storage = get_bidder_storage()
 
     def _safe_error_response(error: Exception, message: str, status_code: int = 500):
         """Return a safe error response."""
@@ -286,6 +293,442 @@ def create_config_api_blueprint() -> Blueprint:
             return _safe_error_response(
                 e, "Failed to update publisher IDR settings", 400
             )
+
+    # =========================================
+    # Publisher Bidder Configuration
+    # =========================================
+
+    @bp.route("/publishers/<publisher_id>/bidders", methods=["GET"])
+    def list_publisher_bidders(publisher_id: str):
+        """
+        List all bidders available for a publisher.
+
+        Returns global bidders plus publisher-specific custom instances,
+        grouped by bidder family.
+        """
+        config = resolver.get_publisher_config(publisher_id)
+        if not config:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"Publisher {publisher_id} not found",
+                }
+            ), 404
+
+        # Get bidders grouped by family
+        families = bidder_storage.get_bidder_families(publisher_id)
+        enabled_codes = bidder_storage.get_enabled_bidders_for_publisher(publisher_id)
+
+        # Format response
+        bidders_by_family = {}
+        for family, instances in families.items():
+            bidders_by_family[family] = {
+                "family": family,
+                "instance_count": len(instances),
+                "instances": [
+                    {
+                        **inst.to_dict(),
+                        "is_global": inst.publisher_id is None,
+                        "is_enabled_for_publisher": inst.bidder_code in enabled_codes,
+                    }
+                    for inst in instances
+                ],
+            }
+
+        return jsonify(
+            {
+                "status": "success",
+                "publisher_id": publisher_id,
+                "bidders_by_family": bidders_by_family,
+                "total_families": len(bidders_by_family),
+                "total_bidders": sum(len(f["instances"]) for f in bidders_by_family.values()),
+            }
+        )
+
+    @bp.route("/publishers/<publisher_id>/bidders", methods=["POST"])
+    def create_publisher_bidder(publisher_id: str):
+        """
+        Create a new publisher-specific bidder instance.
+
+        Request body should contain the full bidder configuration.
+        The bidder_code will be auto-generated if not provided.
+        """
+        try:
+            config = resolver.get_publisher_config(publisher_id)
+            if not config:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Publisher {publisher_id} not found",
+                    }
+                ), 404
+
+            data = request.json
+
+            # If bidder_family provided but no bidder_code, auto-generate
+            bidder_family = data.get("bidder_family", data.get("bidder_code", ""))
+            if not data.get("bidder_code"):
+                data["bidder_code"] = bidder_storage.generate_instance_code(
+                    publisher_id, bidder_family
+                )
+
+            # Parse endpoint if provided
+            endpoint_data = data.get("endpoint", {"url": ""})
+            endpoint = BidderEndpoint.from_dict(endpoint_data)
+
+            bidder_config = BidderConfig(
+                bidder_code=data["bidder_code"],
+                name=data.get("name", data["bidder_code"]),
+                endpoint=endpoint,
+                bidder_family=bidder_family,
+                publisher_id=publisher_id,
+            )
+
+            # Apply additional fields from request
+            if "description" in data:
+                bidder_config.description = data["description"]
+            if "capabilities" in data:
+                from ..bidders.models import BidderCapabilities
+                bidder_config.capabilities = BidderCapabilities.from_dict(data["capabilities"])
+            if "rate_limits" in data:
+                from ..bidders.models import BidderRateLimits
+                bidder_config.rate_limits = BidderRateLimits.from_dict(data["rate_limits"])
+            if "request_transform" in data:
+                from ..bidders.models import RequestTransform
+                bidder_config.request_transform = RequestTransform.from_dict(data["request_transform"])
+            if "response_transform" in data:
+                from ..bidders.models import ResponseTransform
+                bidder_config.response_transform = ResponseTransform.from_dict(data["response_transform"])
+            if "status" in data:
+                bidder_config.status = BidderStatus(data["status"])
+            if "gvl_vendor_id" in data:
+                bidder_config.gvl_vendor_id = data["gvl_vendor_id"]
+            if "priority" in data:
+                bidder_config.priority = data["priority"]
+            if "allowed_countries" in data:
+                bidder_config.allowed_countries = data["allowed_countries"]
+            if "blocked_countries" in data:
+                bidder_config.blocked_countries = data["blocked_countries"]
+
+            if bidder_storage.save_publisher_bidder(publisher_id, bidder_config):
+                return jsonify(
+                    {
+                        "status": "success",
+                        "message": f"Bidder {bidder_config.bidder_code} created",
+                        "bidder": bidder_config.to_dict(),
+                    }
+                )
+            else:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": "Failed to save bidder configuration",
+                    }
+                ), 500
+
+        except Exception as e:
+            return _safe_error_response(e, "Failed to create publisher bidder", 400)
+
+    @bp.route("/publishers/<publisher_id>/bidders/<bidder_code>", methods=["GET"])
+    def get_publisher_bidder(publisher_id: str, bidder_code: str):
+        """Get a specific bidder configuration for a publisher."""
+        config = resolver.get_publisher_config(publisher_id)
+        if not config:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"Publisher {publisher_id} not found",
+                }
+            ), 404
+
+        # Try publisher-specific first, then global
+        bidder = bidder_storage.get_publisher_bidder(publisher_id, bidder_code)
+        is_global = False
+        if not bidder:
+            bidder = bidder_storage.get(bidder_code)
+            is_global = True
+
+        if not bidder:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"Bidder {bidder_code} not found",
+                }
+            ), 404
+
+        enabled_codes = bidder_storage.get_enabled_bidders_for_publisher(publisher_id)
+
+        return jsonify(
+            {
+                "status": "success",
+                "bidder": {
+                    **bidder.to_dict(),
+                    "is_global": is_global,
+                    "is_enabled_for_publisher": bidder_code in enabled_codes,
+                },
+            }
+        )
+
+    @bp.route("/publishers/<publisher_id>/bidders/<bidder_code>", methods=["PUT"])
+    def update_publisher_bidder(publisher_id: str, bidder_code: str):
+        """Update a publisher-specific bidder configuration."""
+        try:
+            config = resolver.get_publisher_config(publisher_id)
+            if not config:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Publisher {publisher_id} not found",
+                    }
+                ), 404
+
+            # Get existing bidder (publisher-specific or global)
+            existing = bidder_storage.get_publisher_bidder(publisher_id, bidder_code)
+            is_global = False
+            if not existing:
+                existing = bidder_storage.get(bidder_code)
+                is_global = True
+
+            if not existing:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Bidder {bidder_code} not found",
+                    }
+                ), 404
+
+            # If global bidder, create a publisher-specific copy
+            if is_global:
+                import copy
+                existing = copy.deepcopy(existing)
+                existing.publisher_id = publisher_id
+
+            data = request.json
+
+            # Update fields from request
+            if "name" in data:
+                existing.name = data["name"]
+            if "description" in data:
+                existing.description = data["description"]
+            if "endpoint" in data:
+                existing.endpoint = BidderEndpoint.from_dict(data["endpoint"])
+            if "capabilities" in data:
+                from ..bidders.models import BidderCapabilities
+                existing.capabilities = BidderCapabilities.from_dict(data["capabilities"])
+            if "rate_limits" in data:
+                from ..bidders.models import BidderRateLimits
+                existing.rate_limits = BidderRateLimits.from_dict(data["rate_limits"])
+            if "request_transform" in data:
+                from ..bidders.models import RequestTransform
+                existing.request_transform = RequestTransform.from_dict(data["request_transform"])
+            if "response_transform" in data:
+                from ..bidders.models import ResponseTransform
+                existing.response_transform = ResponseTransform.from_dict(data["response_transform"])
+            if "status" in data:
+                existing.status = BidderStatus(data["status"])
+            if "gvl_vendor_id" in data:
+                existing.gvl_vendor_id = data["gvl_vendor_id"]
+            if "priority" in data:
+                existing.priority = data["priority"]
+            if "allowed_countries" in data:
+                existing.allowed_countries = data["allowed_countries"]
+            if "blocked_countries" in data:
+                existing.blocked_countries = data["blocked_countries"]
+
+            if bidder_storage.save_publisher_bidder(publisher_id, existing):
+                return jsonify(
+                    {
+                        "status": "success",
+                        "message": f"Bidder {bidder_code} updated",
+                        "bidder": existing.to_dict(),
+                    }
+                )
+            else:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": "Failed to save bidder configuration",
+                    }
+                ), 500
+
+        except Exception as e:
+            return _safe_error_response(e, "Failed to update publisher bidder", 400)
+
+    @bp.route("/publishers/<publisher_id>/bidders/<bidder_code>", methods=["DELETE"])
+    def delete_publisher_bidder(publisher_id: str, bidder_code: str):
+        """Delete a publisher-specific bidder configuration."""
+        config = resolver.get_publisher_config(publisher_id)
+        if not config:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"Publisher {publisher_id} not found",
+                }
+            ), 404
+
+        # Check if this is a publisher-specific bidder
+        bidder = bidder_storage.get_publisher_bidder(publisher_id, bidder_code)
+        if not bidder:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"Publisher-specific bidder {bidder_code} not found. "
+                    "Cannot delete global bidders from publisher context.",
+                }
+            ), 404
+
+        if bidder_storage.delete_publisher_bidder(publisher_id, bidder_code):
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": f"Bidder {bidder_code} deleted",
+                }
+            )
+        else:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "Failed to delete bidder configuration",
+                }
+            ), 500
+
+    @bp.route("/publishers/<publisher_id>/bidders/<bidder_code>/enable", methods=["POST"])
+    def enable_publisher_bidder(publisher_id: str, bidder_code: str):
+        """Enable a bidder for a specific publisher."""
+        config = resolver.get_publisher_config(publisher_id)
+        if not config:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"Publisher {publisher_id} not found",
+                }
+            ), 404
+
+        if bidder_storage.set_bidder_enabled_for_publisher(publisher_id, bidder_code, True):
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": f"Bidder {bidder_code} enabled for publisher {publisher_id}",
+                }
+            )
+        else:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "Failed to enable bidder",
+                }
+            ), 500
+
+    @bp.route("/publishers/<publisher_id>/bidders/<bidder_code>/disable", methods=["POST"])
+    def disable_publisher_bidder(publisher_id: str, bidder_code: str):
+        """Disable a bidder for a specific publisher."""
+        config = resolver.get_publisher_config(publisher_id)
+        if not config:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"Publisher {publisher_id} not found",
+                }
+            ), 404
+
+        if bidder_storage.set_bidder_enabled_for_publisher(publisher_id, bidder_code, False):
+            return jsonify(
+                {
+                    "status": "success",
+                    "message": f"Bidder {bidder_code} disabled for publisher {publisher_id}",
+                }
+            )
+        else:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "Failed to disable bidder",
+                }
+            ), 500
+
+    @bp.route("/publishers/<publisher_id>/bidders/duplicate", methods=["POST"])
+    def duplicate_publisher_bidder(publisher_id: str):
+        """
+        Duplicate a bidder with auto-generated instance code.
+
+        Request body:
+        {
+            "source_bidder_code": "appnexus",
+            "name": "Optional new name"
+        }
+        """
+        try:
+            config = resolver.get_publisher_config(publisher_id)
+            if not config:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Publisher {publisher_id} not found",
+                    }
+                ), 404
+
+            data = request.json
+            source_code = data.get("source_bidder_code")
+            new_name = data.get("name")
+
+            if not source_code:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": "source_bidder_code is required",
+                    }
+                ), 400
+
+            new_bidder = bidder_storage.duplicate_bidder(publisher_id, source_code, new_name)
+
+            if new_bidder:
+                return jsonify(
+                    {
+                        "status": "success",
+                        "message": f"Bidder duplicated as {new_bidder.bidder_code}",
+                        "bidder": new_bidder.to_dict(),
+                    }
+                )
+            else:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Source bidder {source_code} not found",
+                    }
+                ), 404
+
+        except Exception as e:
+            return _safe_error_response(e, "Failed to duplicate bidder", 400)
+
+    @bp.route("/publishers/<publisher_id>/bidders/families", methods=["GET"])
+    def get_publisher_bidder_families(publisher_id: str):
+        """
+        Get bidders grouped by family for UI display.
+        Returns bidders organized by their base family (e.g., appnexus, rubicon).
+        """
+        try:
+            config = resolver.get_publisher_config(publisher_id)
+            if not config:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": f"Publisher {publisher_id} not found",
+                    }
+                ), 404
+
+            families = bidder_storage.get_bidder_families(publisher_id)
+            enabled = bidder_storage.get_enabled_bidders_for_publisher(publisher_id)
+
+            return jsonify(
+                {
+                    "status": "success",
+                    "families": families,
+                    "enabled": list(enabled),  # Convert set to list for JSON serialization
+                }
+            )
+
+        except Exception as e:
+            return _safe_error_response(e, "Failed to get bidder families", 500)
 
     # =========================================
     # Site Configuration

@@ -30,6 +30,10 @@ REDIS_BIDDERS_ACTIVE = "nexus:bidders:active"
 REDIS_BIDDERS_INDEX = "nexus:bidders:index"
 REDIS_BIDDERS_STATS_PREFIX = "nexus:bidders:stats:"
 
+# Publisher-specific bidder keys
+REDIS_PUB_BIDDERS_PREFIX = "nexus:publishers:"  # {prefix}{pub_id}:bidders (hash)
+REDIS_PUB_BIDDERS_ENABLED_PREFIX = "nexus:publishers:"  # {prefix}{pub_id}:bidders:enabled (set)
+
 
 class BidderStorage:
     """
@@ -471,6 +475,355 @@ class BidderStorage:
             result.append(config)
 
         return result
+
+    # =========================================================================
+    # Publisher-specific bidder methods
+    # =========================================================================
+
+    def _pub_bidders_key(self, publisher_id: str) -> str:
+        """Get Redis hash key for publisher-specific bidders."""
+        return f"{REDIS_PUB_BIDDERS_PREFIX}{publisher_id}:bidders"
+
+    def _pub_enabled_key(self, publisher_id: str) -> str:
+        """Get Redis set key for publisher-enabled bidders."""
+        return f"{REDIS_PUB_BIDDERS_ENABLED_PREFIX}{publisher_id}:bidders:enabled"
+
+    def save_publisher_bidder(
+        self, publisher_id: str, config: BidderConfig
+    ) -> bool:
+        """
+        Save a publisher-specific bidder configuration.
+
+        Args:
+            publisher_id: The publisher identifier
+            config: The bidder configuration to save
+
+        Returns:
+            True if saved successfully
+        """
+        if not self._redis:
+            return False
+
+        try:
+            # Ensure publisher_id is set on config
+            config.publisher_id = publisher_id
+            config.updated_at = datetime.utcnow().isoformat()
+
+            # Use pipeline for atomic operations
+            pipe = self._redis.pipeline()
+
+            # Store config in publisher-specific hash
+            pub_hash_key = self._pub_bidders_key(publisher_id)
+            pipe.hset(pub_hash_key, config.bidder_code, config.to_json())
+
+            # Update enabled set
+            pub_enabled_key = self._pub_enabled_key(publisher_id)
+            if config.is_enabled:
+                pipe.sadd(pub_enabled_key, config.bidder_code)
+            else:
+                pipe.srem(pub_enabled_key, config.bidder_code)
+
+            pipe.execute()
+            return True
+
+        except Exception as e:
+            print(f"Failed to save publisher bidder config: {e}")
+            return False
+
+    def get_publisher_bidder(
+        self, publisher_id: str, bidder_code: str
+    ) -> BidderConfig | None:
+        """
+        Get a publisher-specific bidder configuration.
+
+        Args:
+            publisher_id: The publisher identifier
+            bidder_code: The unique bidder identifier
+
+        Returns:
+            BidderConfig if found, None otherwise
+        """
+        if not self._redis:
+            return None
+
+        try:
+            pub_hash_key = self._pub_bidders_key(publisher_id)
+            json_str = self._redis.hget(pub_hash_key, bidder_code)
+            if json_str:
+                return BidderConfig.from_json(json_str)
+            return None
+        except Exception as e:
+            print(f"Failed to get publisher bidder config: {e}")
+            return None
+
+    def get_publisher_bidders(self, publisher_id: str) -> dict[str, BidderConfig]:
+        """
+        Get all publisher-specific bidder configurations.
+
+        Args:
+            publisher_id: The publisher identifier
+
+        Returns:
+            Dictionary mapping bidder_code to BidderConfig
+        """
+        if not self._redis:
+            return {}
+
+        try:
+            pub_hash_key = self._pub_bidders_key(publisher_id)
+            all_configs = self._redis.hgetall(pub_hash_key)
+            result = {}
+            for code, json_str in all_configs.items():
+                try:
+                    result[code] = BidderConfig.from_json(json_str)
+                except Exception:
+                    continue
+            return result
+        except Exception as e:
+            print(f"Failed to get publisher bidder configs: {e}")
+            return {}
+
+    def delete_publisher_bidder(self, publisher_id: str, bidder_code: str) -> bool:
+        """
+        Delete a publisher-specific bidder configuration.
+
+        Args:
+            publisher_id: The publisher identifier
+            bidder_code: The bidder identifier to delete
+
+        Returns:
+            True if deleted successfully
+        """
+        if not self._redis:
+            return False
+
+        try:
+            pipe = self._redis.pipeline()
+            pub_hash_key = self._pub_bidders_key(publisher_id)
+            pub_enabled_key = self._pub_enabled_key(publisher_id)
+            pipe.hdel(pub_hash_key, bidder_code)
+            pipe.srem(pub_enabled_key, bidder_code)
+            pipe.execute()
+            return True
+        except Exception as e:
+            print(f"Failed to delete publisher bidder: {e}")
+            return False
+
+    def get_bidders_for_publisher(
+        self, publisher_id: str, include_global: bool = True
+    ) -> list[BidderConfig]:
+        """
+        Get all bidders available for a publisher.
+
+        Combines global bidders with publisher-specific overrides.
+        Publisher-specific bidders take precedence over global ones.
+
+        Args:
+            publisher_id: The publisher identifier
+            include_global: Whether to include global bidders
+
+        Returns:
+            List of BidderConfig objects available for the publisher
+        """
+        result = {}
+
+        # Start with global bidders if requested
+        if include_global:
+            for code, config in self.get_all().items():
+                # Skip if publisher is blocked
+                if (
+                    config.blocked_publishers
+                    and publisher_id in config.blocked_publishers
+                ):
+                    continue
+                # Skip if allowed list exists and publisher not in it
+                if (
+                    config.allowed_publishers
+                    and publisher_id not in config.allowed_publishers
+                ):
+                    continue
+                result[code] = config
+
+        # Overlay publisher-specific bidders
+        pub_bidders = self.get_publisher_bidders(publisher_id)
+        for code, config in pub_bidders.items():
+            result[code] = config
+
+        # Sort by priority and return as list
+        sorted_configs = sorted(result.values(), key=lambda c: c.priority, reverse=True)
+        return sorted_configs
+
+    def get_enabled_bidders_for_publisher(self, publisher_id: str) -> set[str]:
+        """
+        Get the set of enabled bidder codes for a publisher.
+
+        Args:
+            publisher_id: The publisher identifier
+
+        Returns:
+            Set of enabled bidder codes
+        """
+        if not self._redis:
+            return set()
+
+        try:
+            pub_enabled_key = self._pub_enabled_key(publisher_id)
+            return self._redis.smembers(pub_enabled_key) or set()
+        except Exception:
+            return set()
+
+    def set_bidder_enabled_for_publisher(
+        self, publisher_id: str, bidder_code: str, enabled: bool
+    ) -> bool:
+        """
+        Enable or disable a bidder for a specific publisher.
+
+        This works for both global and publisher-specific bidders.
+
+        Args:
+            publisher_id: The publisher identifier
+            bidder_code: The bidder code to enable/disable
+            enabled: Whether to enable or disable
+
+        Returns:
+            True if updated successfully
+        """
+        if not self._redis:
+            return False
+
+        try:
+            pub_enabled_key = self._pub_enabled_key(publisher_id)
+            if enabled:
+                self._redis.sadd(pub_enabled_key, bidder_code)
+            else:
+                self._redis.srem(pub_enabled_key, bidder_code)
+            return True
+        except Exception as e:
+            print(f"Failed to set bidder enabled state: {e}")
+            return False
+
+    def generate_instance_code(
+        self, publisher_id: str, bidder_family: str
+    ) -> str:
+        """
+        Generate a new instance code for a bidder family.
+
+        First instance: "appnexus"
+        Second: "appnexus-2"
+        Third: "appnexus-3"
+
+        Args:
+            publisher_id: The publisher identifier
+            bidder_family: The base bidder family (e.g., "appnexus")
+
+        Returns:
+            The next available instance code
+        """
+        # Get existing codes for this family from both global and publisher-specific
+        existing_codes = set()
+
+        # Check global bidders
+        for code in self.list_codes():
+            family = BidderConfig._extract_family(code)
+            if family == bidder_family:
+                existing_codes.add(code)
+
+        # Check publisher-specific bidders
+        pub_bidders = self.get_publisher_bidders(publisher_id)
+        for code in pub_bidders.keys():
+            family = BidderConfig._extract_family(code)
+            if family == bidder_family:
+                existing_codes.add(code)
+
+        if not existing_codes:
+            return bidder_family
+
+        # Find the max instance number
+        max_num = 1
+        for code in existing_codes:
+            num = BidderConfig._extract_instance_number(code)
+            if num > max_num:
+                max_num = num
+
+        return f"{bidder_family}-{max_num + 1}"
+
+    def duplicate_bidder(
+        self,
+        publisher_id: str,
+        source_bidder_code: str,
+        new_name: str | None = None,
+    ) -> BidderConfig | None:
+        """
+        Duplicate a bidder with auto-generated instance code.
+
+        Args:
+            publisher_id: The publisher identifier
+            source_bidder_code: The bidder code to duplicate
+            new_name: Optional new name (defaults to "Name (Copy)")
+
+        Returns:
+            The new BidderConfig if successful, None otherwise
+        """
+        # Try to get from publisher-specific first, then global
+        source = self.get_publisher_bidder(publisher_id, source_bidder_code)
+        if not source:
+            source = self.get(source_bidder_code)
+        if not source:
+            return None
+
+        # Generate new instance code
+        new_code = self.generate_instance_code(publisher_id, source.bidder_family)
+
+        # Create new config
+        import copy
+        new_config = copy.deepcopy(source)
+        new_config.bidder_code = new_code
+        new_config.bidder_family = source.bidder_family
+        new_config.instance_number = BidderConfig._extract_instance_number(new_code)
+        new_config.publisher_id = publisher_id
+        new_config.name = new_name or f"{source.name} (Copy)"
+        new_config.created_at = datetime.utcnow().isoformat()
+        new_config.updated_at = new_config.created_at
+        new_config.status = BidderStatus.TESTING
+
+        # Reset stats
+        new_config.total_requests = 0
+        new_config.total_bids = 0
+        new_config.total_wins = 0
+        new_config.total_errors = 0
+        new_config.avg_latency_ms = 0.0
+        new_config.avg_bid_cpm = 0.0
+        new_config.last_active_at = None
+
+        # Save the new config
+        if self.save_publisher_bidder(publisher_id, new_config):
+            return new_config
+        return None
+
+    def get_bidder_families(self, publisher_id: str) -> dict[str, list[BidderConfig]]:
+        """
+        Get bidders grouped by family for a publisher.
+
+        Args:
+            publisher_id: The publisher identifier
+
+        Returns:
+            Dictionary mapping family to list of instances
+        """
+        bidders = self.get_bidders_for_publisher(publisher_id)
+        families: dict[str, list[BidderConfig]] = {}
+
+        for config in bidders:
+            family = config.bidder_family
+            if family not in families:
+                families[family] = []
+            families[family].append(config)
+
+        # Sort instances within each family by instance_number
+        for family in families:
+            families[family].sort(key=lambda c: c.instance_number)
+
+        return families
 
 
 # Global storage instance

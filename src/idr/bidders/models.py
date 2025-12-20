@@ -382,6 +382,11 @@ class BidderConfig:
     name: str
     endpoint: BidderEndpoint
 
+    # Instance identification (for multi-instance support)
+    bidder_family: str = ""  # Base bidder type (e.g., "appnexus" for appnexus_2)
+    instance_number: int = 1  # Instance number (1, 2, 3...)
+    publisher_id: str | None = None  # If set, publisher-specific instance
+
     # Optional fields
     description: str = ""
     capabilities: BidderCapabilities = field(default_factory=BidderCapabilities)
@@ -429,6 +434,11 @@ class BidderConfig:
         # Normalize bidder_code
         self.bidder_code = self._normalize_code(self.bidder_code)
 
+        # Set bidder_family if not provided (extract from bidder_code)
+        if not self.bidder_family:
+            self.bidder_family = self._extract_family(self.bidder_code)
+            self.instance_number = self._extract_instance_number(self.bidder_code)
+
     @staticmethod
     def _normalize_code(code: str) -> str:
         """Normalize bidder code to lowercase alphanumeric with hyphens."""
@@ -442,6 +452,47 @@ class BidderConfig:
         code = re.sub(r"-+", "-", code)
         # Remove leading/trailing hyphens
         return code.strip("-")
+
+    @staticmethod
+    def _extract_family(bidder_code: str) -> str:
+        """
+        Extract bidder family from bidder code.
+
+        Examples:
+            "appnexus" -> "appnexus"
+            "appnexus-2" -> "appnexus"
+            "rubicon-3" -> "rubicon"
+        """
+        import re
+
+        # Check if code ends with -N (instance suffix)
+        match = re.match(r"^(.+)-(\d+)$", bidder_code)
+        if match:
+            return match.group(1)
+        return bidder_code
+
+    @staticmethod
+    def _extract_instance_number(bidder_code: str) -> int:
+        """
+        Extract instance number from bidder code.
+
+        Examples:
+            "appnexus" -> 1
+            "appnexus-2" -> 2
+            "rubicon-3" -> 3
+        """
+        import re
+
+        # Check if code ends with -N (instance suffix)
+        match = re.match(r"^(.+)-(\d+)$", bidder_code)
+        if match:
+            return int(match.group(2))
+        return 1
+
+    @property
+    def is_publisher_specific(self) -> bool:
+        """Check if this is a publisher-specific bidder instance."""
+        return self.publisher_id is not None
 
     @property
     def is_enabled(self) -> bool:
@@ -475,6 +526,9 @@ class BidderConfig:
             "bidder_code": self.bidder_code,
             "name": self.name,
             "description": self.description,
+            "bidder_family": self.bidder_family,
+            "instance_number": self.instance_number,
+            "publisher_id": self.publisher_id,
             "endpoint": self.endpoint.to_dict(),
             "capabilities": self.capabilities.to_dict(),
             "rate_limits": self.rate_limits.to_dict(),
@@ -507,6 +561,9 @@ class BidderConfig:
             bidder_code=data.get("bidder_code", ""),
             name=data.get("name", ""),
             description=data.get("description", ""),
+            bidder_family=data.get("bidder_family", ""),
+            instance_number=data.get("instance_number", 1),
+            publisher_id=data.get("publisher_id"),
             endpoint=BidderEndpoint.from_dict(data.get("endpoint", {})),
             capabilities=BidderCapabilities.from_dict(data.get("capabilities", {})),
             rate_limits=BidderRateLimits.from_dict(data.get("rate_limits", {})),
