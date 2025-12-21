@@ -109,9 +109,27 @@ func main() {
 	// Use dynamic handler that queries registries at request time
 	biddersHandler := endpoints.NewDynamicInfoBiddersHandler(adapters.DefaultRegistry, dynamicRegistry)
 
+	// P0-4: Initialize privacy middleware for GDPR/COPPA compliance
+	privacyConfig := middleware.DefaultPrivacyConfig()
+	// Allow disabling GDPR enforcement via environment variable (for testing)
+	if os.Getenv("PBS_DISABLE_GDPR_ENFORCEMENT") == "true" {
+		privacyConfig.EnforceGDPR = false
+		log.Warn().Msg("GDPR enforcement disabled via PBS_DISABLE_GDPR_ENFORCEMENT")
+	}
+	privacyMiddleware := middleware.NewPrivacyMiddleware(privacyConfig)
+
+	// Wrap auction handler with privacy middleware
+	privacyProtectedAuction := privacyMiddleware(auctionHandler)
+
+	log.Info().
+		Bool("gdpr_enforcement", privacyConfig.EnforceGDPR).
+		Bool("coppa_enforcement", privacyConfig.EnforceCOPPA).
+		Bool("strict_mode", privacyConfig.StrictMode).
+		Msg("Privacy middleware initialized")
+
 	// Setup routes
 	mux := http.NewServeMux()
-	mux.Handle("/openrtb2/auction", auctionHandler)
+	mux.Handle("/openrtb2/auction", privacyProtectedAuction)
 	mux.Handle("/status", statusHandler)
 	mux.Handle("/health", healthHandler())
 	mux.Handle("/info/bidders", biddersHandler)
