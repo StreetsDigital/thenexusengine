@@ -77,6 +77,17 @@ class RevenueShareConfig:
     platform_demand_rev_share: float = 0.0  # % taken from platform demand
     publisher_own_demand_fee: float = 0.0   # % charged for publisher's own demand
 
+    def __post_init__(self):
+        """Validate percentage values are within valid range (0-100)."""
+        if not 0 <= self.platform_demand_rev_share <= 100:
+            raise ValueError(
+                f"platform_demand_rev_share must be between 0 and 100, got {self.platform_demand_rev_share}"
+            )
+        if not 0 <= self.publisher_own_demand_fee <= 100:
+            raise ValueError(
+                f"publisher_own_demand_fee must be between 0 and 100, got {self.publisher_own_demand_fee}"
+            )
+
 
 @dataclass
 class PublisherConfig:

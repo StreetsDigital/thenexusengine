@@ -1081,6 +1081,23 @@ def create_app(config_path: Optional[Path] = None) -> Flask:
         try:
             data = request.json
 
+            # Validate revenue share percentages
+            revenue_share = data.get('revenue_share', {})
+            platform_share = float(revenue_share.get('platform_demand_rev_share', 0.0))
+            own_demand_fee = float(revenue_share.get('publisher_own_demand_fee', 0.0))
+
+            if not 0 <= platform_share <= 100:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Platform demand revenue share must be between 0 and 100'
+                }), 400
+
+            if not 0 <= own_demand_fee <= 100:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Publisher own demand fee must be between 0 and 100'
+                }), 400
+
             # Build YAML content
             config_content = {
                 'publisher_id': safe_publisher_id,
