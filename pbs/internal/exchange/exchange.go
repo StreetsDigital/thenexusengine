@@ -3,7 +3,6 @@ package exchange
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -702,31 +701,24 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	if e.idrClient != nil && e.config.IDREnabled {
 		idrStart := time.Now()
 
-		// P1-5: Handle JSON marshaling errors properly
-		reqJSON, marshalErr := json.Marshal(req.BidRequest)
-		if marshalErr != nil {
-			// Log error but continue with all bidders as fallback
-			response.DebugInfo.AddError("idr", []string{
-				fmt.Sprintf("failed to marshal request for IDR: %v", marshalErr),
-			})
-		} else {
-			idrResult, err := e.idrClient.SelectPartners(ctx, reqJSON, availableBidders)
+		// P1-15: Build minimal request to reduce payload size
+		minReq := e.buildMinimalIDRRequest(req.BidRequest)
+		idrResult, err := e.idrClient.SelectPartnersMinimal(ctx, minReq, availableBidders)
 
-			response.DebugInfo.IDRLatency = time.Since(idrStart)
+		response.DebugInfo.IDRLatency = time.Since(idrStart)
 
-			if err == nil && idrResult != nil {
-				response.IDRResult = idrResult
-				selectedBidders = make([]string, 0, len(idrResult.SelectedBidders))
-				for _, sb := range idrResult.SelectedBidders {
-					selectedBidders = append(selectedBidders, sb.BidderCode)
-				}
-
-				for _, eb := range idrResult.ExcludedBidders {
-					response.DebugInfo.ExcludedBidders = append(response.DebugInfo.ExcludedBidders, eb.BidderCode)
-				}
+		if err == nil && idrResult != nil {
+			response.IDRResult = idrResult
+			selectedBidders = make([]string, 0, len(idrResult.SelectedBidders))
+			for _, sb := range idrResult.SelectedBidders {
+				selectedBidders = append(selectedBidders, sb.BidderCode)
 			}
-			// If IDR fails, fall back to all bidders
+
+			for _, eb := range idrResult.ExcludedBidders {
+				response.DebugInfo.ExcludedBidders = append(response.DebugInfo.ExcludedBidders, eb.BidderCode)
+			}
 		}
+		// If IDR fails, fall back to all bidders
 	}
 
 	response.DebugInfo.SelectedBidders = selectedBidders
@@ -1419,6 +1411,107 @@ func (e *Exchange) buildEmptyResponse(req *openrtb.BidRequest, nbr int) *openrtb
 		Cur:     e.config.DefaultCurrency,
 		NBR:     nbr,
 	}
+}
+
+// buildMinimalIDRRequest extracts only essential fields for IDR partner selection
+// P1-15: Significantly reduces payload size vs sending full OpenRTB request
+func (e *Exchange) buildMinimalIDRRequest(req *openrtb.BidRequest) *idr.MinimalRequest {
+	// Extract domain/publisher info
+	var domain, publisher, appBundle string
+	var categories []string
+	isApp := false
+
+	if req.Site != nil {
+		domain = req.Site.Domain
+		categories = req.Site.Cat
+		if req.Site.Publisher != nil {
+			publisher = req.Site.Publisher.ID
+		}
+	} else if req.App != nil {
+		isApp = true
+		appBundle = req.App.Bundle
+		categories = req.App.Cat
+		if req.App.Publisher != nil {
+			publisher = req.App.Publisher.ID
+		}
+	}
+
+	// Extract geo info
+	var country, region string
+	if req.Device != nil && req.Device.Geo != nil {
+		country = req.Device.Geo.Country
+		region = req.Device.Geo.Region
+	} else if req.User != nil && req.User.Geo != nil {
+		country = req.User.Geo.Country
+		region = req.User.Geo.Region
+	}
+
+	// Extract device type
+	var deviceType string
+	if req.Device != nil {
+		switch req.Device.DeviceType {
+		case 1:
+			deviceType = "mobile"
+		case 2:
+			deviceType = "pc"
+		case 3:
+			deviceType = "ctv"
+		case 4:
+			deviceType = "phone"
+		case 5:
+			deviceType = "tablet"
+		case 6:
+			deviceType = "connected_device"
+		case 7:
+			deviceType = "set_top_box"
+		}
+	}
+
+	// Build minimal impressions
+	impressions := make([]idr.MinimalImp, 0, len(req.Imp))
+	for _, imp := range req.Imp {
+		mediaTypes := make([]string, 0, 4)
+		var sizes []string
+
+		if imp.Banner != nil {
+			mediaTypes = append(mediaTypes, "banner")
+			if imp.Banner.W > 0 && imp.Banner.H > 0 {
+				sizes = append(sizes, fmt.Sprintf("%dx%d", imp.Banner.W, imp.Banner.H))
+			}
+			for _, f := range imp.Banner.Format {
+				if f.W > 0 && f.H > 0 {
+					sizes = append(sizes, fmt.Sprintf("%dx%d", f.W, f.H))
+				}
+			}
+		}
+		if imp.Video != nil {
+			mediaTypes = append(mediaTypes, "video")
+			if imp.Video.W > 0 && imp.Video.H > 0 {
+				sizes = append(sizes, fmt.Sprintf("%dx%d", imp.Video.W, imp.Video.H))
+			}
+		}
+		if imp.Native != nil {
+			mediaTypes = append(mediaTypes, "native")
+		}
+		if imp.Audio != nil {
+			mediaTypes = append(mediaTypes, "audio")
+		}
+
+		impressions = append(impressions, idr.BuildMinimalImp(imp.ID, mediaTypes, sizes))
+	}
+
+	return idr.BuildMinimalRequest(
+		req.ID,
+		domain,
+		publisher,
+		categories,
+		isApp,
+		appBundle,
+		impressions,
+		country,
+		region,
+		deviceType,
+	)
 }
 
 // UpdateFPDConfig updates the FPD configuration at runtime

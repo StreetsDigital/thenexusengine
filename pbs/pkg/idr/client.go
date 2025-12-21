@@ -78,8 +78,46 @@ func NewClientWithCircuitBreaker(baseURL string, timeout time.Duration, cbConfig
 
 // SelectPartnersRequest is the request to select partners
 type SelectPartnersRequest struct {
-	Request         json.RawMessage `json:"request"`          // OpenRTB request
-	AvailableBidders []string       `json:"available_bidders"` // Bidders to consider
+	Request          json.RawMessage `json:"request"`           // OpenRTB request
+	AvailableBidders []string        `json:"available_bidders"` // Bidders to consider
+}
+
+// MinimalRequest contains only the fields IDR needs for partner selection
+// P1-15: Reduces payload size significantly vs sending full OpenRTB request
+type MinimalRequest struct {
+	ID   string           `json:"id"`
+	Site *MinimalSite     `json:"site,omitempty"`
+	App  *MinimalApp      `json:"app,omitempty"`
+	Imp  []MinimalImp     `json:"imp"`
+	Geo  *MinimalGeo      `json:"geo,omitempty"`
+	DeviceType string    `json:"device_type,omitempty"`
+}
+
+// MinimalSite contains essential site info for partner selection
+type MinimalSite struct {
+	Domain     string `json:"domain,omitempty"`
+	Publisher  string `json:"publisher,omitempty"`
+	Categories []string `json:"cat,omitempty"`
+}
+
+// MinimalApp contains essential app info for partner selection
+type MinimalApp struct {
+	Bundle     string `json:"bundle,omitempty"`
+	Publisher  string `json:"publisher,omitempty"`
+	Categories []string `json:"cat,omitempty"`
+}
+
+// MinimalImp contains essential impression info
+type MinimalImp struct {
+	ID         string   `json:"id"`
+	MediaTypes []string `json:"media_types"` // "banner", "video", "native", "audio"
+	Sizes      []string `json:"sizes,omitempty"` // "300x250", "728x90", etc.
+}
+
+// MinimalGeo contains essential geo info
+type MinimalGeo struct {
+	Country string `json:"country,omitempty"`
+	Region  string `json:"region,omitempty"`
 }
 
 // SelectPartnersResponse is the response from partner selection
@@ -152,6 +190,66 @@ func (c *Client) SelectPartners(ctx context.Context, ortbRequest json.RawMessage
 	// If circuit is open, fail open (return nil, allowing all bidders)
 	if err == ErrCircuitOpen {
 		return nil, nil // Caller should fall back to all bidders
+	}
+
+	if err != nil {
+		callErr = err
+	}
+
+	return result, callErr
+}
+
+// SelectPartnersMinimal calls IDR with a minimal payload for better performance
+// P1-15: Uses MinimalRequest instead of full OpenRTB to reduce payload size
+func (c *Client) SelectPartnersMinimal(ctx context.Context, minReq *MinimalRequest, availableBidders []string) (*SelectPartnersResponse, error) {
+	var result *SelectPartnersResponse
+	var callErr error
+
+	err := c.circuitBreaker.Execute(func() error {
+		reqJSON, err := json.Marshal(minReq)
+		if err != nil {
+			return fmt.Errorf("failed to marshal minimal request: %w", err)
+		}
+
+		reqBody := SelectPartnersRequest{
+			Request:          reqJSON,
+			AvailableBidders: availableBidders,
+		}
+
+		body, err := json.Marshal(reqBody)
+		if err != nil {
+			return fmt.Errorf("failed to marshal request: %w", err)
+		}
+
+		url := c.baseURL + "/api/select"
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to call IDR service: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("IDR service returned status %d", resp.StatusCode)
+		}
+
+		limitedReader := io.LimitReader(resp.Body, maxIDRResponseSize)
+		var response SelectPartnersResponse
+		if err := json.NewDecoder(limitedReader).Decode(&response); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		result = &response
+		return nil
+	})
+
+	if err == ErrCircuitOpen {
+		return nil, nil
 	}
 
 	if err != nil {
@@ -319,4 +417,57 @@ func (c *Client) GetFPDConfig(ctx context.Context) (*FPDConfig, error) {
 	}
 
 	return fpd, nil
+}
+
+// BuildMinimalRequest creates a MinimalRequest from extracted OpenRTB fields
+// Helper for callers who need to manually construct the minimal request
+func BuildMinimalRequest(
+	requestID string,
+	domain string,
+	publisher string,
+	categories []string,
+	isApp bool,
+	appBundle string,
+	impressions []MinimalImp,
+	country string,
+	region string,
+	deviceType string,
+) *MinimalRequest {
+	req := &MinimalRequest{
+		ID:         requestID,
+		Imp:        impressions,
+		DeviceType: deviceType,
+	}
+
+	if isApp {
+		req.App = &MinimalApp{
+			Bundle:     appBundle,
+			Publisher:  publisher,
+			Categories: categories,
+		}
+	} else {
+		req.Site = &MinimalSite{
+			Domain:     domain,
+			Publisher:  publisher,
+			Categories: categories,
+		}
+	}
+
+	if country != "" || region != "" {
+		req.Geo = &MinimalGeo{
+			Country: country,
+			Region:  region,
+		}
+	}
+
+	return req
+}
+
+// BuildMinimalImp creates a MinimalImp from impression data
+func BuildMinimalImp(impID string, mediaTypes []string, sizes []string) MinimalImp {
+	return MinimalImp{
+		ID:         impID,
+		MediaTypes: mediaTypes,
+		Sizes:      sizes,
+	}
 }
