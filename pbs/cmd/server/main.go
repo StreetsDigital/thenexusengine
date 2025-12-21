@@ -148,13 +148,22 @@ func main() {
 		}
 	})
 
-	// Build middleware chain: Logging -> Size Limit -> Auth -> Rate Limit -> Metrics -> Handler
+	// P1-17: Initialize security headers middleware
+	securityHeaders := middleware.NewSecurityHeaders(middleware.DefaultSecurityConfig())
+
+	// P1-16: Initialize CORS middleware for Prebid.js integration
+	corsMiddleware := middleware.NewCORS(middleware.DefaultCORSConfig())
+
+	// Build middleware chain: Logging -> Security -> CORS -> Size Limit -> Auth -> Rate Limit -> Metrics -> Handler
 	// Note: Auth must run before Rate Limit so publisher ID is available for rate limiting
+	// Note: Security headers should be early in chain to ensure they're always set
 	handler := http.Handler(mux)
 	handler = m.Middleware(handler)
 	handler = rateLimiter.Middleware(handler)
 	handler = auth.Middleware(handler)
 	handler = sizeLimiter.Middleware(handler)
+	handler = corsMiddleware(handler)
+	handler = securityHeaders(handler)
 	handler = loggingMiddleware(handler)
 
 	// Create server

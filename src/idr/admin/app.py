@@ -58,13 +58,18 @@ _event_pipeline = None
 # Authentication System
 # =============================================================================
 
+# P1-18: OWASP recommends 600,000 iterations for PBKDF2-SHA256 (2023)
+# https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+PBKDF2_ITERATIONS = 600000
+
+
 def _hash_password(password: str, salt: str) -> str:
-    """Hash a password with salt using PBKDF2."""
+    """Hash a password with salt using PBKDF2-SHA256."""
     return hashlib.pbkdf2_hmac(
         'sha256',
         password.encode('utf-8'),
         salt.encode('utf-8'),
-        100000  # iterations
+        PBKDF2_ITERATIONS
     ).hex()
 
 
