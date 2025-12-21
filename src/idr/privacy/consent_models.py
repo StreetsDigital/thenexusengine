@@ -5,12 +5,26 @@ Supports:
 - GDPR TCF v2 (Transparency and Consent Framework)
 - CCPA/CPRA (California Consumer Privacy Act)
 - GPP (Global Privacy Platform)
+
+P0-1: Uses iab-tcf library for proper TCF v2 consent string parsing.
+This ensures GDPR compliance by correctly parsing vendor and purpose consents
+instead of assuming consent when the string is valid.
 """
 
-import base64
+import logging
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
+
+# P0-1: Import IAB TCF library for proper consent parsing
+try:
+    from iab_tcf import decode_v2, ConsentV2
+    IAB_TCF_AVAILABLE = True
+except ImportError:
+    IAB_TCF_AVAILABLE = False
+    ConsentV2 = None
+
+logger = logging.getLogger(__name__)
 
 
 class PrivacyRegulation(Enum):
@@ -74,58 +88,135 @@ class TCFConsent:
     @classmethod
     def parse(cls, consent_string: str) -> "TCFConsent":
         """
-        Parse a TCF v2 consent string.
+        Parse a TCF v2 consent string using the IAB TCF library.
 
-        Note: This is a simplified parser. For production, consider using
-        a full TCF decoder library like `tcflib` or `consent-string`.
+        P0-1: GDPR Compliance - Properly parses consent string to extract
+        actual consent values. FAILS CLOSED - returns no consent on parse errors.
         """
         if not consent_string:
             return cls(raw_string="", has_consent=False)
 
-        try:
-            # TCF v2 strings start with a version indicator
-            # Full parsing would decode the base64 and read bit fields
-            # For now, we do basic validation and assume consent if string exists
-
-            # Try to decode to validate format
-            padding = 4 - (len(consent_string) % 4)
-            if padding != 4:
-                consent_string_padded = consent_string + ('=' * padding)
-            else:
-                consent_string_padded = consent_string
-
-            decoded = base64.urlsafe_b64decode(consent_string_padded)
-
-            # Extract version from first 6 bits
-            if len(decoded) > 0:
-                version = (decoded[0] >> 2) & 0x3F
-            else:
-                version = 2
-
-            # For a valid TCF string, we assume basic consent
-            # Real implementation would parse all bit fields
+        # P0-1: Use IAB TCF library for proper parsing
+        if IAB_TCF_AVAILABLE:
+            return cls._parse_with_iab_tcf(consent_string)
+        else:
+            # Fallback: Log warning and fail closed (no consent)
+            logger.warning(
+                "iab-tcf library not available - cannot parse TCF consent. "
+                "Install with: pip install iab-tcf>=0.2.2"
+            )
             return cls(
                 raw_string=consent_string,
-                version=version,
-                has_consent=True,
-                # Default purposes for basic ads (1, 2, 7, 9, 10 are common)
-                purpose_consent={1, 2, 7, 9, 10},
+                has_consent=False,
+                # Explicitly no consent when library unavailable
             )
 
-        except Exception:
-            # Invalid string - no consent
-            return cls(raw_string=consent_string, has_consent=False)
+    @classmethod
+    def _parse_with_iab_tcf(cls, consent_string: str) -> "TCFConsent":
+        """
+        Parse TCF v2 consent string using the iab-tcf library.
+
+        This properly extracts:
+        - Purpose consents (which purposes the user consented to)
+        - Vendor consents (which vendors can process data)
+        - Legitimate interests
+        - Special feature opt-ins
+        - CMP metadata
+        """
+        try:
+            # Decode the consent string using the IAB library
+            consent: ConsentV2 = decode_v2(consent_string)
+
+            # Extract purpose consents (purposes 1-10 or 1-11 depending on version)
+            purpose_consent = set()
+            for purpose_id in range(1, 12):  # Purposes 1-11
+                try:
+                    if consent.is_purpose_allowed(purpose_id):
+                        purpose_consent.add(purpose_id)
+                except (AttributeError, IndexError):
+                    pass
+
+            # Extract vendor consents
+            vendor_consent = set()
+            # Check common vendor IDs (top 100 vendors)
+            # In production, you'd check against your specific vendor list
+            for vendor_id in range(1, 1001):  # Check vendors 1-1000
+                try:
+                    if consent.is_vendor_allowed(vendor_id):
+                        vendor_consent.add(vendor_id)
+                except (AttributeError, IndexError):
+                    break  # Stop if we hit the end of the vendor list
+
+            # Extract legitimate interests
+            legitimate_interest = set()
+            for purpose_id in range(1, 12):
+                try:
+                    if consent.is_purpose_legitimate_interest_allowed(purpose_id):
+                        legitimate_interest.add(purpose_id)
+                except (AttributeError, IndexError):
+                    pass
+
+            # Extract special feature opt-ins
+            special_features = set()
+            for sf_id in range(1, 3):  # Special features 1-2
+                try:
+                    if consent.is_special_feature_allowed(sf_id):
+                        special_features.add(sf_id)
+                except (AttributeError, IndexError):
+                    pass
+
+            # Determine if we have valid consent for basic processing
+            # Purpose 1 (Store/access device) is typically required
+            has_basic_consent = 1 in purpose_consent or 1 in legitimate_interest
+
+            return cls(
+                raw_string=consent_string,
+                version=consent.version if hasattr(consent, 'version') else 2,
+                has_consent=has_basic_consent,
+                vendor_consent=vendor_consent,
+                purpose_consent=purpose_consent,
+                legitimate_interest=legitimate_interest,
+                special_feature_optins=special_features,
+                cmp_id=getattr(consent, 'cmp_id', 0),
+                cmp_version=getattr(consent, 'cmp_version', 0),
+                consent_language=getattr(consent, 'consent_language', 'EN'),
+                vendor_list_version=getattr(consent, 'vendor_list_version', 0),
+            )
+
+        except Exception as e:
+            # P0-1: FAIL CLOSED - On any parse error, return NO CONSENT
+            # This is the GDPR-compliant behavior
+            logger.warning(
+                "Failed to parse TCF consent string: %s. Treating as no consent.",
+                str(e)
+            )
+            return cls(
+                raw_string=consent_string,
+                has_consent=False,
+                # Explicitly empty - no assumed consent
+            )
 
     def has_purpose_consent(self, purpose: TCFPurpose) -> bool:
         """Check if consent exists for a specific purpose."""
         return purpose.value in self.purpose_consent
 
     def has_vendor_consent(self, vendor_id: int) -> bool:
-        """Check if consent exists for a specific vendor."""
-        # If we haven't parsed vendor consent, assume consent if has_consent is True
-        if not self.vendor_consent and self.has_consent:
-            return True
-        return vendor_id in self.vendor_consent
+        """
+        Check if consent exists for a specific vendor.
+
+        P0-1: GDPR Compliance - If vendor consent wasn't parsed or the specific
+        vendor isn't in the consent list, return False. We never assume consent.
+        """
+        if not self.has_consent:
+            return False
+        # If we have a parsed vendor consent set, check it
+        if self.vendor_consent:
+            return vendor_id in self.vendor_consent
+        # If vendor_consent is empty but we have consent, it means all vendors
+        # may be allowed (depends on the consent string structure)
+        # For safety, we only return True if we actually parsed the vendor
+        # In practice, the _parse_with_iab_tcf populates this
+        return False
 
     def can_process_for_ads(self) -> bool:
         """Check if processing for basic advertising is allowed."""

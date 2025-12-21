@@ -43,6 +43,14 @@ admin = [
     "flask>=3.0.0",
     "pyyaml>=6.0.0",
 ]
+# P0-1: GDPR compliance - TCF consent parsing
+privacy = [
+    "iab-tcf>=0.2.2",
+]
+# Full production install
+all = [
+    "nexus-engine-idr[db,admin,privacy]",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
