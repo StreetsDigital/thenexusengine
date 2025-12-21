@@ -27,6 +27,8 @@ from src.idr.bidders.models import (
     BidderStatus,
     RequestTransform,
     ResponseTransform,
+    SChainNode,
+    SChainAugmentation,
 )
 from src.idr.bidders.storage import BidderStorage
 
@@ -578,6 +580,284 @@ class TestResponseTransform:
         )
 
         assert transform.price_adjustment == 0.95
+
+
+class TestSChainAugmentation:
+    """Test Supply Chain augmentation models."""
+
+    def test_schain_node_creation(self):
+        """Test creating a supply chain node."""
+        node = SChainNode(
+            asi="nexusengine.com",
+            sid="seller-123",
+            hp=1,
+            name="The Nexus Engine",
+            domain="nexusengine.com",
+        )
+
+        assert node.asi == "nexusengine.com"
+        assert node.sid == "seller-123"
+        assert node.hp == 1
+        assert node.name == "The Nexus Engine"
+        assert node.domain == "nexusengine.com"
+        assert node.rid is None
+
+    def test_schain_node_defaults(self):
+        """Test default values for supply chain node."""
+        node = SChainNode(asi="example.com", sid="123")
+
+        assert node.hp == 1  # Default to direct
+        assert node.name is None
+        assert node.domain is None
+        assert node.rid is None
+        assert node.ext == {}
+
+    def test_schain_node_to_dict(self):
+        """Test schain node serialization."""
+        node = SChainNode(
+            asi="nexusengine.com",
+            sid="seller-123",
+            hp=1,
+            name="The Nexus Engine",
+        )
+
+        data = node.to_dict()
+        assert data["asi"] == "nexusengine.com"
+        assert data["sid"] == "seller-123"
+        assert data["hp"] == 1
+        assert data["name"] == "The Nexus Engine"
+        # Optional fields not set should not be in dict
+        assert "domain" not in data
+        assert "rid" not in data
+
+    def test_schain_node_to_dict_minimal(self):
+        """Test schain node serialization with minimal fields."""
+        node = SChainNode(asi="example.com", sid="123")
+
+        data = node.to_dict()
+        assert data == {"asi": "example.com", "sid": "123", "hp": 1}
+
+    def test_schain_node_from_dict(self):
+        """Test schain node deserialization."""
+        data = {
+            "asi": "dsp.example.com",
+            "sid": "dsp-seat-001",
+            "hp": 0,
+            "name": "Example DSP",
+            "domain": "dsp.example.com",
+            "rid": "request-123",
+        }
+
+        node = SChainNode.from_dict(data)
+        assert node.asi == "dsp.example.com"
+        assert node.sid == "dsp-seat-001"
+        assert node.hp == 0
+        assert node.name == "Example DSP"
+        assert node.domain == "dsp.example.com"
+        assert node.rid == "request-123"
+
+    def test_schain_node_with_ext(self):
+        """Test schain node with extension data."""
+        node = SChainNode(
+            asi="example.com",
+            sid="123",
+            ext={"custom_field": "value", "partner_id": 456},
+        )
+
+        data = node.to_dict()
+        assert data["ext"]["custom_field"] == "value"
+        assert data["ext"]["partner_id"] == 456
+
+    def test_schain_augmentation_creation(self):
+        """Test creating schain augmentation config."""
+        augment = SChainAugmentation(
+            enabled=True,
+            nodes=[
+                SChainNode(asi="nexusengine.com", sid="nexus-001", hp=1),
+            ],
+            complete=1,
+            version="1.0",
+        )
+
+        assert augment.enabled is True
+        assert len(augment.nodes) == 1
+        assert augment.nodes[0].asi == "nexusengine.com"
+        assert augment.complete == 1
+        assert augment.version == "1.0"
+
+    def test_schain_augmentation_defaults(self):
+        """Test default schain augmentation config."""
+        augment = SChainAugmentation()
+
+        assert augment.enabled is False
+        assert augment.nodes == []
+        assert augment.complete is None
+        assert augment.version == "1.0"
+
+    def test_schain_augmentation_to_dict(self):
+        """Test schain augmentation serialization."""
+        augment = SChainAugmentation(
+            enabled=True,
+            nodes=[
+                SChainNode(asi="exchange.com", sid="seat-001", hp=1, name="Exchange"),
+                SChainNode(asi="ssp.com", sid="ssp-123", hp=0),
+            ],
+            complete=1,
+            version="1.0",
+        )
+
+        data = augment.to_dict()
+        assert data["enabled"] is True
+        assert len(data["nodes"]) == 2
+        assert data["nodes"][0]["asi"] == "exchange.com"
+        assert data["nodes"][0]["name"] == "Exchange"
+        assert data["nodes"][1]["hp"] == 0
+        assert data["complete"] == 1
+        assert data["version"] == "1.0"
+
+    def test_schain_augmentation_from_dict(self):
+        """Test schain augmentation deserialization."""
+        data = {
+            "enabled": True,
+            "nodes": [
+                {"asi": "platform.com", "sid": "plat-001", "hp": 1},
+            ],
+            "complete": 0,
+            "version": "1.0",
+        }
+
+        augment = SChainAugmentation.from_dict(data)
+        assert augment.enabled is True
+        assert len(augment.nodes) == 1
+        assert augment.nodes[0].asi == "platform.com"
+        assert augment.complete == 0
+
+    def test_schain_augmentation_preserve_complete(self):
+        """Test schain augmentation with preserve original complete flag."""
+        augment = SChainAugmentation(
+            enabled=True,
+            nodes=[SChainNode(asi="test.com", sid="123")],
+            complete=None,  # Preserve original
+        )
+
+        data = augment.to_dict()
+        assert data["complete"] is None
+
+    def test_request_transform_with_schain_augment(self):
+        """Test request transform with schain augmentation."""
+        transform = RequestTransform(
+            imp_ext_template={"bidder": {"id": "123"}},
+            schain_augment=SChainAugmentation(
+                enabled=True,
+                nodes=[
+                    SChainNode(
+                        asi="nexusengine.com",
+                        sid="nexus-seat-001",
+                        hp=1,
+                        name="The Nexus Engine",
+                    ),
+                ],
+                complete=1,
+            ),
+        )
+
+        data = transform.to_dict()
+        assert data["schain_augment"]["enabled"] is True
+        assert len(data["schain_augment"]["nodes"]) == 1
+        assert data["schain_augment"]["nodes"][0]["asi"] == "nexusengine.com"
+
+    def test_request_transform_from_dict_with_schain(self):
+        """Test request transform deserialization with schain augmentation."""
+        data = {
+            "field_mappings": {},
+            "schain_augment": {
+                "enabled": True,
+                "nodes": [
+                    {"asi": "example.com", "sid": "ex-001", "hp": 1},
+                ],
+                "complete": 1,
+                "version": "1.0",
+            },
+        }
+
+        transform = RequestTransform.from_dict(data)
+        assert transform.schain_augment.enabled is True
+        assert len(transform.schain_augment.nodes) == 1
+        assert transform.schain_augment.nodes[0].asi == "example.com"
+
+    def test_bidder_config_with_schain_augment(self):
+        """Test complete bidder config serialization with schain augmentation."""
+        config = BidderConfig(
+            bidder_code="schain-test-bidder",
+            name="SChain Test Bidder",
+            endpoint=BidderEndpoint(url="https://dsp.example.com/bid"),
+            request_transform=RequestTransform(
+                schain_augment=SChainAugmentation(
+                    enabled=True,
+                    nodes=[
+                        SChainNode(
+                            asi="nexusengine.com",
+                            sid="nexus-publisher-123",
+                            hp=1,
+                            name="The Nexus Engine",
+                            domain="nexusengine.com",
+                        ),
+                    ],
+                    complete=1,
+                    version="1.0",
+                ),
+            ),
+        )
+
+        # Serialize and deserialize
+        data = config.to_dict()
+        restored = BidderConfig.from_dict(data)
+
+        # Verify schain augmentation is preserved
+        assert restored.request_transform.schain_augment.enabled is True
+        assert len(restored.request_transform.schain_augment.nodes) == 1
+        assert restored.request_transform.schain_augment.nodes[0].asi == "nexusengine.com"
+        assert restored.request_transform.schain_augment.nodes[0].sid == "nexus-publisher-123"
+        assert restored.request_transform.schain_augment.nodes[0].name == "The Nexus Engine"
+
+    def test_bidder_config_json_with_schain(self):
+        """Test JSON serialization with schain augmentation."""
+        config = BidderConfig(
+            bidder_code="json-schain-test",
+            name="JSON SChain Test",
+            endpoint=BidderEndpoint(url="https://example.com/bid"),
+            request_transform=RequestTransform(
+                schain_augment=SChainAugmentation(
+                    enabled=True,
+                    nodes=[
+                        SChainNode(asi="test.com", sid="test-001", hp=1),
+                    ],
+                ),
+            ),
+        )
+
+        json_str = config.to_json()
+        restored = BidderConfig.from_json(json_str)
+
+        assert restored.request_transform.schain_augment.enabled is True
+        assert restored.request_transform.schain_augment.nodes[0].asi == "test.com"
+
+    def test_multiple_schain_nodes(self):
+        """Test schain augmentation with multiple nodes."""
+        augment = SChainAugmentation(
+            enabled=True,
+            nodes=[
+                SChainNode(asi="publisher.com", sid="pub-001", hp=1),
+                SChainNode(asi="exchange.com", sid="ex-001", hp=1),
+                SChainNode(asi="reseller.com", sid="resell-001", hp=0, rid="r-123"),
+            ],
+            complete=1,
+        )
+
+        data = augment.to_dict()
+        assert len(data["nodes"]) == 3
+        assert data["nodes"][2]["hp"] == 0
+        assert data["nodes"][2]["rid"] == "r-123"
 
 
 if __name__ == "__main__":

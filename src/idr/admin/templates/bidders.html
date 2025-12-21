@@ -300,7 +300,7 @@
 
         .code { font-family: monospace; font-size: 0.8125rem; color: var(--gray-700); }
 
-        /* PBS Bidders Section */
+/* PBS Bidders Section */
         .section-divider {
             margin: 2rem 0;
             border: none;
@@ -398,6 +398,95 @@
             display: flex;
             gap: 1rem;
             align-items: center;
+        }
+
+        /* Form Section Styles */
+        .form-section {
+            border: 1px solid var(--gray-200);
+            border-radius: 0.5rem;
+            margin-top: 1.25rem;
+            overflow: hidden;
+        }
+
+        .form-section-header {
+            background: var(--gray-50);
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 500;
+            user-select: none;
+        }
+
+        .form-section-header:hover {
+            background: var(--gray-100);
+        }
+
+        .toggle-icon {
+            font-size: 1.25rem;
+            color: var(--gray-600);
+            font-weight: 300;
+        }
+
+        .form-section-body {
+            padding: 1rem;
+            border-top: 1px solid var(--gray-200);
+        }
+
+        /* SChain Node Card */
+        .schain-node-card {
+            background: var(--gray-50);
+            border: 1px solid var(--gray-200);
+            border-radius: 0.375rem;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+            position: relative;
+        }
+
+        .schain-node-card .remove-node {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: none;
+            border: none;
+            color: var(--danger);
+            cursor: pointer;
+            font-size: 1.25rem;
+            line-height: 1;
+            padding: 0.25rem;
+        }
+
+        .schain-node-card .remove-node:hover {
+            color: #dc2626;
+        }
+
+        .schain-node-card .form-row {
+            margin-bottom: 0.75rem;
+        }
+
+        .schain-node-card .form-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .schain-node-card .form-group {
+            margin-bottom: 0;
+        }
+
+        .schain-node-card label {
+            font-size: 0.75rem;
+        }
+
+        .schain-node-card input,
+        .schain-node-card select {
+            font-size: 0.8125rem;
+            padding: 0.5rem 0.75rem;
+        }
+
+        .node-number {
+            font-size: 0.75rem;
+            color: var(--gray-600);
+            margin-bottom: 0.5rem;
         }
     </style>
 </head>
@@ -581,6 +670,49 @@
                         <label for="description">Description</label>
                         <textarea id="description" name="description" rows="2" placeholder="Optional description"></textarea>
                     </div>
+
+                    <!-- Supply Chain Augmentation Section -->
+                    <div class="form-section">
+                        <div class="form-section-header" onclick="toggleSection('schain-section')">
+                            <span>Supply Chain (SChain) Augmentation</span>
+                            <span class="toggle-icon" id="schain-section-icon">+</span>
+                        </div>
+                        <div class="form-section-body" id="schain-section" style="display: none;">
+                            <div class="form-group">
+                                <label class="checkbox-item">
+                                    <input type="checkbox" id="schain-enabled" name="schain_enabled" onchange="toggleSchainFields()">
+                                    Enable SChain Augmentation
+                                </label>
+                                <p class="help-text">When enabled, supply chain nodes will be appended to bid requests for this bidder.</p>
+                            </div>
+
+                            <div id="schain-fields" style="display: none;">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="schain-version">SChain Version</label>
+                                        <input type="text" id="schain-version" name="schain_version" value="1.0" placeholder="1.0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="schain-complete">Chain Completeness</label>
+                                        <select id="schain-complete" name="schain_complete">
+                                            <option value="">Preserve Original</option>
+                                            <option value="1">Complete (1)</option>
+                                            <option value="0">Incomplete (0)</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Supply Chain Nodes</label>
+                                    <p class="help-text">Nodes will be appended to the existing schain in order.</p>
+                                    <div id="schain-nodes-container"></div>
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="addSchainNode()" style="margin-top: 0.5rem;">
+                                        + Add Node
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -757,6 +889,7 @@
             document.getElementById('save-btn').textContent = 'Create Bidder';
             document.getElementById('bidder-form').reset();
             document.getElementById('bidder-code').disabled = false;
+            resetSchainForm();
             document.getElementById('bidder-modal').classList.add('show');
         }
 
@@ -786,6 +919,17 @@
                 document.querySelectorAll('input[name="media_types"]').forEach(cb => {
                     cb.checked = bidder.capabilities?.media_types?.includes(cb.value) || false;
                 });
+
+                // Load schain augmentation data
+                resetSchainForm();
+                if (bidder.request_transform?.schain_augment) {
+                    loadSchainData(bidder.request_transform.schain_augment);
+                    // Expand section if schain is enabled
+                    if (bidder.request_transform.schain_augment.enabled) {
+                        document.getElementById('schain-section').style.display = 'block';
+                        document.getElementById('schain-section-icon').textContent = '-';
+                    }
+                }
 
                 toggleAuthFields();
                 document.getElementById('bidder-modal').classList.add('show');
@@ -844,6 +988,22 @@
 
             if (formData.get('gvl_vendor_id')) {
                 data.gvl_vendor_id = parseInt(formData.get('gvl_vendor_id'));
+            }
+
+            // SChain augmentation data
+            const schainEnabled = document.getElementById('schain-enabled').checked;
+            if (schainEnabled) {
+                const nodes = getSchainNodes();
+                if (nodes.length > 0) {
+                    const completeValue = document.getElementById('schain-complete').value;
+                    data.request_transform = data.request_transform || {};
+                    data.request_transform.schain_augment = {
+                        enabled: true,
+                        nodes: nodes,
+                        version: document.getElementById('schain-version').value || '1.0',
+                        complete: completeValue === '' ? null : parseInt(completeValue),
+                    };
+                }
             }
 
             try {
@@ -1005,6 +1165,154 @@
             const div = document.createElement('div');
             div.textContent = text || '';
             return div.innerHTML;
+        }
+
+        // Section toggle
+        function toggleSection(sectionId) {
+            const section = document.getElementById(sectionId);
+            const icon = document.getElementById(sectionId + '-icon');
+            if (section.style.display === 'none') {
+                section.style.display = 'block';
+                icon.textContent = '-';
+            } else {
+                section.style.display = 'none';
+                icon.textContent = '+';
+            }
+        }
+
+        // SChain functions
+        let schainNodeCounter = 0;
+
+        function toggleSchainFields() {
+            const enabled = document.getElementById('schain-enabled').checked;
+            document.getElementById('schain-fields').style.display = enabled ? 'block' : 'none';
+            if (enabled && document.querySelectorAll('.schain-node-card').length === 0) {
+                addSchainNode(); // Add first node automatically
+            }
+        }
+
+        function addSchainNode(nodeData = null) {
+            const container = document.getElementById('schain-nodes-container');
+            const nodeIndex = schainNodeCounter++;
+            const nodeCount = container.querySelectorAll('.schain-node-card').length + 1;
+
+            const nodeHtml = `
+                <div class="schain-node-card" id="schain-node-${nodeIndex}">
+                    <button type="button" class="remove-node" onclick="removeSchainNode(${nodeIndex})" title="Remove node">&times;</button>
+                    <div class="node-number">Node ${nodeCount}</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>ASI (Domain) *</label>
+                            <input type="text" name="schain_node_asi_${nodeIndex}" placeholder="example.com" value="${nodeData?.asi || ''}" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Seller ID (SID) *</label>
+                            <input type="text" name="schain_node_sid_${nodeIndex}" placeholder="seller-123" value="${nodeData?.sid || ''}" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Name (optional)</label>
+                            <input type="text" name="schain_node_name_${nodeIndex}" placeholder="Company Name" value="${nodeData?.name || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>HP (Direct)</label>
+                            <select name="schain_node_hp_${nodeIndex}">
+                                <option value="1" ${(nodeData?.hp !== 0) ? 'selected' : ''}>Yes (1) - Direct/Payment</option>
+                                <option value="0" ${(nodeData?.hp === 0) ? 'selected' : ''}>No (0) - Indirect</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Domain (optional)</label>
+                            <input type="text" name="schain_node_domain_${nodeIndex}" placeholder="example.com" value="${nodeData?.domain || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>RID (optional)</label>
+                            <input type="text" name="schain_node_rid_${nodeIndex}" placeholder="request-id" value="${nodeData?.rid || ''}">
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', nodeHtml);
+            updateNodeNumbers();
+        }
+
+        function removeSchainNode(nodeIndex) {
+            const node = document.getElementById(`schain-node-${nodeIndex}`);
+            if (node) {
+                node.remove();
+                updateNodeNumbers();
+            }
+        }
+
+        function updateNodeNumbers() {
+            const nodes = document.querySelectorAll('.schain-node-card');
+            nodes.forEach((node, index) => {
+                const numberEl = node.querySelector('.node-number');
+                if (numberEl) {
+                    numberEl.textContent = `Node ${index + 1}`;
+                }
+            });
+        }
+
+        function getSchainNodes() {
+            const nodes = [];
+            document.querySelectorAll('.schain-node-card').forEach(card => {
+                const nodeId = card.id.replace('schain-node-', '');
+                const asi = document.querySelector(`[name="schain_node_asi_${nodeId}"]`)?.value;
+                const sid = document.querySelector(`[name="schain_node_sid_${nodeId}"]`)?.value;
+                if (asi) {
+                    nodes.push({
+                        asi: asi,
+                        sid: sid || '',
+                        hp: parseInt(document.querySelector(`[name="schain_node_hp_${nodeId}"]`)?.value || '1'),
+                        name: document.querySelector(`[name="schain_node_name_${nodeId}"]`)?.value || null,
+                        domain: document.querySelector(`[name="schain_node_domain_${nodeId}"]`)?.value || null,
+                        rid: document.querySelector(`[name="schain_node_rid_${nodeId}"]`)?.value || null,
+                    });
+                }
+            });
+            return nodes;
+        }
+
+        function clearSchainNodes() {
+            document.getElementById('schain-nodes-container').innerHTML = '';
+            schainNodeCounter = 0;
+        }
+
+        function loadSchainData(schainAugment) {
+            if (!schainAugment) return;
+
+            document.getElementById('schain-enabled').checked = schainAugment.enabled || false;
+            document.getElementById('schain-version').value = schainAugment.version || '1.0';
+
+            const completeSelect = document.getElementById('schain-complete');
+            if (schainAugment.complete === 1) {
+                completeSelect.value = '1';
+            } else if (schainAugment.complete === 0) {
+                completeSelect.value = '0';
+            } else {
+                completeSelect.value = '';
+            }
+
+            clearSchainNodes();
+            if (schainAugment.nodes && schainAugment.nodes.length > 0) {
+                schainAugment.nodes.forEach(node => addSchainNode(node));
+            }
+
+            toggleSchainFields();
+        }
+
+        function resetSchainForm() {
+            document.getElementById('schain-enabled').checked = false;
+            document.getElementById('schain-version').value = '1.0';
+            document.getElementById('schain-complete').value = '';
+            clearSchainNodes();
+            document.getElementById('schain-fields').style.display = 'none';
+            document.getElementById('schain-section').style.display = 'none';
+            document.getElementById('schain-section-icon').textContent = '+';
         }
     </script>
 </body>

@@ -80,6 +80,25 @@ type RateLimitsConfig struct {
 	ConcurrentLimit int `json:"concurrent_limit"`
 }
 
+// SChainNodeConfig holds a single supply chain node configuration
+type SChainNodeConfig struct {
+	ASI    string                 `json:"asi"`    // Canonical domain of the SSP/Exchange
+	SID    string                 `json:"sid"`    // Seller ID
+	HP     int                    `json:"hp"`     // Header bidding partner (1=yes, 0=no)
+	RID    string                 `json:"rid,omitempty"`    // Request ID (optional)
+	Name   string                 `json:"name,omitempty"`   // Entity name (optional)
+	Domain string                 `json:"domain,omitempty"` // Entity domain (optional)
+	Ext    map[string]interface{} `json:"ext,omitempty"`    // Extensions (optional)
+}
+
+// SChainAugmentConfig holds supply chain augmentation configuration
+type SChainAugmentConfig struct {
+	Enabled  bool               `json:"enabled"`           // Whether augmentation is enabled
+	Nodes    []SChainNodeConfig `json:"nodes"`             // Nodes to append
+	Complete *int               `json:"complete,omitempty"` // Override complete flag (nil = preserve)
+	Version  string             `json:"version"`           // SChain version (default "1.0")
+}
+
 // RequestTransformConfig holds request transformation rules
 type RequestTransformConfig struct {
 	FieldMappings      map[string]string      `json:"field_mappings"`
@@ -90,6 +109,7 @@ type RequestTransformConfig struct {
 	SiteExtTemplate    map[string]interface{} `json:"site_ext_template"`
 	UserExtTemplate    map[string]interface{} `json:"user_ext_template"`
 	SeatID             string                 `json:"seat_id"`
+	SChainAugment      SChainAugmentConfig    `json:"schain_augment"`
 }
 
 // ResponseTransformConfig holds response transformation rules
@@ -248,7 +268,76 @@ func (a *GenericAdapter) transformRequest(request *openrtb.BidRequest, config *B
 		reqCopy.User = &userCopy
 	}
 
+	// Apply schain augmentation
+	if config.RequestTransform.SChainAugment.Enabled && len(config.RequestTransform.SChainAugment.Nodes) > 0 {
+		reqCopy.Source = a.augmentSChain(reqCopy.Source, &config.RequestTransform.SChainAugment)
+	}
+
 	return &reqCopy
+}
+
+// augmentSChain adds supply chain nodes to the request's schain
+func (a *GenericAdapter) augmentSChain(source *openrtb.Source, augment *SChainAugmentConfig) *openrtb.Source {
+	// Create source if not present
+	var sourceCopy openrtb.Source
+	if source != nil {
+		sourceCopy = *source
+	}
+
+	// Initialize schain if not present
+	if sourceCopy.SChain == nil {
+		version := augment.Version
+		if version == "" {
+			version = "1.0"
+		}
+		sourceCopy.SChain = &openrtb.SupplyChain{
+			Ver:      version,
+			Complete: 1, // Default to complete
+			Nodes:    make([]openrtb.SupplyChainNode, 0),
+		}
+	} else {
+		// Deep copy existing schain to avoid modifying original
+		schainCopy := *sourceCopy.SChain
+		if len(sourceCopy.SChain.Nodes) > 0 {
+			schainCopy.Nodes = make([]openrtb.SupplyChainNode, len(sourceCopy.SChain.Nodes))
+			copy(schainCopy.Nodes, sourceCopy.SChain.Nodes)
+		}
+		sourceCopy.SChain = &schainCopy
+	}
+
+	// Override complete flag if specified
+	if augment.Complete != nil {
+		sourceCopy.SChain.Complete = *augment.Complete
+	}
+
+	// Override version if specified and non-empty
+	if augment.Version != "" {
+		sourceCopy.SChain.Ver = augment.Version
+	}
+
+	// Append configured nodes
+	for _, nodeConfig := range augment.Nodes {
+		node := openrtb.SupplyChainNode{
+			ASI:    nodeConfig.ASI,
+			SID:    nodeConfig.SID,
+			HP:     nodeConfig.HP,
+			RID:    nodeConfig.RID,
+			Name:   nodeConfig.Name,
+			Domain: nodeConfig.Domain,
+		}
+
+		// Convert ext map to json.RawMessage if present
+		if len(nodeConfig.Ext) > 0 {
+			extBytes, err := json.Marshal(nodeConfig.Ext)
+			if err == nil {
+				node.Ext = extBytes
+			}
+		}
+
+		sourceCopy.SChain.Nodes = append(sourceCopy.SChain.Nodes, node)
+	}
+
+	return &sourceCopy
 }
 
 // mergeJSONExt merges additional fields into an existing json.RawMessage
