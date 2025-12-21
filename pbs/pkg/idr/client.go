@@ -22,7 +22,29 @@ type Client struct {
 	circuitBreaker *CircuitBreaker
 }
 
-// NewClient creates a new IDR client
+// newIDRTransport creates a connection-pooled transport for IDR requests
+// P1-14: Optimize for low-latency, high-frequency calls to local IDR service
+func newIDRTransport(timeout time.Duration) *http.Transport {
+	return &http.Transport{
+		// Connection pool - IDR is a single host, so per-host settings matter most
+		MaxIdleConns:        20,              // Keep connections ready
+		MaxIdleConnsPerHost: 20,              // All connections are to IDR
+		MaxConnsPerHost:     100,             // Allow concurrent requests during load spikes
+		IdleConnTimeout:     120 * time.Second, // Keep connections alive longer for reuse
+
+		// Low timeouts for fast local service
+		ResponseHeaderTimeout: timeout,
+		ExpectContinueTimeout: 500 * time.Millisecond,
+
+		// Keep-alive for connection reuse
+		DisableKeepAlives: false,
+
+		// Disable compression - IDR responses are small, compression adds latency
+		DisableCompression: true,
+	}
+}
+
+// NewClient creates a new IDR client with connection pooling
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	if timeout == 0 {
 		timeout = 50 * time.Millisecond // IDR should be fast
@@ -30,7 +52,8 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
+			Transport: newIDRTransport(timeout),
 		},
 		timeout:        timeout,
 		circuitBreaker: NewCircuitBreaker(DefaultCircuitBreakerConfig()),
@@ -45,7 +68,8 @@ func NewClientWithCircuitBreaker(baseURL string, timeout time.Duration, cbConfig
 	return &Client{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
+			Transport: newIDRTransport(timeout),
 		},
 		timeout:        timeout,
 		circuitBreaker: NewCircuitBreaker(cbConfig),
