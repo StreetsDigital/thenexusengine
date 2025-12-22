@@ -29,9 +29,10 @@ FROM python:3.14-slim AS python-builder
 
 WORKDIR /build
 
-# Install build dependencies
+# Install build dependencies (including libc-dev for bitarray-hardbyte compilation)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    libc-dev \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
