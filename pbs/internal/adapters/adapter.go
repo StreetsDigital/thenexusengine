@@ -160,6 +160,7 @@ type DefaultHTTPClient struct {
 }
 
 // NewHTTPClient creates a new HTTP client with connection pooling
+// P1-14: Configure transport for high-performance connection reuse
 // Connection pooling reduces latency by reusing TCP connections and TLS sessions
 // for repeated requests to the same bidder endpoints.
 func NewHTTPClient(timeout time.Duration) *DefaultHTTPClient {
@@ -185,8 +186,8 @@ func NewHTTPClient(timeout time.Duration) *DefaultHTTPClient {
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Second,
 
-		// Disable compression to avoid CPU overhead for small JSON payloads
-		DisableCompression: false,
+		// Disable compression to reduce latency (bidder responses are usually small)
+		DisableCompression: true,
 	}
 
 	return &DefaultHTTPClient{

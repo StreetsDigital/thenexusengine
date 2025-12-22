@@ -24,6 +24,8 @@ classifiers = [
 dependencies = [
     "structlog>=23.0.0",
     "pyyaml>=6.0.0",
+    # P0-1: GDPR compliance - TCF consent parsing (required for production)
+    "iab-tcf>=0.2.2",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +45,14 @@ admin = [
     "flask>=3.0.0",
     "pyyaml>=6.0.0",
     "requests>=2.31.0",
+]
+# P0-1: GDPR compliance - iab-tcf now in core dependencies
+privacy = [
+    # iab-tcf moved to core dependencies for P0-1 compliance
+]
+# Full production install
+all = [
+    "nexus-engine-idr[db,admin,privacy]",
 ]
 
 [tool.setuptools.packages.find]

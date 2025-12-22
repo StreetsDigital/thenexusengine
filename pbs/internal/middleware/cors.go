@@ -35,6 +35,7 @@ func DefaultCORSConfig() *CORSConfig {
 			"Authorization",
 			"Accept",
 			"Origin",
+			"X-Prebid", // Prebid.js header
 		},
 		ExposedHeaders: []string{
 			"X-Request-ID",

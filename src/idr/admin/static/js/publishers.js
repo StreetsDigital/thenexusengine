@@ -677,7 +677,6 @@ async function saveFeatures(event) {
 // =================================================================
 const bidderState = {
     families: {},
-    enabled: [],
     searchFilter: '',
     currentPublisherId: null,
     editingBidderCode: null,
@@ -691,7 +690,6 @@ async function loadBidders(publisherId) {
     try {
         const data = await API.publisherBidders.getFamilies(publisherId);
         bidderState.families = data.families || {};
-        bidderState.enabled = data.enabled || [];
         renderBiddersList();
     } catch (error) {
         console.error('Failed to load bidders:', error);
@@ -746,8 +744,8 @@ function renderBiddersList() {
 }
 
 function renderBidderRow(bidder) {
-    const isEnabled = bidderState.enabled.includes(bidder.bidder_code);
-    const isCustom = bidder.publisher_id != null;
+    const isEnabled = bidder.is_enabled === true;
+    const isCustom = bidder.is_global === false;
     const code = escapeAttr(bidder.bidder_code);
 
     return `
@@ -788,20 +786,21 @@ function toggleBidderFamily(family) {
 
 async function toggleBidderEnabled(bidderCode, enabled) {
     try {
-        if (enabled) {
-            await API.publisherBidders.enable(bidderState.currentPublisherId, bidderCode);
-            if (!bidderState.enabled.includes(bidderCode)) {
-                bidderState.enabled.push(bidderCode);
+        await API.publisherBidders.setEnabled(bidderState.currentPublisherId, bidderCode, enabled);
+        // Update local state for immediate UI feedback
+        for (const family of Object.values(bidderState.families)) {
+            for (const bidder of family) {
+                if (bidder.bidder_code === bidderCode) {
+                    bidder.is_enabled = enabled;
+                    break;
+                }
             }
-        } else {
-            await API.publisherBidders.disable(bidderState.currentPublisherId, bidderCode);
-            bidderState.enabled = bidderState.enabled.filter(c => c !== bidderCode);
         }
         showAlert(`Bidder ${bidderCode} ${enabled ? 'enabled' : 'disabled'}`, 'success');
         renderBiddersList();
     } catch (error) {
         showAlert(error.message, 'error');
-        renderBiddersList(); // Revert UI
+        await loadBidders(bidderState.currentPublisherId); // Reload to get correct state
     }
 }
 
@@ -1025,7 +1024,7 @@ async function duplicateBidder(bidderCode) {
             bidderState.currentPublisherId,
             bidderCode
         );
-        showAlert(`Bidder duplicated as ${result.bidder.bidder_code}`, 'success');
+        showAlert(`Bidder duplicated as ${result.bidder_code}`, 'success');
         await loadBidders(bidderState.currentPublisherId);
     } catch (error) {
         showAlert(error.message, 'error');

@@ -69,14 +69,18 @@ _event_pipeline = None
 # Authentication System
 # =============================================================================
 
+# P1-18: OWASP recommends 600,000 iterations for PBKDF2-SHA256 (2023)
+# https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+PBKDF2_ITERATIONS = 600000
+
 
 def _hash_password(password: str, salt: str) -> str:
-    """Hash a password with salt using PBKDF2."""
+    """Hash a password with salt using PBKDF2-SHA256."""
     return hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
         salt.encode("utf-8"),
-        100000,  # iterations
+        PBKDF2_ITERATIONS,
     ).hex()
 
 
@@ -1142,6 +1146,10 @@ def create_app(config_path: Path | None = None) -> Flask:
                         "ccpa_applies": config.privacy.ccpa_applies,
                         "coppa_applies": config.privacy.coppa_applies,
                     },
+                    "revenue_share": {
+                        "platform_demand_rev_share": config.revenue_share.platform_demand_rev_share,
+                        "publisher_own_demand_fee": config.revenue_share.publisher_own_demand_fee,
+                    },
                 }
             )
 
@@ -1170,6 +1178,23 @@ def create_app(config_path: Path | None = None) -> Flask:
         try:
             data = request.json
 
+            # Validate revenue share percentages
+            revenue_share = data.get('revenue_share', {})
+            platform_share = float(revenue_share.get('platform_demand_rev_share', 0.0))
+            own_demand_fee = float(revenue_share.get('publisher_own_demand_fee', 0.0))
+
+            if not 0 <= platform_share <= 100:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Platform demand revenue share must be between 0 and 100'
+                }), 400
+
+            if not 0 <= own_demand_fee <= 100:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Publisher own demand fee must be between 0 and 100'
+                }), 400
+
             # Build YAML content
             config_content = {
                 "publisher_id": safe_publisher_id,
@@ -1190,6 +1215,13 @@ def create_app(config_path: Path | None = None) -> Flask:
                         "gdpr_applies": True,
                         "ccpa_applies": True,
                         "coppa_applies": False,
+                    },
+                ),
+                "revenue_share": data.get(
+                    "revenue_share",
+                    {
+                        "platform_demand_rev_share": 0.0,
+                        "publisher_own_demand_fee": 0.0,
                     },
                 ),
             }

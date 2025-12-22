@@ -386,6 +386,19 @@ export const publisherBidders = {
     },
 
     /**
+     * Enable or disable a bidder (convenience wrapper)
+     * @param {string} publisherId - Publisher ID
+     * @param {string} bidderCode - Bidder code
+     * @param {boolean} enabled - Whether to enable or disable
+     * @returns {Promise<Object>}
+     */
+    async setEnabled(publisherId, bidderCode, enabled) {
+        return enabled
+            ? this.enable(publisherId, bidderCode)
+            : this.disable(publisherId, bidderCode);
+    },
+
+    /**
      * Duplicate a bidder with auto-suffix naming
      * @param {string} publisherId - Publisher ID
      * @param {string} sourceBidderCode - Source bidder code to duplicate
