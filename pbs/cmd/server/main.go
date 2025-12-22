@@ -195,7 +195,7 @@ func main() {
 	handler = sizeLimiter.Middleware(handler)
 	handler = loggingMiddleware(handler)
 	handler = security.Middleware(handler)
-	handler = cors(handler)
+	handler = cors.Middleware(handler)
 
 	// Create server
 	server := &http.Server{
