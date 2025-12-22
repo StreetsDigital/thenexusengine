@@ -2,4 +2,4 @@
 
 from .request_classifier import RequestClassifier
 
-__all__ = ['RequestClassifier']
+__all__ = ["RequestClassifier"]

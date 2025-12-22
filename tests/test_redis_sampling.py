@@ -1,13 +1,10 @@
 """Tests for Redis sampling feature in the metrics client."""
 
-import pytest
-from unittest.mock import patch, MagicMock
 
 from src.idr.database.redis_client import (
-    RedisMetricsClient,
+    DEFAULT_SAMPLE_RATE,
     MockRedisClient,
     RealTimeMetrics,
-    DEFAULT_SAMPLE_RATE,
 )
 
 
@@ -271,7 +268,7 @@ class TestSamplingStatistics:
 
     def test_sampling_reduces_records(self):
         """10% sampling should record roughly 10% of events."""
-        client = MockRedisClient(sample_rate=1.0)  # Mock always records
+        MockRedisClient(sample_rate=1.0)  # Mock always records
 
         # Simulate what real sampling would do
         recorded = 0
@@ -279,6 +276,7 @@ class TestSamplingStatistics:
         sample_rate = 0.1
 
         import random
+
         random.seed(42)  # For reproducibility
 
         for _ in range(total):

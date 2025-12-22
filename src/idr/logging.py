@@ -10,9 +10,10 @@ import os
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 
@@ -98,9 +99,7 @@ def configure_logging(
 
     # Choose renderer based on format
     if format == "console":
-        processors.append(
-            structlog.dev.ConsoleRenderer(colors=sys.stdout.isatty())
-        )
+        processors.append(structlog.dev.ConsoleRenderer(colors=sys.stdout.isatty()))
     else:
         processors.append(structlog.processors.JSONRenderer())
 
@@ -188,6 +187,7 @@ def log_execution_time(logger: structlog.stdlib.BoundLogger | None = None):
     Args:
         logger: Optional logger instance (uses default if not provided)
     """
+
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -212,7 +212,9 @@ def log_execution_time(logger: structlog.stdlib.BoundLogger | None = None):
                     exc_info=True,
                 )
                 raise
+
         return wrapper
+
     return decorator
 
 

@@ -8,7 +8,6 @@
  */
 
 const BASE_URL = '/api/v2/config';
-const BIDDERS_BASE = '/api';
 
 /**
  * Helper function to handle API responses
@@ -293,10 +292,10 @@ export const publisherBidders = {
     /**
      * List all bidders for a publisher (global + publisher-specific)
      * @param {string} publisherId - Publisher ID
-     * @returns {Promise<{bidders: Array}>}
+     * @returns {Promise<{bidders: Array, enabled: Array}>}
      */
     async list(publisherId) {
-        return request(`${BIDDERS_BASE}/publishers/${encodeURIComponent(publisherId)}/bidders`);
+        return request(`${BASE_URL}/publishers/${encodeURIComponent(publisherId)}/bidders`);
     },
 
     /**
@@ -307,7 +306,7 @@ export const publisherBidders = {
      */
     async get(publisherId, bidderCode) {
         return request(
-            `${BIDDERS_BASE}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}`
+            `${BASE_URL}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}`
         );
     },
 
@@ -318,7 +317,7 @@ export const publisherBidders = {
      * @returns {Promise<Object>}
      */
     async create(publisherId, data) {
-        return request(`${BIDDERS_BASE}/publishers/${encodeURIComponent(publisherId)}/bidders`, {
+        return request(`${BASE_URL}/publishers/${encodeURIComponent(publisherId)}/bidders`, {
             method: 'POST',
             body: JSON.stringify(data),
         });
@@ -333,7 +332,7 @@ export const publisherBidders = {
      */
     async update(publisherId, bidderCode, data) {
         return request(
-            `${BIDDERS_BASE}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}`,
+            `${BASE_URL}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}`,
             {
                 method: 'PUT',
                 body: JSON.stringify(data),
@@ -349,7 +348,7 @@ export const publisherBidders = {
      */
     async delete(publisherId, bidderCode) {
         return request(
-            `${BIDDERS_BASE}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}`,
+            `${BASE_URL}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}`,
             {
                 method: 'DELETE',
             }
@@ -364,7 +363,7 @@ export const publisherBidders = {
      */
     async enable(publisherId, bidderCode) {
         return request(
-            `${BIDDERS_BASE}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}/enable`,
+            `${BASE_URL}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}/enable`,
             {
                 method: 'POST',
             }
@@ -379,7 +378,7 @@ export const publisherBidders = {
      */
     async disable(publisherId, bidderCode) {
         return request(
-            `${BIDDERS_BASE}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}/disable`,
+            `${BASE_URL}/publishers/${encodeURIComponent(publisherId)}/bidders/${encodeURIComponent(bidderCode)}/disable`,
             {
                 method: 'POST',
             }
@@ -411,7 +410,7 @@ export const publisherBidders = {
         if (name) {
             data.name = name;
         }
-        return request(`${BIDDERS_BASE}/publishers/${encodeURIComponent(publisherId)}/bidders/duplicate`, {
+        return request(`${BASE_URL}/publishers/${encodeURIComponent(publisherId)}/bidders/duplicate`, {
             method: 'POST',
             body: JSON.stringify(data),
         });
@@ -423,7 +422,7 @@ export const publisherBidders = {
      * @returns {Promise<{families: Object}>}
      */
     async getFamilies(publisherId) {
-        return request(`${BIDDERS_BASE}/publishers/${encodeURIComponent(publisherId)}/bidders/families`);
+        return request(`${BASE_URL}/publishers/${encodeURIComponent(publisherId)}/bidders/families`);
     },
 };
 

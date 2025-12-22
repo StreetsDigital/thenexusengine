@@ -13,16 +13,22 @@ Key components:
 """
 
 # Legacy publisher config (for backwards compatibility)
-from .publisher_config import (
-    BidderConfig,
-    IDRConfig,
-    PrivacyConfig,
-    PublisherConfig,
-    PublisherConfigManager,
-    RateLimitConfig,
-    SiteConfig,
-    get_publisher_config,
-    get_publisher_config_manager,
+from .config_resolver import (
+    AdUnitConfig,
+    ConfigResolver,
+    PublisherConfigV2,
+    get_config_resolver,
+    merge_configs,
+    resolve_config,
+    to_resolved_config,
+)
+from .config_resolver import (
+    SiteConfig as SiteConfigV2,
+)
+from .config_store import (
+    ConfigStore,
+    get_config_store,
+    init_config_store,
 )
 
 # New hierarchical configuration system
@@ -38,22 +44,16 @@ from .feature_config import (
     ResolvedConfig,
     get_default_global_config,
 )
-
-from .config_resolver import (
-    AdUnitConfig,
-    ConfigResolver,
-    PublisherConfigV2,
-    SiteConfig as SiteConfigV2,
-    get_config_resolver,
-    merge_configs,
-    resolve_config,
-    to_resolved_config,
-)
-
-from .config_store import (
-    ConfigStore,
-    get_config_store,
-    init_config_store,
+from .publisher_config import (
+    BidderConfig,
+    IDRConfig,
+    PrivacyConfig,
+    PublisherConfig,
+    PublisherConfigManager,
+    RateLimitConfig,
+    SiteConfig,
+    get_publisher_config,
+    get_publisher_config_manager,
 )
 
 __all__ = [
@@ -67,7 +67,6 @@ __all__ = [
     "PrivacyConfig",
     "get_publisher_config",
     "get_publisher_config_manager",
-
     # Hierarchical config (v2)
     "ConfigLevel",
     "FeatureConfig",
@@ -79,7 +78,6 @@ __all__ = [
     "FeatureFlags",
     "ResolvedConfig",
     "get_default_global_config",
-
     # Config resolution
     "ConfigResolver",
     "PublisherConfigV2",
@@ -89,7 +87,6 @@ __all__ = [
     "resolve_config",
     "merge_configs",
     "to_resolved_config",
-
     # Config persistence (Redis)
     "ConfigStore",
     "get_config_store",

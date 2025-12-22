@@ -15,6 +15,7 @@ primary_region = "iad"  # US East - change based on your users
 [env]
   IDR_PORT = "5050"
   PYTHONUNBUFFERED = "1"
+  LOG_LEVEL = "WARNING"  # Reduce log volume in production
   USE_MOCK_DB = "false"
   AUTH_ENABLED = "true"
   RATE_LIMIT_ENABLED = "true"
@@ -33,18 +34,18 @@ primary_region = "iad"  # US East - change based on your users
 
   [http_service.concurrency]
     type = "requests"
-    hard_limit = 250
-    soft_limit = 200
+    hard_limit = 100  # Realistic for async analytics workload
+    soft_limit = 75
 
 [[http_service.checks]]
   grace_period = "10s"
   interval = "30s"
   method = "GET"
-  timeout = "5s"
+  timeout = "2s"
   path = "/health"
 
 [[vm]]
-  memory = "512mb"
+  memory = "256mb"
   cpu_kind = "shared"
   cpus = 1
 

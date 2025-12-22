@@ -3,6 +3,7 @@ package endpoints
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/exchange"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 	"github.com/StreetsDigital/thenexusengine/pbs/pkg/logger"
+
+	log "github.com/rs/zerolog/log"
 )
 
 // AuctionHandler handles /openrtb2/auction requests
@@ -30,12 +33,12 @@ func (h *AuctionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read request body
+	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
 	// Parse OpenRTB request
 	var bidRequest openrtb.BidRequest
@@ -82,7 +85,9 @@ func (h *AuctionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Write response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Error().Err(err).Str("request_id", bidRequest.ID).Msg("failed to encode auction response")
+	}
 }
 
 // validateBidRequest validates the bid request
@@ -113,7 +118,7 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string {
 	if e.Index >= 0 {
-		return e.Field + ": " + e.Message
+		return fmt.Sprintf("%s[%d]: %s", e.Field, e.Index, e.Message)
 	}
 	return e.Field + ": " + e.Message
 }
@@ -148,7 +153,9 @@ func buildResponseExt(result *exchange.AuctionResponse) *openrtb.BidResponseExt 
 func writeError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
+		log.Error().Err(err).Str("message", message).Msg("failed to encode error response")
+	}
 }
 
 // StatusHandler handles /status requests
@@ -162,10 +169,12 @@ func NewStatusHandler() *StatusHandler {
 // ServeHTTP handles status requests
 func (h *StatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "ok",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	})
+	}); err != nil {
+		log.Error().Err(err).Msg("failed to encode status response")
+	}
 }
 
 // BidderLister is an interface for listing bidders
@@ -224,5 +233,7 @@ func (h *InfoBiddersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(bidders)
+	if err := json.NewEncoder(w).Encode(bidders); err != nil {
+		log.Error().Err(err).Msg("failed to encode bidders response")
+	}
 }

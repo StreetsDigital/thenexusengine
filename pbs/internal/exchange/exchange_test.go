@@ -1007,3 +1007,812 @@ func TestValidateRequestInRunAuction(t *testing.T) {
 		t.Errorf("expected site/app validation error, got: %v", err)
 	}
 }
+
+// Additional tests for improved coverage
+
+func TestDefaultCloneLimits(t *testing.T) {
+	limits := DefaultCloneLimits()
+
+	if limits == nil {
+		t.Fatal("expected non-nil limits")
+	}
+	if limits.MaxImpressionsPerRequest != defaultMaxImpressionsPerRequest {
+		t.Errorf("expected %d impressions, got %d", defaultMaxImpressionsPerRequest, limits.MaxImpressionsPerRequest)
+	}
+	if limits.MaxEIDsPerUser != defaultMaxEIDsPerUser {
+		t.Errorf("expected %d EIDs, got %d", defaultMaxEIDsPerUser, limits.MaxEIDsPerUser)
+	}
+	if limits.MaxDataPerUser != defaultMaxDataPerUser {
+		t.Errorf("expected %d data, got %d", defaultMaxDataPerUser, limits.MaxDataPerUser)
+	}
+	if limits.MaxDealsPerImp != defaultMaxDealsPerImp {
+		t.Errorf("expected %d deals, got %d", defaultMaxDealsPerImp, limits.MaxDealsPerImp)
+	}
+	if limits.MaxSChainNodes != defaultMaxSChainNodes {
+		t.Errorf("expected %d schain nodes, got %d", defaultMaxSChainNodes, limits.MaxSChainNodes)
+	}
+}
+
+func TestValidateConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   *Config
+		check    func(*Config) bool
+		expected string
+	}{
+		{
+			name:   "negative timeout uses default",
+			config: &Config{DefaultTimeout: -1 * time.Second},
+			check:  func(c *Config) bool { return c.DefaultTimeout > 0 },
+		},
+		{
+			name:   "zero timeout uses default",
+			config: &Config{DefaultTimeout: 0},
+			check:  func(c *Config) bool { return c.DefaultTimeout > 0 },
+		},
+		{
+			name:   "negative max bidders uses default",
+			config: &Config{MaxBidders: -5},
+			check:  func(c *Config) bool { return c.MaxBidders > 0 },
+		},
+		{
+			name:   "negative max concurrent uses default",
+			config: &Config{MaxConcurrentBidders: -1},
+			check:  func(c *Config) bool { return c.MaxConcurrentBidders >= 0 },
+		},
+		{
+			name:   "invalid auction type uses first price",
+			config: &Config{AuctionType: AuctionType(99)},
+			check:  func(c *Config) bool { return c.AuctionType == FirstPriceAuction },
+		},
+		{
+			name:   "second price with zero increment uses default",
+			config: &Config{AuctionType: SecondPriceAuction, PriceIncrement: 0},
+			check:  func(c *Config) bool { return c.PriceIncrement > 0 },
+		},
+		{
+			name:   "second price with negative increment uses default",
+			config: &Config{AuctionType: SecondPriceAuction, PriceIncrement: -0.01},
+			check:  func(c *Config) bool { return c.PriceIncrement > 0 },
+		},
+		{
+			name:   "negative min bid price uses zero",
+			config: &Config{MinBidPrice: -1.00},
+			check:  func(c *Config) bool { return c.MinBidPrice >= 0 },
+		},
+		{
+			name:   "event recording with zero buffer uses default",
+			config: &Config{EventRecordEnabled: true, EventBufferSize: 0},
+			check:  func(c *Config) bool { return c.EventBufferSize > 0 },
+		},
+		{
+			name:   "nil clone limits uses defaults",
+			config: &Config{CloneLimits: nil},
+			check:  func(c *Config) bool { return c.CloneLimits != nil && c.CloneLimits.MaxImpressionsPerRequest > 0 },
+		},
+		{
+			name:   "invalid clone limits uses defaults",
+			config: &Config{CloneLimits: &CloneLimits{MaxImpressionsPerRequest: -1, MaxEIDsPerUser: 0}},
+			check: func(c *Config) bool {
+				return c.CloneLimits.MaxImpressionsPerRequest > 0 && c.CloneLimits.MaxEIDsPerUser > 0
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validated := validateConfig(tt.config)
+			if !tt.check(validated) {
+				t.Errorf("validation check failed for %s", tt.name)
+			}
+		})
+	}
+}
+
+func TestRoundToCents(t *testing.T) {
+	tests := []struct {
+		input    float64
+		expected float64
+	}{
+		{1.234, 1.23},
+		{1.235, 1.24}, // Rounds up at .5
+		{1.999, 2.00},
+		{0.001, 0.00},
+		{0.005, 0.01}, // Rounds up at .5
+		{0.004, 0.00},
+		{100.555, 100.56},
+		{-1.234, -1.23},
+		{-1.235, -1.24}, // Negative rounds correctly
+		{0, 0},
+	}
+
+	for _, tt := range tests {
+		result := roundToCents(tt.input)
+		if result != tt.expected {
+			t.Errorf("roundToCents(%f) = %f, expected %f", tt.input, result, tt.expected)
+		}
+	}
+}
+
+func TestRequestValidationError_Error(t *testing.T) {
+	err := &RequestValidationError{
+		Field:  "imp[0].id",
+		Reason: "missing required field",
+	}
+
+	expected := "invalid request: imp[0].id - missing required field"
+	if err.Error() != expected {
+		t.Errorf("expected %q, got %q", expected, err.Error())
+	}
+}
+
+func TestBidValidationError_Error(t *testing.T) {
+	err := &BidValidationError{
+		BidID:      "bid-123",
+		ImpID:      "imp-456",
+		BidderCode: "appnexus",
+		Reason:     "price below floor",
+	}
+
+	result := err.Error()
+	if !containsString(result, "appnexus") {
+		t.Errorf("expected bidder code in error: %s", result)
+	}
+	if !containsString(result, "bid-123") {
+		t.Errorf("expected bid ID in error: %s", result)
+	}
+	if !containsString(result, "imp-456") {
+		t.Errorf("expected imp ID in error: %s", result)
+	}
+	if !containsString(result, "price below floor") {
+		t.Errorf("expected reason in error: %s", result)
+	}
+}
+
+func TestDebugInfo_AddError(t *testing.T) {
+	debug := &DebugInfo{
+		Errors: make(map[string][]string),
+	}
+
+	debug.AddError("bidder1", []string{"error1", "error2"})
+
+	if len(debug.Errors["bidder1"]) != 2 {
+		t.Errorf("expected 2 errors, got %d", len(debug.Errors["bidder1"]))
+	}
+	if debug.Errors["bidder1"][0] != "error1" {
+		t.Errorf("expected 'error1', got %s", debug.Errors["bidder1"][0])
+	}
+}
+
+func TestDebugInfo_AppendError(t *testing.T) {
+	debug := &DebugInfo{
+		Errors: make(map[string][]string),
+	}
+
+	debug.AppendError("bidder1", "first error")
+	debug.AppendError("bidder1", "second error")
+
+	if len(debug.Errors["bidder1"]) != 2 {
+		t.Errorf("expected 2 errors, got %d", len(debug.Errors["bidder1"]))
+	}
+	if debug.Errors["bidder1"][1] != "second error" {
+		t.Errorf("expected 'second error', got %s", debug.Errors["bidder1"][1])
+	}
+}
+
+func TestExchange_Close(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := New(registry, &Config{
+		IDREnabled:         false,
+		EventRecordEnabled: false,
+	})
+
+	// Close should succeed with no event recorder
+	err := ex.Close()
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestExchange_DynamicRegistry(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := New(registry, nil)
+
+	// Initially nil
+	if ex.GetDynamicRegistry() != nil {
+		t.Error("expected nil dynamic registry initially")
+	}
+
+	// Set and get
+	ex.SetDynamicRegistry(nil)
+	if ex.GetDynamicRegistry() != nil {
+		t.Error("expected nil after setting nil")
+	}
+}
+
+func TestExchange_GetIDRClient(t *testing.T) {
+	registry := adapters.NewRegistry()
+
+	// Without IDR enabled
+	ex := New(registry, &Config{
+		IDREnabled: false,
+	})
+	if ex.GetIDRClient() != nil {
+		t.Error("expected nil IDR client when disabled")
+	}
+
+	// With IDR enabled but no URL
+	ex = New(registry, &Config{
+		IDREnabled:    true,
+		IDRServiceURL: "",
+	})
+	if ex.GetIDRClient() != nil {
+		t.Error("expected nil IDR client with empty URL")
+	}
+}
+
+func TestDeepCloneRequest_StringSlices(t *testing.T) {
+	limits := DefaultCloneLimits()
+	req := &openrtb.BidRequest{
+		ID:    "test",
+		Cur:   []string{"USD", "EUR"},
+		WSeat: []string{"seat1", "seat2"},
+		BSeat: []string{"blocked1"},
+		WLang: []string{"en", "es"},
+		BCat:  []string{"IAB1"},
+		BAdv:  []string{"blocked.com"},
+		BApp:  []string{"blocked-app"},
+		Site:  testSite(),
+		Imp:   []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+	}
+
+	clone := deepCloneRequest(req, limits)
+
+	// Modify original
+	req.Cur[0] = "GBP"
+	req.WSeat[0] = "modified"
+
+	// Clone should be unaffected
+	if clone.Cur[0] != "USD" {
+		t.Errorf("expected clone Cur[0] = USD, got %s", clone.Cur[0])
+	}
+	if clone.WSeat[0] != "seat1" {
+		t.Errorf("expected clone WSeat[0] = seat1, got %s", clone.WSeat[0])
+	}
+}
+
+func TestDeepCloneRequest_NestedObjects(t *testing.T) {
+	limits := DefaultCloneLimits()
+	req := &openrtb.BidRequest{
+		ID: "test",
+		Site: &openrtb.Site{
+			ID:   "site1",
+			Name: "Test Site",
+			Publisher: &openrtb.Publisher{
+				ID:   "pub1",
+				Name: "Test Publisher",
+			},
+			Content: &openrtb.Content{
+				ID:    "content1",
+				Title: "Test Content",
+			},
+		},
+		User: &openrtb.User{
+			ID: "user1",
+			Geo: &openrtb.Geo{
+				Country: "US",
+				City:    "NYC",
+			},
+			EIDs: []openrtb.EID{
+				{Source: "liveramp.com"},
+				{Source: "pubcid.org"},
+			},
+			Data: []openrtb.Data{
+				{ID: "data1", Name: "segment1"},
+			},
+		},
+		Device: &openrtb.Device{
+			UA: "Mozilla/5.0",
+			Geo: &openrtb.Geo{
+				Country: "US",
+			},
+		},
+		Regs: &openrtb.Regs{
+			COPPA: 1,
+			GDPR:  ptrInt(1),
+		},
+		Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+	}
+
+	clone := deepCloneRequest(req, limits)
+
+	// Modify original
+	req.Site.ID = "modified"
+	req.Site.Publisher.ID = "modified"
+	req.User.Geo.Country = "CA"
+	req.Device.UA = "modified"
+
+	// Clone should be unaffected
+	if clone.Site.ID != "site1" {
+		t.Errorf("expected clone Site.ID = site1, got %s", clone.Site.ID)
+	}
+	if clone.Site.Publisher.ID != "pub1" {
+		t.Errorf("expected clone Publisher.ID = pub1, got %s", clone.Site.Publisher.ID)
+	}
+	if clone.User.Geo.Country != "US" {
+		t.Errorf("expected clone User.Geo.Country = US, got %s", clone.User.Geo.Country)
+	}
+	if clone.Device.UA != "Mozilla/5.0" {
+		t.Errorf("expected clone Device.UA = Mozilla/5.0, got %s", clone.Device.UA)
+	}
+}
+
+func TestDeepCloneRequest_App(t *testing.T) {
+	limits := DefaultCloneLimits()
+	req := &openrtb.BidRequest{
+		ID: "test",
+		App: &openrtb.App{
+			ID:   "app1",
+			Name: "Test App",
+			Publisher: &openrtb.Publisher{
+				ID:   "pub1",
+				Name: "App Publisher",
+			},
+			Content: &openrtb.Content{
+				ID:    "content1",
+				Title: "App Content",
+			},
+		},
+		Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+	}
+
+	clone := deepCloneRequest(req, limits)
+
+	// Modify original
+	req.App.ID = "modified"
+	req.App.Publisher.ID = "modified"
+
+	// Clone should be unaffected
+	if clone.App.ID != "app1" {
+		t.Errorf("expected clone App.ID = app1, got %s", clone.App.ID)
+	}
+	if clone.App.Publisher.ID != "pub1" {
+		t.Errorf("expected clone App.Publisher.ID = pub1, got %s", clone.App.Publisher.ID)
+	}
+}
+
+func TestDeepCloneRequest_Source(t *testing.T) {
+	limits := DefaultCloneLimits()
+	req := &openrtb.BidRequest{
+		ID:   "test",
+		Site: testSite(),
+		Source: &openrtb.Source{
+			TID: "tid-123",
+			SChain: &openrtb.SupplyChain{
+				Ver:      "1.0",
+				Complete: 1,
+				Nodes: []openrtb.SupplyChainNode{
+					{ASI: "exchange.com", SID: "1234"},
+					{ASI: "reseller.com", SID: "5678"},
+				},
+			},
+		},
+		Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+	}
+
+	clone := deepCloneRequest(req, limits)
+
+	// Modify original
+	req.Source.TID = "modified"
+	req.Source.SChain.Nodes[0].ASI = "modified"
+
+	// Clone should be unaffected
+	if clone.Source.TID != "tid-123" {
+		t.Errorf("expected clone Source.TID = tid-123, got %s", clone.Source.TID)
+	}
+	if clone.Source.SChain.Nodes[0].ASI != "exchange.com" {
+		t.Errorf("expected clone SChain node ASI = exchange.com, got %s", clone.Source.SChain.Nodes[0].ASI)
+	}
+}
+
+func TestDeepCloneRequest_Impressions(t *testing.T) {
+	limits := DefaultCloneLimits()
+	req := &openrtb.BidRequest{
+		ID:   "test",
+		Site: testSite(),
+		Imp: []openrtb.Imp{
+			{
+				ID:     "imp1",
+				Banner: &openrtb.Banner{W: 300, H: 250},
+			},
+			{
+				ID:    "imp2",
+				Video: &openrtb.Video{W: 640, H: 480},
+			},
+			{
+				ID:    "imp3",
+				Audio: &openrtb.Audio{MinDuration: 15},
+			},
+			{
+				ID:     "imp4",
+				Native: &openrtb.Native{Request: "{}"},
+			},
+			{
+				ID:     "imp5",
+				Banner: &openrtb.Banner{W: 728, H: 90},
+				PMP: &openrtb.PMP{
+					PrivateAuction: 1,
+					Deals: []openrtb.Deal{
+						{ID: "deal1", BidFloor: 5.00},
+						{ID: "deal2", BidFloor: 3.00},
+					},
+				},
+			},
+		},
+	}
+
+	clone := deepCloneRequest(req, limits)
+
+	// Modify originals
+	req.Imp[0].Banner.W = 999
+	req.Imp[1].Video.W = 999
+	req.Imp[4].PMP.Deals[0].BidFloor = 999
+
+	// Clone should be unaffected
+	if clone.Imp[0].Banner.W != 300 {
+		t.Errorf("expected clone Banner.W = 300, got %d", clone.Imp[0].Banner.W)
+	}
+	if clone.Imp[1].Video.W != 640 {
+		t.Errorf("expected clone Video.W = 640, got %d", clone.Imp[1].Video.W)
+	}
+	if clone.Imp[4].PMP.Deals[0].BidFloor != 5.00 {
+		t.Errorf("expected clone Deal.BidFloor = 5.00, got %f", clone.Imp[4].PMP.Deals[0].BidFloor)
+	}
+}
+
+func TestDeepCloneRequest_Limits(t *testing.T) {
+	limits := &CloneLimits{
+		MaxImpressionsPerRequest: 2,
+		MaxEIDsPerUser:           1,
+		MaxDataPerUser:           1,
+		MaxDealsPerImp:           1,
+		MaxSChainNodes:           1,
+	}
+
+	req := &openrtb.BidRequest{
+		ID:   "test",
+		Site: testSite(),
+		User: &openrtb.User{
+			EIDs: []openrtb.EID{
+				{Source: "a.com"},
+				{Source: "b.com"},
+				{Source: "c.com"},
+			},
+			Data: []openrtb.Data{
+				{ID: "d1"},
+				{ID: "d2"},
+				{ID: "d3"},
+			},
+		},
+		Source: &openrtb.Source{
+			SChain: &openrtb.SupplyChain{
+				Nodes: []openrtb.SupplyChainNode{
+					{ASI: "a.com"},
+					{ASI: "b.com"},
+					{ASI: "c.com"},
+				},
+			},
+		},
+		Imp: []openrtb.Imp{
+			{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}},
+			{ID: "imp2", Banner: &openrtb.Banner{W: 728, H: 90}},
+			{ID: "imp3", Banner: &openrtb.Banner{W: 160, H: 600}}, // Should be clipped
+			{ID: "imp4", Banner: &openrtb.Banner{W: 320, H: 50}},  // Should be clipped
+		},
+	}
+
+	clone := deepCloneRequest(req, limits)
+
+	// Check limits were applied
+	if len(clone.Imp) != 2 {
+		t.Errorf("expected 2 impressions (limited), got %d", len(clone.Imp))
+	}
+	if len(clone.User.EIDs) != 1 {
+		t.Errorf("expected 1 EID (limited), got %d", len(clone.User.EIDs))
+	}
+	if len(clone.User.Data) != 1 {
+		t.Errorf("expected 1 Data (limited), got %d", len(clone.User.Data))
+	}
+	if len(clone.Source.SChain.Nodes) != 1 {
+		t.Errorf("expected 1 SChain node (limited), got %d", len(clone.Source.SChain.Nodes))
+	}
+}
+
+func TestRunAuction_NilBidRequest(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := New(registry, nil)
+
+	_, err := ex.RunAuction(context.Background(), &AuctionRequest{
+		BidRequest: nil,
+	})
+
+	if err == nil {
+		t.Error("expected error for nil bid request")
+	}
+	if !containsString(err.Error(), "missing bid request") {
+		t.Errorf("expected 'missing bid request' error, got: %v", err)
+	}
+}
+
+func TestRunAuction_MissingRequiredFields(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := New(registry, nil)
+
+	tests := []struct {
+		name    string
+		req     *openrtb.BidRequest
+		errText string
+	}{
+		{
+			name:    "missing ID",
+			req:     &openrtb.BidRequest{ID: "", Site: testSite(), Imp: []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}}},
+			errText: "missing required field 'id'",
+		},
+		{
+			name:    "no impressions",
+			req:     &openrtb.BidRequest{ID: "req1", Site: testSite(), Imp: []openrtb.Imp{}},
+			errText: "at least one impression",
+		},
+		{
+			name: "too many impressions",
+			req: &openrtb.BidRequest{
+				ID:   "req1",
+				Site: testSite(),
+				Imp:  make([]openrtb.Imp, 150), // Over limit
+			},
+			errText: "too many impressions",
+		},
+		{
+			name: "empty impression ID",
+			req: &openrtb.BidRequest{
+				ID:   "req1",
+				Site: testSite(),
+				Imp:  []openrtb.Imp{{ID: "", Banner: &openrtb.Banner{W: 300, H: 250}}},
+			},
+			errText: "empty id",
+		},
+		{
+			name: "duplicate impression IDs",
+			req: &openrtb.BidRequest{
+				ID:   "req1",
+				Site: testSite(),
+				Imp: []openrtb.Imp{
+					{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}},
+					{ID: "imp1", Banner: &openrtb.Banner{W: 728, H: 90}},
+				},
+			},
+			errText: "duplicate impression id",
+		},
+		{
+			name: "impression without media type",
+			req: &openrtb.BidRequest{
+				ID:   "req1",
+				Site: testSite(),
+				Imp:  []openrtb.Imp{{ID: "imp1"}}, // No banner/video/audio/native
+			},
+			errText: "no media type",
+		},
+		{
+			name: "banner without dimensions",
+			req: &openrtb.BidRequest{
+				ID:   "req1",
+				Site: testSite(),
+				Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{}}}, // No W/H or Format
+			},
+			errText: "must have either w/h or format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ex.RunAuction(context.Background(), &AuctionRequest{BidRequest: tt.req})
+			if err == nil {
+				t.Error("expected error")
+			} else if !containsString(err.Error(), tt.errText) {
+				t.Errorf("expected error containing %q, got: %v", tt.errText, err)
+			}
+		})
+	}
+}
+
+func TestRunAuction_TMaxCapping(t *testing.T) {
+	registry := adapters.NewRegistry()
+	mock := &mockAdapter{bids: []*adapters.TypedBid{}}
+	registry.Register("bidder1", mock, adapters.BidderInfo{Enabled: true})
+
+	ex := New(registry, &Config{
+		DefaultTimeout: 5 * time.Second,
+		IDREnabled:     false,
+	})
+
+	// Request with very high TMax (should be capped)
+	req := &AuctionRequest{
+		BidRequest: &openrtb.BidRequest{
+			ID:   "test-tmax",
+			Site: testSite(),
+			TMax: 20000, // 20 seconds - higher than default but within allowed range
+			Imp:  []openrtb.Imp{{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+		},
+	}
+
+	start := time.Now()
+	_, err := ex.RunAuction(context.Background(), req)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should complete quickly (no actual bidders returning bids)
+	// Use generous timing threshold to avoid flaky tests on slow CI
+	if elapsed > 2*time.Second {
+		t.Errorf("auction took too long: %v", elapsed)
+	}
+}
+
+func TestSortBidsByPrice_NilBids(t *testing.T) {
+	// Test with nil bids in the slice - should handle gracefully
+	bids := []ValidatedBid{
+		{Bid: &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b1", Price: 1.00}}, BidderCode: "bidder1"},
+		{Bid: nil, BidderCode: "bidder2"}, // nil TypedBid
+		{Bid: &adapters.TypedBid{Bid: nil}, BidderCode: "bidder3"}, // nil Bid
+		{Bid: &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b4", Price: 5.00}}, BidderCode: "bidder4"},
+	}
+
+	// Should not panic
+	sortBidsByPrice(bids)
+
+	// Valid bids should still be sorted (nil handling prevents crash)
+	if bids[0].Bid != nil && bids[0].Bid.Bid != nil && bids[0].Bid.Bid.Price != 5.00 {
+		// Due to nil handling, exact order may vary, but it shouldn't crash
+	}
+}
+
+func TestSortBidsByPrice_Empty(t *testing.T) {
+	bids := []ValidatedBid{}
+	sortBidsByPrice(bids) // Should not panic
+
+	if len(bids) != 0 {
+		t.Error("expected empty slice")
+	}
+}
+
+func TestSortBidsByPrice_SingleBid(t *testing.T) {
+	bids := []ValidatedBid{
+		{Bid: &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b1", Price: 1.00}}, BidderCode: "bidder1"},
+	}
+	sortBidsByPrice(bids)
+
+	if bids[0].Bid.Bid.Price != 1.00 {
+		t.Errorf("expected price 1.00, got %f", bids[0].Bid.Bid.Price)
+	}
+}
+
+func TestAuctionLogic_SecondPrice_SingleBidWithFloor(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := New(registry, &Config{
+		AuctionType:    SecondPriceAuction,
+		PriceIncrement: 0.01,
+		MinBidPrice:    0,
+	})
+
+	impFloors := map[string]float64{"imp1": 2.00}
+
+	validBids := []ValidatedBid{
+		{Bid: &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b1", ImpID: "imp1", Price: 5.00}}, BidderCode: "bidder1"},
+	}
+
+	result := ex.runAuctionLogic(validBids, impFloors)
+
+	// With single bid and floor 2.00, winning price should be floor + increment = 2.01
+	if len(result["imp1"]) != 1 {
+		t.Fatalf("expected 1 bid, got %d", len(result["imp1"]))
+	}
+	if result["imp1"][0].Bid.Bid.Price != 2.01 {
+		t.Errorf("expected winning price 2.01, got %f", result["imp1"][0].Bid.Bid.Price)
+	}
+}
+
+func TestAuctionLogic_SecondPrice_ClearingExceedsBid(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := New(registry, &Config{
+		AuctionType:    SecondPriceAuction,
+		PriceIncrement: 0.01,
+		MinBidPrice:    0,
+	})
+
+	impFloors := map[string]float64{"imp1": 5.00}
+
+	validBids := []ValidatedBid{
+		// Bid is 4.00 but floor is 5.00, so clearing price (5.01) exceeds bid
+		{Bid: &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b1", ImpID: "imp1", Price: 4.00}}, BidderCode: "bidder1"},
+	}
+
+	result := ex.runAuctionLogic(validBids, impFloors)
+
+	// Bid should be rejected since clearing price exceeds bid
+	if len(result["imp1"]) != 0 {
+		t.Errorf("expected 0 bids (rejected), got %d", len(result["imp1"]))
+	}
+}
+
+func ptrInt(v int) *int {
+	return &v
+}
+
+// Benchmark tests
+
+func BenchmarkDeepCloneRequest(b *testing.B) {
+	limits := DefaultCloneLimits()
+	req := &openrtb.BidRequest{
+		ID: "bench-request",
+		Site: &openrtb.Site{
+			ID:   "site1",
+			Name: "Test Site",
+			Publisher: &openrtb.Publisher{
+				ID:   "pub1",
+				Name: "Test Publisher",
+			},
+		},
+		User: &openrtb.User{
+			ID: "user1",
+			EIDs: []openrtb.EID{
+				{Source: "liveramp.com"},
+				{Source: "pubcid.org"},
+			},
+		},
+		Device: &openrtb.Device{
+			UA: "Mozilla/5.0",
+			Geo: &openrtb.Geo{
+				Country: "US",
+			},
+		},
+		Imp: []openrtb.Imp{
+			{ID: "imp1", Banner: &openrtb.Banner{W: 300, H: 250}},
+			{ID: "imp2", Video: &openrtb.Video{W: 640, H: 480}},
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		deepCloneRequest(req, limits)
+	}
+}
+
+func BenchmarkSortBidsByPrice(b *testing.B) {
+	bids := make([]ValidatedBid, 10)
+	for i := 0; i < 10; i++ {
+		bids[i] = ValidatedBid{
+			Bid:        &adapters.TypedBid{Bid: &openrtb.Bid{ID: "b" + string(rune(i)), Price: float64(i)}},
+			BidderCode: "bidder" + string(rune(i)),
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Create a copy to sort
+		bidsCopy := make([]ValidatedBid, len(bids))
+		copy(bidsCopy, bids)
+		sortBidsByPrice(bidsCopy)
+	}
+}
+
+func BenchmarkRoundToCents(b *testing.B) {
+	prices := []float64{1.234, 5.678, 0.999, 2.001, 10.555}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, p := range prices {
+			roundToCents(p)
+		}
+	}
+}

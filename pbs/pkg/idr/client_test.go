@@ -15,8 +15,8 @@ func TestNewClient(t *testing.T) {
 		t.Fatal("expected non-nil client")
 	}
 
-	if client.timeout != 50*time.Millisecond {
-		t.Errorf("expected default 50ms timeout, got %v", client.timeout)
+	if client.timeout != 150*time.Millisecond {
+		t.Errorf("expected default 150ms timeout, got %v", client.timeout)
 	}
 }
 

@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Publisher Taxonomy - The Nexus Engine</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/publishers.css') }}">
+</head>
+<body>
+    <header class="header">
+        <div>
+            <h1>The Nexus Engine</h1>
+            <p class="subtitle">Publisher Taxonomy Management</p>
+        </div>
+        <div class="header-right">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/publishers" class="nav-link active">Publishers</a>
+            <a href="/bidders" class="nav-link">Bidders</a>
+            {% if user %}
+            <a href="/logout" class="nav-link">Logout</a>
+            {% endif %}
+        </div>
+    </header>
+
+    <div class="container">
+        <div id="alert" class="alert"></div>
+
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Publisher Taxonomy</h1>
+                <p class="page-subtitle">Manage publishers, sites, and ad units</p>
+            </div>
+            <div style="display: flex; gap: 0.75rem;">
+                <button class="btn btn-secondary" onclick="publishersUI.reloadData()">Refresh</button>
+                <button class="btn btn-primary" onclick="publishersUI.openPublisherModal()">+ Add Publisher</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>Hierarchy</h2>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-sm btn-secondary" onclick="publishersUI.expandAll()">Expand All</button>
+                    <button class="btn btn-sm btn-secondary" onclick="publishersUI.collapseAll()">Collapse All</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="tree-container" id="tree-container">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">&#128640;</div>
+                        <p>Loading publishers...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Publisher Modal -->
+    <div class="modal-backdrop" id="publisher-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="publisher-modal-title">Add Publisher</h3>
+                <button class="modal-close" onclick="publishersUI.closePublisherModal()">&times;</button>
+            </div>
+            <form id="publisher-form">
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="pub-id">Publisher ID *</label>
+                            <input type="text" id="pub-id" required pattern="[a-zA-Z0-9_-]+">
+                            <p class="help-text">Unique identifier (alphanumeric, hyphens, underscores)</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="pub-name">Name *</label>
+                            <input type="text" id="pub-name" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="pub-enabled" checked> Enabled
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="pub-contact-name">Contact Name</label>
+                            <input type="text" id="pub-contact-name">
+                        </div>
+                        <div class="form-group">
+                            <label for="pub-contact-email">Contact Email</label>
+                            <input type="email" id="pub-contact-email">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="publishersUI.closePublisherModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="pub-save-btn">Create Publisher</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Site Modal -->
+    <div class="modal-backdrop" id="site-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="site-modal-title">Add Site</h3>
+                <button class="modal-close" onclick="publishersUI.closeSiteModal()">&times;</button>
+            </div>
+            <form id="site-form">
+                <input type="hidden" id="site-publisher-id">
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="site-id">Site ID *</label>
+                            <input type="text" id="site-id" required pattern="[a-zA-Z0-9_-]+">
+                            <p class="help-text">Unique identifier within this publisher</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="site-domain">Domain *</label>
+                            <input type="text" id="site-domain" required placeholder="www.example.com">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="site-name">Display Name</label>
+                        <input type="text" id="site-name" placeholder="Optional friendly name">
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="site-enabled" checked> Enabled
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="publishersUI.closeSiteModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="site-save-btn">Create Site</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Ad Unit Modal -->
+    <div class="modal-backdrop" id="unit-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="unit-modal-title">Add Ad Unit</h3>
+                <button class="modal-close" onclick="publishersUI.closeUnitModal()">&times;</button>
+            </div>
+            <form id="unit-form">
+                <input type="hidden" id="unit-publisher-id">
+                <input type="hidden" id="unit-site-id">
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="unit-id">Unit ID *</label>
+                            <input type="text" id="unit-id" required pattern="[a-zA-Z0-9_-]+">
+                        </div>
+                        <div class="form-group">
+                            <label for="unit-name">Name *</label>
+                            <input type="text" id="unit-name" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="unit-media-type">Media Type *</label>
+                            <select id="unit-media-type" required>
+                                <option value="banner">Banner</option>
+                                <option value="video">Video</option>
+                                <option value="native">Native</option>
+                                <option value="audio">Audio</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="unit-position">Position</label>
+                            <select id="unit-position">
+                                <option value="atf">Above the Fold (ATF)</option>
+                                <option value="btf">Below the Fold (BTF)</option>
+                                <option value="interstitial">Interstitial</option>
+                                <option value="unknown">Unknown</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Sizes</label>
+                        <div class="sizes-container" id="sizes-container">
+                            <div class="size-row">
+                                <input type="number" class="size-width" placeholder="Width" min="1">
+                                <span class="size-x">x</span>
+                                <input type="number" class="size-height" placeholder="Height" min="1">
+                                <button type="button" class="btn btn-xs btn-secondary" onclick="publishersUI.addSizeRow()">+</button>
+                            </div>
+                        </div>
+                        <p class="help-text">Common sizes: 728x90, 300x250, 970x250, 320x50</p>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="unit-floor">Floor Price</label>
+                            <input type="number" id="unit-floor" step="0.01" min="0" placeholder="0.00">
+                        </div>
+                        <div class="form-group">
+                            <label for="unit-currency">Currency</label>
+                            <select id="unit-currency">
+                                <option value="USD">USD</option>
+                                <option value="EUR">EUR</option>
+                                <option value="GBP">GBP</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="publishersUI.closeUnitModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="unit-save-btn">Create Ad Unit</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Features Modal -->
+    <div class="modal-backdrop" id="features-modal">
+        <div class="modal wide">
+            <div class="modal-header">
+                <h3 id="features-modal-title">Configure Features</h3>
+                <button class="modal-close" onclick="publishersUI.closeFeaturesModal()">&times;</button>
+            </div>
+            <form id="features-form">
+                <input type="hidden" id="features-type">
+                <input type="hidden" id="features-publisher-id">
+                <input type="hidden" id="features-site-id">
+                <input type="hidden" id="features-unit-id">
+                <div class="modal-body">
+                    <div class="tabs">
+                        <div class="tab active" data-tab="idr">IDR Settings</div>
+                        <div class="tab" data-tab="floors">Floors</div>
+                        <div class="tab" data-tab="bidders">Bidders</div>
+                        <div class="tab" data-tab="privacy">Privacy</div>
+                    </div>
+
+                    <!-- IDR Tab -->
+                    <div class="tab-content active" id="tab-idr">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="feat-max-bidders">Max Bidders</label>
+                                <input type="number" id="feat-max-bidders" min="1" max="50">
+                                <p class="help-text">Maximum bidders per auction</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="feat-min-score">Min Score Threshold</label>
+                                <input type="number" id="feat-min-score" step="0.1" min="0" max="100">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="feat-exploration-rate">Exploration Rate</label>
+                                <input type="number" id="feat-exploration-rate" step="0.01" min="0" max="1">
+                                <p class="help-text">0.0 to 1.0 (e.g., 0.15 = 15%)</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="feat-timeout">Selection Timeout (ms)</label>
+                                <input type="number" id="feat-timeout" min="1" max="1000">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="feat-anchor-bidders">Anchor Bidders</label>
+                            <input type="text" id="feat-anchor-bidders" placeholder="rubicon, appnexus, pubmatic">
+                            <p class="help-text">Comma-separated list of anchor bidder codes</p>
+                        </div>
+                    </div>
+
+                    <!-- Floors Tab -->
+                    <div class="tab-content" id="tab-floors">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="feat-default-floor">Default Floor Price</label>
+                                <input type="number" id="feat-default-floor" step="0.01" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="feat-floor-currency">Currency</label>
+                                <select id="feat-floor-currency">
+                                    <option value="USD">USD</option>
+                                    <option value="EUR">EUR</option>
+                                    <option value="GBP">GBP</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="feat-banner-floor">Banner Floor</label>
+                                <input type="number" id="feat-banner-floor" step="0.01" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="feat-video-floor">Video Floor</label>
+                                <input type="number" id="feat-video-floor" step="0.01" min="0">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="feat-native-floor">Native Floor</label>
+                                <input type="number" id="feat-native-floor" step="0.01" min="0">
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-item" style="margin-top: 1.5rem;">
+                                    <input type="checkbox" id="feat-dynamic-floors"> Dynamic Floors Enabled
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bidders Tab -->
+                    <div class="tab-content" id="tab-bidders">
+                        <div class="bidders-toolbar">
+                            <input type="text" id="bidder-search" class="bidder-search" placeholder="Search bidders...">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="publishersUI.refreshBidders()">Refresh</button>
+                            <button type="button" class="btn btn-sm btn-primary" onclick="publishersUI.openAddBidderModal()">+ Add Bidder</button>
+                        </div>
+                        <div class="bidders-list" id="bidders-list">
+                            <div class="loading-bidders">Loading bidders...</div>
+                        </div>
+                    </div>
+
+                    <!-- Privacy Tab -->
+                    <div class="tab-content" id="tab-privacy">
+                        <div class="form-group">
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="feat-gdpr"> GDPR Applies
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="feat-ccpa"> CCPA Applies
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="feat-coppa"> COPPA Applies
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="feat-strict-privacy"> Privacy Strict Mode
+                            </label>
+                            <p class="help-text">Enable stricter privacy controls</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="publishersUI.closeFeaturesModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Features</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal-backdrop" id="delete-modal">
+        <div class="modal" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>Confirm Delete</h3>
+                <button class="modal-close" onclick="publishersUI.closeDeleteModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="delete-message">Are you sure you want to delete this item?</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="publishersUI.closeDeleteModal()">Cancel</button>
+                <button class="btn btn-danger" id="delete-confirm-btn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bidder Configuration Modal -->
+    <div class="modal-backdrop" id="bidder-modal">
+        <div class="modal wide">
+            <div class="modal-header">
+                <h3 id="bidder-modal-title">Configure Bidder</h3>
+                <button class="modal-close" onclick="publishersUI.closeBidderModal()">&times;</button>
+            </div>
+            <form id="bidder-form">
+                <input type="hidden" id="bidder-publisher-id">
+                <input type="hidden" id="bidder-original-code">
+                <input type="hidden" id="bidder-is-new">
+                <div class="modal-body bidder-config-body">
+                    <!-- Basic Configuration (always expanded) -->
+                    <div class="config-section expanded">
+                        <div class="config-section-header" onclick="publishersUI.toggleConfigSection(this)">
+                            <span class="section-toggle">▼</span>
+                            <span>Basic Configuration</span>
+                        </div>
+                        <div class="config-section-body">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="bidder-name">Display Name *</label>
+                                    <input type="text" id="bidder-name" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="bidder-family">Bidder Type *</label>
+                                    <select id="bidder-family" required>
+                                        <option value="">Select bidder type...</option>
+                                        <option value="appnexus">AppNexus / Xandr</option>
+                                        <option value="rubicon">Rubicon / Magnite</option>
+                                        <option value="pubmatic">PubMatic</option>
+                                        <option value="openx">OpenX</option>
+                                        <option value="ix">Index Exchange</option>
+                                        <option value="triplelift">TripleLift</option>
+                                        <option value="sovrn">Sovrn</option>
+                                        <option value="criteo">Criteo</option>
+                                        <option value="amazon">Amazon TAM</option>
+                                        <option value="sharethrough">Sharethrough</option>
+                                        <option value="33across">33Across</option>
+                                        <option value="pulsepoint">PulsePoint</option>
+                                        <option value="gumgum">GumGum</option>
+                                        <option value="unruly">Unruly</option>
+                                        <option value="teads">Teads</option>
+                                        <option value="verizon">Verizon Media</option>
+                                        <option value="other">Other</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="bidder-code">Bidder Code</label>
+                                    <input type="text" id="bidder-code" readonly class="readonly-input">
+                                    <p class="help-text">Auto-generated based on type and instance</p>
+                                </div>
+                                <div class="form-group">
+                                    <label for="bidder-status">Status</label>
+                                    <select id="bidder-status">
+                                        <option value="active">Active</option>
+                                        <option value="inactive">Inactive</option>
+                                        <option value="testing">Testing</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="bidder-endpoint">Endpoint URL</label>
+                                <input type="url" id="bidder-endpoint" placeholder="https://...">
+                                <p class="help-text">Leave blank to use default endpoint</p>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="bidder-timeout">Timeout (ms)</label>
+                                    <input type="number" id="bidder-timeout" min="50" max="5000" value="200">
+                                </div>
+                                <div class="form-group">
+                                    <label for="bidder-gvl-id">GVL ID (GDPR)</label>
+                                    <input type="number" id="bidder-gvl-id" min="1">
+                                    <p class="help-text">Global Vendor List ID</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Capabilities -->
+                    <div class="config-section">
+                        <div class="config-section-header" onclick="publishersUI.toggleConfigSection(this)">
+                            <span class="section-toggle">►</span>
+                            <span>Capabilities</span>
+                        </div>
+                        <div class="config-section-body">
+                            <div class="checkbox-grid">
+                                <label class="checkbox-item">
+                                    <input type="checkbox" id="bidder-cap-banner" checked> Banner
+                                </label>
+                                <label class="checkbox-item">
+                                    <input type="checkbox" id="bidder-cap-video"> Video
+                                </label>
+                                <label class="checkbox-item">
+                                    <input type="checkbox" id="bidder-cap-native"> Native
+                                </label>
+                                <label class="checkbox-item">
+                                    <input type="checkbox" id="bidder-cap-audio"> Audio
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Rate Limits -->
+                    <div class="config-section">
+                        <div class="config-section-header" onclick="publishersUI.toggleConfigSection(this)">
+                            <span class="section-toggle">►</span>
+                            <span>Rate Limits</span>
+                        </div>
+                        <div class="config-section-body">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="bidder-qps">Max QPS</label>
+                                    <input type="number" id="bidder-qps" min="1" value="100">
+                                </div>
+                                <div class="form-group">
+                                    <label for="bidder-daily-limit">Daily Limit</label>
+                                    <input type="number" id="bidder-daily-limit" min="0" placeholder="Unlimited">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="bidder-concurrent">Max Concurrent Requests</label>
+                                <input type="number" id="bidder-concurrent" min="1" value="10">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Request Transform -->
+                    <div class="config-section">
+                        <div class="config-section-header" onclick="publishersUI.toggleConfigSection(this)">
+                            <span class="section-toggle">►</span>
+                            <span>Request Transform</span>
+                        </div>
+                        <div class="config-section-body">
+                            <div class="form-group">
+                                <label for="bidder-seat-id">Seat ID</label>
+                                <input type="text" id="bidder-seat-id" placeholder="Your seat/account ID">
+                                <p class="help-text">SSP-specific seat identifier</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="bidder-imp-ext">Imp Ext Template (JSON)</label>
+                                <textarea id="bidder-imp-ext" rows="3" placeholder='{"bidder": {"placementId": "12345"}}'></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="bidder-req-ext">Request Ext Template (JSON)</label>
+                                <textarea id="bidder-req-ext" rows="2" placeholder="{}"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Response Transform -->
+                    <div class="config-section">
+                        <div class="config-section-header" onclick="publishersUI.toggleConfigSection(this)">
+                            <span class="section-toggle">►</span>
+                            <span>Response Transform</span>
+                        </div>
+                        <div class="config-section-body">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="bidder-price-adj">Price Adjustment</label>
+                                    <input type="number" id="bidder-price-adj" step="0.01" value="1.0">
+                                    <p class="help-text">Multiplier (e.g., 0.95 = 5% reduction)</p>
+                                </div>
+                                <div class="form-group">
+                                    <label for="bidder-currency">Currency Override</label>
+                                    <select id="bidder-currency">
+                                        <option value="">Use Default</option>
+                                        <option value="USD">USD</option>
+                                        <option value="EUR">EUR</option>
+                                        <option value="GBP">GBP</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Targeting -->
+                    <div class="config-section">
+                        <div class="config-section-header" onclick="publishersUI.toggleConfigSection(this)">
+                            <span class="section-toggle">►</span>
+                            <span>Targeting</span>
+                        </div>
+                        <div class="config-section-body">
+                            <div class="form-group">
+                                <label for="bidder-countries">Allowed Countries</label>
+                                <input type="text" id="bidder-countries" placeholder="US, CA, GB, DE, FR">
+                                <p class="help-text">Comma-separated ISO 3166-1 codes (leave blank for all)</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- GDPR & Privacy -->
+                    <div class="config-section">
+                        <div class="config-section-header" onclick="publishersUI.toggleConfigSection(this)">
+                            <span class="section-toggle">►</span>
+                            <span>GDPR & Privacy</span>
+                        </div>
+                        <div class="config-section-body">
+                            <div class="checkbox-grid">
+                                <label class="checkbox-item">
+                                    <input type="checkbox" id="bidder-gdpr-enabled" checked> GDPR Enabled
+                                </label>
+                                <label class="checkbox-item">
+                                    <input type="checkbox" id="bidder-ccpa-enabled" checked> CCPA Enabled
+                                </label>
+                            </div>
+                            <div class="form-group" style="margin-top: 0.75rem;">
+                                <label class="checkbox-item">
+                                    <input type="checkbox" id="bidder-require-consent"> Require Consent
+                                </label>
+                                <p class="help-text">Only send requests when user consent is provided</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="publishersUI.closeBidderModal()">Cancel</button>
+                    <button type="button" class="btn btn-secondary" onclick="publishersUI.testBidderEndpoint()">Test Endpoint</button>
+                    <button type="submit" class="btn btn-primary" id="bidder-save-btn">Save Bidder</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="module" src="{{ url_for('static', filename='js/publishers.js') }}"></script>
+</body>
+</html>

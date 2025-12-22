@@ -27,9 +27,7 @@ def generate_publisher_id(length: int = 12, prefix: str = "pub_") -> str:
         A publisher ID in format: {prefix}{random_alphanumeric}
         Example: "pub_a7b3x9k2m4n1"
     """
-    random_part = "".join(
-        secrets.choice(ALPHANUMERIC_CHARS) for _ in range(length)
-    )
+    random_part = "".join(secrets.choice(ALPHANUMERIC_CHARS) for _ in range(length))
     return f"{prefix}{random_part}"
 
 
@@ -62,9 +60,7 @@ def generate_site_id(length: int = 12, prefix: str = "site_") -> str:
         A site ID in format: {prefix}{random_alphanumeric}
         Example: "site_a7b3x9k2m4n1"
     """
-    random_part = "".join(
-        secrets.choice(ALPHANUMERIC_CHARS) for _ in range(length)
-    )
+    random_part = "".join(secrets.choice(ALPHANUMERIC_CHARS) for _ in range(length))
     return f"{prefix}{random_part}"
 
 
@@ -83,7 +79,5 @@ def generate_ad_unit_id(length: int = 12, prefix: str = "unit_") -> str:
         An ad unit ID in format: {prefix}{random_alphanumeric}
         Example: "unit_a7b3x9k2m4n1"
     """
-    random_part = "".join(
-        secrets.choice(ALPHANUMERIC_CHARS) for _ in range(length)
-    )
+    random_part = "".join(secrets.choice(ALPHANUMERIC_CHARS) for _ in range(length))
     return f"{prefix}{random_part}"

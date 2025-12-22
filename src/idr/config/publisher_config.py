@@ -16,6 +16,7 @@ import yaml
 @dataclass
 class BidderConfig:
     """Configuration for a single bidder."""
+
     enabled: bool = True
     params: dict[str, Any] = field(default_factory=dict)
 
@@ -23,6 +24,7 @@ class BidderConfig:
 @dataclass
 class SiteConfig:
     """Configuration for a publisher's site."""
+
     site_id: str
     domain: str
     name: str = ""
@@ -31,6 +33,7 @@ class SiteConfig:
 @dataclass
 class IDRConfig:
     """IDR-specific settings for a publisher."""
+
     max_bidders: int = 8
     min_score: float = 0.1
     timeout_ms: int = 50
@@ -39,6 +42,7 @@ class IDRConfig:
 @dataclass
 class RateLimitConfig:
     """Rate limiting configuration."""
+
     requests_per_second: int = 1000
     burst: int = 100
 
@@ -46,6 +50,7 @@ class RateLimitConfig:
 @dataclass
 class PrivacyConfig:
     """Privacy settings for a publisher."""
+
     gdpr_applies: bool = True
     ccpa_applies: bool = True
     coppa_applies: bool = False
@@ -54,6 +59,7 @@ class PrivacyConfig:
 @dataclass
 class APIKeyConfig:
     """API key configuration for PBS authentication."""
+
     key: str = ""
     created_at: str = ""
     last_used: str = ""
@@ -92,6 +98,7 @@ class RevenueShareConfig:
 @dataclass
 class PublisherConfig:
     """Complete configuration for a publisher."""
+
     publisher_id: str
     name: str
     enabled: bool = True
@@ -138,7 +145,9 @@ class PublisherConfigManager:
             # Default to config/publishers relative to project root
             config_dir = os.environ.get(
                 "PUBLISHER_CONFIG_DIR",
-                str(Path(__file__).parent.parent.parent.parent / "config" / "publishers")
+                str(
+                    Path(__file__).parent.parent.parent.parent / "config" / "publishers"
+                ),
             )
         self.config_dir = Path(config_dir)
         self._cache: dict[str, PublisherConfig] = {}
@@ -241,11 +250,13 @@ class PublisherConfigManager:
             # Parse sites
             sites = []
             for site_data in data.get("sites", []):
-                sites.append(SiteConfig(
-                    site_id=site_data.get("site_id", ""),
-                    domain=site_data.get("domain", ""),
-                    name=site_data.get("name", ""),
-                ))
+                sites.append(
+                    SiteConfig(
+                        site_id=site_data.get("site_id", ""),
+                        domain=site_data.get("domain", ""),
+                        name=site_data.get("name", ""),
+                    )
+                )
 
             # Parse bidders
             bidders = {}

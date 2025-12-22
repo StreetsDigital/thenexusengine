@@ -50,7 +50,7 @@ func (a *Adapter) MakeBids(request *openrtb.BidRequest, responseData *adapters.R
 func Info() adapters.BidderInfo {
 	return adapters.BidderInfo{
 		Enabled: true, GVLVendorID: 80, Endpoint: defaultEndpoint,
-		Maintainer:   &adapters.MaintainerInfo{Email: "pubgrowth.engineering@sharethrough.com"},
+		Maintainer: &adapters.MaintainerInfo{Email: "pubgrowth.engineering@sharethrough.com"},
 		Capabilities: &adapters.CapabilitiesInfo{
 			Site: &adapters.PlatformInfo{MediaTypes: []adapters.BidType{adapters.BidTypeBanner, adapters.BidTypeVideo, adapters.BidTypeNative}},
 		},

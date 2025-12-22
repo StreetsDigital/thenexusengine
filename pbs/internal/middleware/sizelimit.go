@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 )
 
 // SizeLimitConfig holds request size limit configuration
@@ -35,6 +36,7 @@ func DefaultSizeLimitConfig() *SizeLimitConfig {
 // SizeLimiter provides request size limiting middleware
 type SizeLimiter struct {
 	config *SizeLimitConfig
+	mu     sync.RWMutex
 }
 
 // NewSizeLimiter creates a new size limiter
@@ -48,26 +50,33 @@ func NewSizeLimiter(config *SizeLimitConfig) *SizeLimiter {
 // Middleware returns the size limiting middleware handler
 func (sl *SizeLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !sl.config.Enabled {
+		// Copy config fields while holding the lock to prevent data race
+		sl.mu.RLock()
+		enabled := sl.config.Enabled
+		maxURLLength := sl.config.MaxURLLength
+		maxBodySize := sl.config.MaxBodySize
+		sl.mu.RUnlock()
+
+		if !enabled {
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		// Check URL length
-		if len(r.URL.String()) > sl.config.MaxURLLength {
+		if len(r.URL.String()) > maxURLLength {
 			http.Error(w, `{"error":"URL too long"}`, http.StatusRequestURITooLong)
 			return
 		}
 
 		// Check Content-Length header if present
-		if r.ContentLength > sl.config.MaxBodySize {
+		if r.ContentLength > maxBodySize {
 			http.Error(w, `{"error":"request body too large"}`, http.StatusRequestEntityTooLarge)
 			return
 		}
 
 		// Wrap body with size limit reader
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, sl.config.MaxBodySize)
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 		}
 
 		next.ServeHTTP(w, r)
@@ -76,15 +85,28 @@ func (sl *SizeLimiter) Middleware(next http.Handler) http.Handler {
 
 // SetMaxBodySize sets the max body size
 func (sl *SizeLimiter) SetMaxBodySize(size int64) {
+	sl.mu.Lock()
+	defer sl.mu.Unlock()
 	sl.config.MaxBodySize = size
 }
 
 // SetMaxURLLength sets the max URL length
 func (sl *SizeLimiter) SetMaxURLLength(length int) {
+	sl.mu.Lock()
+	defer sl.mu.Unlock()
 	sl.config.MaxURLLength = length
 }
 
 // SetEnabled enables or disables size limiting
 func (sl *SizeLimiter) SetEnabled(enabled bool) {
+	sl.mu.Lock()
+	defer sl.mu.Unlock()
 	sl.config.Enabled = enabled
+}
+
+// GetConfig returns a copy of the current configuration
+func (sl *SizeLimiter) GetConfig() SizeLimitConfig {
+	sl.mu.RLock()
+	defer sl.mu.RUnlock()
+	return *sl.config
 }

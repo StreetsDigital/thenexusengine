@@ -5,7 +5,7 @@ Scores each potential bidder (0-100) based on likelihood of responding
 with a competitive bid for the given request.
 """
 
-from typing import TYPE_CHECKING, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Optional, Protocol
 
 from ..models.bidder_metrics import BidderMetrics
 from ..models.bidder_score import BidderScore, RecentMetrics, ScoreComponents
@@ -26,18 +26,13 @@ class PerformanceDB(Protocol):
     """Protocol for performance database interface."""
 
     def get_bidder_metrics(
-        self,
-        bidder_code: str,
-        lookup_key: LookupKey
+        self, bidder_code: str, lookup_key: LookupKey
     ) -> BidderMetrics:
         """Get historical metrics for a bidder."""
         ...
 
     def get_recent_metrics(
-        self,
-        bidder_code: str,
-        lookup_key: LookupKey,
-        hours: int = 24
+        self, bidder_code: str, lookup_key: LookupKey, hours: int = 24
     ) -> RecentMetrics:
         """Get recent metrics for trend analysis."""
         ...
@@ -59,8 +54,8 @@ class BidderScorer:
 
     def __init__(
         self,
-        performance_db: Optional[PerformanceDB] = None,
-        weights: Optional[dict[str, float]] = None,
+        performance_db: PerformanceDB | None = None,
+        weights: dict[str, float] | None = None,
         metrics_store: Optional["MetricsStore"] = None,
     ):
         """
@@ -78,16 +73,14 @@ class BidderScorer:
         # Validate weights sum to 1.0
         weight_sum = sum(self.weights.values())
         if abs(weight_sum - 1.0) > 0.001:
-            raise ValueError(
-                f"Scoring weights must sum to 1.0, got {weight_sum}"
-            )
+            raise ValueError(f"Scoring weights must sum to 1.0, got {weight_sum}")
 
     def score_bidder(
         self,
         bidder_code: str,
         request: ClassifiedRequest,
-        metrics: Optional[BidderMetrics] = None,
-        recent_metrics: Optional[RecentMetrics] = None,
+        metrics: BidderMetrics | None = None,
+        recent_metrics: RecentMetrics | None = None,
     ) -> BidderScore:
         """
         Score a bidder for the given classified request.
@@ -121,9 +114,7 @@ class BidderScorer:
         # Fetch recent metrics if not provided
         if recent_metrics is None:
             if self.db:
-                recent_metrics = self.db.get_recent_metrics(
-                    bidder_code, lookup_key
-                )
+                recent_metrics = self.db.get_recent_metrics(bidder_code, lookup_key)
             else:
                 recent_metrics = RecentMetrics()
 
@@ -132,9 +123,7 @@ class BidderScorer:
             win_rate=self._score_win_rate(metrics.win_rate),
             bid_rate=self._score_bid_rate(metrics.bid_rate),
             cpm=self._score_avg_cpm(metrics.avg_cpm, request.floor_price),
-            floor_clearance=self._score_floor_clearance(
-                metrics.floor_clearance_rate
-            ),
+            floor_clearance=self._score_floor_clearance(metrics.floor_clearance_rate),
             latency=self._score_latency(metrics.p95_latency),
             recency=self._score_recency(recent_metrics),
             id_match=self._score_id_match(bidder_code, request.user_ids),
@@ -142,13 +131,13 @@ class BidderScorer:
 
         # Calculate weighted total score
         total_score = (
-            components.win_rate * self.weights['win_rate'] +
-            components.bid_rate * self.weights['bid_rate'] +
-            components.cpm * self.weights['cpm'] +
-            components.floor_clearance * self.weights['floor_clearance'] +
-            components.latency * self.weights['latency'] +
-            components.recency * self.weights['recency'] +
-            components.id_match * self.weights['id_match']
+            components.win_rate * self.weights["win_rate"]
+            + components.bid_rate * self.weights["bid_rate"]
+            + components.cpm * self.weights["cpm"]
+            + components.floor_clearance * self.weights["floor_clearance"]
+            + components.latency * self.weights["latency"]
+            + components.recency * self.weights["recency"]
+            + components.id_match * self.weights["id_match"]
         )
 
         return BidderScore(
@@ -176,8 +165,7 @@ class BidderScorer:
             List of BidderScore objects sorted by total_score descending
         """
         scores = [
-            self.score_bidder(bidder_code, request)
-            for bidder_code in bidder_codes
+            self.score_bidder(bidder_code, request) for bidder_code in bidder_codes
         ]
 
         # Sort by total score descending
@@ -229,13 +217,13 @@ class BidderScorer:
 
         # Calculate weighted total score
         total_score = (
-            components.win_rate * self.weights['win_rate'] +
-            components.bid_rate * self.weights['bid_rate'] +
-            components.cpm * self.weights['cpm'] +
-            components.floor_clearance * self.weights['floor_clearance'] +
-            components.latency * self.weights['latency'] +
-            components.recency * self.weights['recency'] +
-            components.id_match * self.weights['id_match']
+            components.win_rate * self.weights["win_rate"]
+            + components.bid_rate * self.weights["bid_rate"]
+            + components.cpm * self.weights["cpm"]
+            + components.floor_clearance * self.weights["floor_clearance"]
+            + components.latency * self.weights["latency"]
+            + components.recency * self.weights["recency"]
+            + components.id_match * self.weights["id_match"]
         )
 
         return BidderScore(
@@ -292,7 +280,7 @@ class BidderScorer:
         # Return last (broadest) metrics even if insufficient samples
         return (
             self.db.get_bidder_metrics(bidder_code, fallback_keys[-1]),
-            len(fallback_keys) - 1
+            len(fallback_keys) - 1,
         )
 
     def _score_win_rate(self, win_rate: float) -> float:
@@ -329,11 +317,7 @@ class BidderScorer:
         # 80% (0.80) bid rate maps to 100
         return min(100.0, bid_rate * 125.0)
 
-    def _score_avg_cpm(
-        self,
-        avg_cpm: float,
-        floor_price: Optional[float]
-    ) -> float:
+    def _score_avg_cpm(self, avg_cpm: float, floor_price: float | None) -> float:
         """
         Score based on average CPM relative to floor.
 
@@ -430,11 +414,7 @@ class BidderScorer:
         # Map trend to score: 0.5 -> 25, 1.0 -> 50, 2.0 -> 100
         return min(100.0, max(0.0, 50.0 * trend))
 
-    def _score_id_match(
-        self,
-        bidder_code: str,
-        user_ids: dict[str, str]
-    ) -> float:
+    def _score_id_match(self, bidder_code: str, user_ids: dict[str, str]) -> float:
         """
         Score based on availability of preferred user IDs.
 
@@ -449,10 +429,7 @@ class BidderScorer:
             Score from 0 to 100
         """
         # Get bidder's ID preferences
-        preferred_ids = ID_PREFERENCES.get(
-            bidder_code,
-            DEFAULT_ID_PREFERENCES
-        )
+        preferred_ids = ID_PREFERENCES.get(bidder_code, DEFAULT_ID_PREFERENCES)
 
         if not preferred_ids:
             # No preferences - return neutral
@@ -463,10 +440,7 @@ class BidderScorer:
             return 0.0
 
         # Count matches
-        matches = sum(
-            1 for id_type in preferred_ids
-            if id_type in user_ids
-        )
+        matches = sum(1 for id_type in preferred_ids if id_type in user_ids)
 
         # Score based on match ratio
         match_ratio = matches / len(preferred_ids)
@@ -485,18 +459,12 @@ class MockPerformanceDB:
         self.default_sample_size = default_sample_size
         self._bidder_data: dict[str, dict] = {}
 
-    def set_bidder_data(
-        self,
-        bidder_code: str,
-        metrics: BidderMetrics
-    ) -> None:
+    def set_bidder_data(self, bidder_code: str, metrics: BidderMetrics) -> None:
         """Set custom metrics for a bidder."""
         self._bidder_data[bidder_code] = metrics
 
     def get_bidder_metrics(
-        self,
-        bidder_code: str,
-        lookup_key: LookupKey
+        self, bidder_code: str, lookup_key: LookupKey
     ) -> BidderMetrics:
         """Get mock metrics for a bidder."""
         if bidder_code in self._bidder_data:
@@ -515,10 +483,7 @@ class MockPerformanceDB:
         )
 
     def get_recent_metrics(
-        self,
-        bidder_code: str,
-        lookup_key: LookupKey,
-        hours: int = 24
+        self, bidder_code: str, lookup_key: LookupKey, hours: int = 24
     ) -> RecentMetrics:
         """Get mock recent metrics."""
         return RecentMetrics(

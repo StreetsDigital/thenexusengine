@@ -13,14 +13,15 @@ import sys
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Run IDR Admin Dashboard')
-    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
-    parser.add_argument('--port', type=int, default=5050, help='Port to run on')
-    parser.add_argument('--no-debug', action='store_true', help='Disable debug mode')
+    parser = argparse.ArgumentParser(description="Run IDR Admin Dashboard")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=5050, help="Port to run on")
+    parser.add_argument("--no-debug", action="store_true", help="Disable debug mode")
     args = parser.parse_args()
 
     try:
         from src.idr.admin import run_admin
+
         run_admin(host=args.host, port=args.port, debug=not args.no_debug)
     except ImportError as e:
         print(f"Error: {e}")
@@ -29,5 +30,5 @@ def main():
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

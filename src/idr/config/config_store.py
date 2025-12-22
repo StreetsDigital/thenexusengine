@@ -15,26 +15,26 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 try:
     import psycopg2
     import psycopg2.extras
+
     PSYCOPG2_AVAILABLE = True
 except ImportError:
     PSYCOPG2_AVAILABLE = False
 
-from .feature_config import (
-    ConfigLevel,
-    FeatureConfig,
-    get_default_global_config,
-)
 from .config_resolver import (
     AdUnitConfig,
     PublisherConfigV2,
     SiteConfig,
 )
-
+from .feature_config import (
+    ConfigLevel,
+    FeatureConfig,
+    get_default_global_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +49,12 @@ class ConfigStore:
 
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        database: Optional[str] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
-        database_url: Optional[str] = None,
+        host: str | None = None,
+        port: int | None = None,
+        database: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database_url: str | None = None,
     ):
         """
         Initialize the config store.
@@ -67,7 +67,7 @@ class ConfigStore:
             password: Database password (default: from POSTGRES_PASSWORD env var)
             database_url: Full connection URL (overrides individual params)
         """
-        self._conn: Optional[Any] = None
+        self._conn: Any | None = None
         self._memory_store: dict[str, Any] = {}
         self._use_memory = False
 
@@ -170,11 +170,14 @@ class ConfigStore:
                 return False
 
             with self._conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO config_global (id, config)
                     VALUES (1, %s)
                     ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config
-                """, (json.dumps(data),))
+                """,
+                    (json.dumps(data),),
+                )
             self._conn.commit()
 
             logger.info("Global configuration saved")
@@ -239,7 +242,8 @@ class ConfigStore:
                 return False
 
             with self._conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO config_publishers (
                         publisher_id, name, enabled, contact_email, contact_name,
                         bidders, api_key, api_key_enabled, features
@@ -253,17 +257,19 @@ class ConfigStore:
                         api_key = EXCLUDED.api_key,
                         api_key_enabled = EXCLUDED.api_key_enabled,
                         features = EXCLUDED.features
-                """, (
-                    config.publisher_id,
-                    config.name,
-                    config.enabled,
-                    config.contact_email,
-                    config.contact_name,
-                    json.dumps(config.bidders),
-                    config.api_key,
-                    config.api_key_enabled,
-                    json.dumps(config.features.to_dict()),
-                ))
+                """,
+                    (
+                        config.publisher_id,
+                        config.name,
+                        config.enabled,
+                        config.contact_email,
+                        config.contact_name,
+                        json.dumps(config.bidders),
+                        config.api_key,
+                        config.api_key_enabled,
+                        json.dumps(config.features.to_dict()),
+                    ),
+                )
             self._conn.commit()
 
             # Save sites
@@ -278,7 +284,7 @@ class ConfigStore:
                 self._conn.rollback()
             return False
 
-    def load_publisher(self, publisher_id: str) -> Optional[PublisherConfigV2]:
+    def load_publisher(self, publisher_id: str) -> PublisherConfigV2 | None:
         """Load a publisher configuration."""
         try:
             if self._use_memory:
@@ -306,12 +312,15 @@ class ConfigStore:
                 return None
 
             with self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT publisher_id, name, enabled, contact_email, contact_name,
                            bidders, api_key, api_key_enabled, features
                     FROM config_publishers
                     WHERE publisher_id = %s
-                """, (publisher_id,))
+                """,
+                    (publisher_id,),
+                )
                 row = cur.fetchone()
 
                 if not row:
@@ -359,7 +368,7 @@ class ConfigStore:
             with self._conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM config_publishers WHERE publisher_id = %s",
-                    (publisher_id,)
+                    (publisher_id,),
                 )
             self._conn.commit()
 
@@ -430,7 +439,8 @@ class ConfigStore:
                 return False
 
             with self._conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO config_sites (
                         site_id, publisher_id, domain, name, enabled, features
                     ) VALUES (%s, %s, %s, %s, %s, %s)
@@ -439,14 +449,16 @@ class ConfigStore:
                         name = EXCLUDED.name,
                         enabled = EXCLUDED.enabled,
                         features = EXCLUDED.features
-                """, (
-                    config.site_id,
-                    publisher_id,
-                    config.domain,
-                    config.name,
-                    config.enabled,
-                    json.dumps(config.features.to_dict()),
-                ))
+                """,
+                    (
+                        config.site_id,
+                        publisher_id,
+                        config.domain,
+                        config.name,
+                        config.enabled,
+                        json.dumps(config.features.to_dict()),
+                    ),
+                )
             self._conn.commit()
 
             # Save ad units
@@ -461,7 +473,7 @@ class ConfigStore:
                 self._conn.rollback()
             return False
 
-    def load_site(self, publisher_id: str, site_id: str) -> Optional[SiteConfig]:
+    def load_site(self, publisher_id: str, site_id: str) -> SiteConfig | None:
         """Load a site configuration."""
         try:
             if self._use_memory:
@@ -486,11 +498,14 @@ class ConfigStore:
                 return None
 
             with self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT site_id, domain, name, enabled, features
                     FROM config_sites
                     WHERE publisher_id = %s AND site_id = %s
-                """, (publisher_id, site_id))
+                """,
+                    (publisher_id, site_id),
+                )
                 row = cur.fetchone()
 
                 if not row:
@@ -535,7 +550,7 @@ class ConfigStore:
             with self._conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM config_sites WHERE publisher_id = %s AND site_id = %s",
-                    (publisher_id, site_id)
+                    (publisher_id, site_id),
                 )
             self._conn.commit()
 
@@ -570,7 +585,7 @@ class ConfigStore:
             with self._conn.cursor() as cur:
                 cur.execute(
                     "SELECT site_id FROM config_sites WHERE publisher_id = %s ORDER BY name",
-                    (publisher_id,)
+                    (publisher_id,),
                 )
                 site_ids = [row[0] for row in cur.fetchall()]
 
@@ -587,7 +602,9 @@ class ConfigStore:
     # Ad Unit Configuration
     # =========================================
 
-    def save_ad_unit(self, publisher_id: str, site_id: str, config: AdUnitConfig) -> bool:
+    def save_ad_unit(
+        self, publisher_id: str, site_id: str, config: AdUnitConfig
+    ) -> bool:
         """Save an ad unit configuration."""
         try:
             config.features.config_id = f"ad_unit:{config.unit_id}"
@@ -616,7 +633,8 @@ class ConfigStore:
                 return False
 
             with self._conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO config_ad_units (
                         unit_id, site_id, publisher_id, name, enabled, sizes,
                         media_type, position, floor_price, floor_currency, video, features
@@ -631,20 +649,22 @@ class ConfigStore:
                         floor_currency = EXCLUDED.floor_currency,
                         video = EXCLUDED.video,
                         features = EXCLUDED.features
-                """, (
-                    config.unit_id,
-                    site_id,
-                    publisher_id,
-                    config.name,
-                    config.enabled,
-                    json.dumps(config.sizes),
-                    config.media_type,
-                    config.position,
-                    config.floor_price,
-                    config.floor_currency,
-                    json.dumps(config.video) if config.video else None,
-                    json.dumps(config.features.to_dict()),
-                ))
+                """,
+                    (
+                        config.unit_id,
+                        site_id,
+                        publisher_id,
+                        config.name,
+                        config.enabled,
+                        json.dumps(config.sizes),
+                        config.media_type,
+                        config.position,
+                        config.floor_price,
+                        config.floor_currency,
+                        json.dumps(config.video) if config.video else None,
+                        json.dumps(config.features.to_dict()),
+                    ),
+                )
             self._conn.commit()
 
             logger.debug(f"Ad unit {config.unit_id} saved")
@@ -657,7 +677,7 @@ class ConfigStore:
 
     def load_ad_unit(
         self, publisher_id: str, site_id: str, unit_id: str
-    ) -> Optional[AdUnitConfig]:
+    ) -> AdUnitConfig | None:
         """Load an ad unit configuration."""
         try:
             if self._use_memory:
@@ -685,12 +705,15 @@ class ConfigStore:
                 return None
 
             with self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT unit_id, name, enabled, sizes, media_type, position,
                            floor_price, floor_currency, video, features
                     FROM config_ad_units
                     WHERE publisher_id = %s AND site_id = %s AND unit_id = %s
-                """, (publisher_id, site_id, unit_id))
+                """,
+                    (publisher_id, site_id, unit_id),
+                )
                 row = cur.fetchone()
 
                 if not row:
@@ -708,7 +731,9 @@ class ConfigStore:
                     sizes=row["sizes"] or [],
                     media_type=row["media_type"] or "banner",
                     position=row["position"] or "unknown",
-                    floor_price=float(row["floor_price"]) if row["floor_price"] else None,
+                    floor_price=float(row["floor_price"])
+                    if row["floor_price"]
+                    else None,
                     floor_currency=row["floor_currency"] or "USD",
                     video=row["video"],
                     features=features,
@@ -731,7 +756,7 @@ class ConfigStore:
             with self._conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM config_ad_units WHERE publisher_id = %s AND site_id = %s AND unit_id = %s",
-                    (publisher_id, site_id, unit_id)
+                    (publisher_id, site_id, unit_id),
                 )
             self._conn.commit()
 
@@ -766,7 +791,7 @@ class ConfigStore:
             with self._conn.cursor() as cur:
                 cur.execute(
                     "SELECT unit_id FROM config_ad_units WHERE publisher_id = %s AND site_id = %s ORDER BY name",
-                    (publisher_id, site_id)
+                    (publisher_id, site_id),
                 )
                 unit_ids = [row[0] for row in cur.fetchall()]
 
@@ -785,8 +810,8 @@ class ConfigStore:
 
     def save_all(
         self,
-        global_config: Optional[FeatureConfig] = None,
-        publishers: Optional[dict[str, PublisherConfigV2]] = None,
+        global_config: FeatureConfig | None = None,
+        publishers: dict[str, PublisherConfigV2] | None = None,
     ) -> bool:
         """Save all configurations at once."""
         success = True
@@ -815,8 +840,7 @@ class ConfigStore:
         return {
             "global": global_config.to_dict(),
             "publishers": {
-                pub_id: config.to_dict()
-                for pub_id, config in publishers.items()
+                pub_id: config.to_dict() for pub_id, config in publishers.items()
             },
         }
 
@@ -831,7 +855,7 @@ class ConfigStore:
                 success = False
 
         # Import publishers
-        for pub_id, pub_data in data.get("publishers", {}).items():
+        for _pub_id, pub_data in data.get("publishers", {}).items():
             config = _parse_publisher_from_dict(pub_data)
             if not self.save_publisher(config):
                 success = False
@@ -935,7 +959,7 @@ def _parse_ad_unit_from_dict(data: dict[str, Any]) -> AdUnitConfig:
 
 
 # Global config store instance
-_store: Optional[ConfigStore] = None
+_store: ConfigStore | None = None
 
 
 def get_config_store() -> ConfigStore:
@@ -947,12 +971,12 @@ def get_config_store() -> ConfigStore:
 
 
 def init_config_store(
-    host: Optional[str] = None,
-    port: Optional[int] = None,
-    database: Optional[str] = None,
-    user: Optional[str] = None,
-    password: Optional[str] = None,
-    database_url: Optional[str] = None,
+    host: str | None = None,
+    port: int | None = None,
+    database: str | None = None,
+    user: str | None = None,
+    password: str | None = None,
+    database_url: str | None = None,
 ) -> ConfigStore:
     """Initialize the global config store with specific connection parameters."""
     global _store

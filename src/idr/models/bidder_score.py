@@ -1,7 +1,6 @@
 """Bidder Score model for IDR scoring output."""
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -12,24 +11,24 @@ class ScoreComponents:
     Each component is scored 0-100.
     """
 
-    win_rate: float = 0.0       # 25% weight - How often bidder wins
-    bid_rate: float = 0.0       # 20% weight - How often bidder responds
-    cpm: float = 0.0            # 15% weight - Average bid value
+    win_rate: float = 0.0  # 25% weight - How often bidder wins
+    bid_rate: float = 0.0  # 20% weight - How often bidder responds
+    cpm: float = 0.0  # 15% weight - Average bid value
     floor_clearance: float = 0.0  # 15% weight - Likelihood of clearing floor
-    latency: float = 0.0        # 10% weight - Response time reliability
-    recency: float = 0.0        # 10% weight - Recent performance trend
-    id_match: float = 0.0       # 5% weight - User ID availability
+    latency: float = 0.0  # 10% weight - Response time reliability
+    recency: float = 0.0  # 10% weight - Recent performance trend
+    id_match: float = 0.0  # 5% weight - User ID availability
 
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
         return {
-            'win_rate': round(self.win_rate, 2),
-            'bid_rate': round(self.bid_rate, 2),
-            'cpm': round(self.cpm, 2),
-            'floor_clearance': round(self.floor_clearance, 2),
-            'latency': round(self.latency, 2),
-            'recency': round(self.recency, 2),
-            'id_match': round(self.id_match, 2),
+            "win_rate": round(self.win_rate, 2),
+            "bid_rate": round(self.bid_rate, 2),
+            "cpm": round(self.cpm, 2),
+            "floor_clearance": round(self.floor_clearance, 2),
+            "latency": round(self.latency, 2),
+            "recency": round(self.recency, 2),
+            "id_match": round(self.id_match, 2),
         }
 
 
@@ -84,14 +83,14 @@ class BidderScore:
     confidence: float = 0.0  # 0-1 confidence based on sample size
 
     # Metadata
-    lookup_key_used: Optional[str] = None  # Which lookup key resolved
+    lookup_key_used: str | None = None  # Which lookup key resolved
     fallback_level: int = 0  # 0 = exact match, higher = broader fallback
 
-    def __lt__(self, other: 'BidderScore') -> bool:
+    def __lt__(self, other: "BidderScore") -> bool:
         """Enable sorting by total score."""
         return self.total_score < other.total_score
 
-    def __gt__(self, other: 'BidderScore') -> bool:
+    def __gt__(self, other: "BidderScore") -> bool:
         """Enable sorting by total score."""
         return self.total_score > other.total_score
 
@@ -106,7 +105,7 @@ class BidderScore:
         return self.confidence < 0.3
 
     @classmethod
-    def zero(cls, bidder_code: str) -> 'BidderScore':
+    def zero(cls, bidder_code: str) -> "BidderScore":
         """Create a zero score for a bidder."""
         return cls(
             bidder_code=bidder_code,
@@ -118,10 +117,10 @@ class BidderScore:
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
         return {
-            'bidder_code': self.bidder_code,
-            'total_score': round(self.total_score, 2),
-            'components': self.components.to_dict(),
-            'confidence': round(self.confidence, 3),
-            'lookup_key_used': self.lookup_key_used,
-            'fallback_level': self.fallback_level,
+            "bidder_code": self.bidder_code,
+            "total_score": round(self.total_score, 2),
+            "components": self.components.to_dict(),
+            "confidence": round(self.confidence, 3),
+            "lookup_key_used": self.lookup_key_used,
+            "fallback_level": self.fallback_level,
         }

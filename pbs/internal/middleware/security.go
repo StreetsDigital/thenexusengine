@@ -1,123 +1,200 @@
-// Package middleware provides HTTP middleware components
+// Package middleware provides HTTP middleware for PBS
 package middleware
 
 import (
 	"net/http"
+	"os"
+	"strings"
+	"sync"
 )
 
-// SecurityConfig configures security headers
+// SecurityConfig holds security headers configuration
 type SecurityConfig struct {
-	// EnableHSTS enables HTTP Strict Transport Security
-	EnableHSTS bool
-	// HSTSMaxAge is the max-age value for HSTS in seconds (default: 1 year)
-	HSTSMaxAge int
-	// FrameOptions controls X-Frame-Options (DENY, SAMEORIGIN, or empty to disable)
-	FrameOptions string
-	// ContentTypeNosniff enables X-Content-Type-Options: nosniff
-	ContentTypeNosniff bool
-	// XSSProtection enables X-XSS-Protection header
-	XSSProtection bool
-	// ReferrerPolicy sets the Referrer-Policy header
+	// Enabled toggles all security headers
+	Enabled bool
+
+	// XFrameOptions prevents clickjacking (DENY, SAMEORIGIN, or ALLOW-FROM uri)
+	XFrameOptions string
+
+	// XContentTypeOptions prevents MIME-type sniffing (nosniff)
+	XContentTypeOptions string
+
+	// XXSSProtection enables XSS filter in older browsers
+	XXSSProtection string
+
+	// ContentSecurityPolicy controls resource loading
+	ContentSecurityPolicy string
+
+	// ReferrerPolicy controls referrer information
 	ReferrerPolicy string
-	// CSPPolicy sets Content-Security-Policy (empty to disable)
-	CSPPolicy string
-	// PermissionsPolicy sets Permissions-Policy header
+
+	// StrictTransportSecurity enables HSTS (only set when behind TLS proxy)
+	StrictTransportSecurity string
+
+	// PermissionsPolicy controls browser features
 	PermissionsPolicy string
+
+	// CacheControl for API responses
+	CacheControl string
 }
 
-// DefaultSecurityConfig returns secure defaults for an API server
-func DefaultSecurityConfig() SecurityConfig {
-	return SecurityConfig{
-		EnableHSTS:         true,
-		HSTSMaxAge:         31536000, // 1 year
-		FrameOptions:       "DENY",
-		ContentTypeNosniff: true,
-		XSSProtection:      true,
-		ReferrerPolicy:     "strict-origin-when-cross-origin",
-		// CSP for API responses - very restrictive
-		CSPPolicy: "default-src 'none'; frame-ancestors 'none'",
-		// Disable sensitive browser features
-		PermissionsPolicy: "geolocation=(), microphone=(), camera=()",
+// DefaultSecurityConfig returns production-ready security headers
+func DefaultSecurityConfig() *SecurityConfig {
+	return &SecurityConfig{
+		Enabled: os.Getenv("SECURITY_HEADERS_ENABLED") != "false", // Enabled by default
+
+		// Prevent clickjacking - deny framing entirely for API
+		XFrameOptions: envOrDefault("SECURITY_X_FRAME_OPTIONS", "DENY"),
+
+		// Prevent MIME-type sniffing attacks
+		XContentTypeOptions: "nosniff",
+
+		// Enable XSS filter (legacy, but still useful for older browsers)
+		XXSSProtection: "1; mode=block",
+
+		// CSP for API responses - restrictive since we only serve JSON
+		ContentSecurityPolicy: envOrDefault("SECURITY_CSP",
+			"default-src 'none'; frame-ancestors 'none'"),
+
+		// Don't leak referrer data
+		ReferrerPolicy: envOrDefault("SECURITY_REFERRER_POLICY", "strict-origin-when-cross-origin"),
+
+		// HSTS - only enable if you're certain TLS is always used
+		// Default empty - set via env var when deploying behind TLS
+		StrictTransportSecurity: os.Getenv("SECURITY_HSTS"),
+
+		// Disable unnecessary browser features for API
+		PermissionsPolicy: envOrDefault("SECURITY_PERMISSIONS_POLICY",
+			"geolocation=(), microphone=(), camera=()"),
+
+		// API responses should not be cached by browsers
+		CacheControl: envOrDefault("SECURITY_CACHE_CONTROL",
+			"no-store, no-cache, must-revalidate, private"),
 	}
 }
 
-// SecurityHeaders adds security headers to HTTP responses
-type SecurityHeaders struct {
-	config SecurityConfig
-	next   http.Handler
+// envOrDefault returns environment variable value or default
+func envOrDefault(key, defaultValue string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return defaultValue
 }
 
-// NewSecurityHeaders creates security headers middleware
-func NewSecurityHeaders(config SecurityConfig) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return &SecurityHeaders{
-			config: config,
-			next:   next,
+// Security provides security headers middleware
+type Security struct {
+	config *SecurityConfig
+	mu     sync.RWMutex
+}
+
+// NewSecurity creates a new Security middleware
+func NewSecurity(config *SecurityConfig) *Security {
+	if config == nil {
+		config = DefaultSecurityConfig()
+	}
+	return &Security{config: config}
+}
+
+// Middleware returns the security headers middleware handler
+func (s *Security) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Copy all needed config fields while holding the lock to prevent data race
+		s.mu.RLock()
+		enabled := s.config.Enabled
+		xFrameOptions := s.config.XFrameOptions
+		xContentTypeOptions := s.config.XContentTypeOptions
+		xXSSProtection := s.config.XXSSProtection
+		csp := s.config.ContentSecurityPolicy
+		referrerPolicy := s.config.ReferrerPolicy
+		hsts := s.config.StrictTransportSecurity
+		permissionsPolicy := s.config.PermissionsPolicy
+		cacheControl := s.config.CacheControl
+		s.mu.RUnlock()
+
+		if !enabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Set security headers
+		h := w.Header()
+
+		if xFrameOptions != "" {
+			h.Set("X-Frame-Options", xFrameOptions)
+		}
+
+		if xContentTypeOptions != "" {
+			h.Set("X-Content-Type-Options", xContentTypeOptions)
+		}
+
+		if xXSSProtection != "" {
+			h.Set("X-XSS-Protection", xXSSProtection)
+		}
+
+		if csp != "" {
+			h.Set("Content-Security-Policy", csp)
+		}
+
+		if referrerPolicy != "" {
+			h.Set("Referrer-Policy", referrerPolicy)
+		}
+
+		if hsts != "" {
+			h.Set("Strict-Transport-Security", hsts)
+		}
+
+		if permissionsPolicy != "" {
+			h.Set("Permissions-Policy", permissionsPolicy)
+		}
+
+		if cacheControl != "" {
+			// Only set cache control for non-static paths
+			if !isStaticPath(r.URL.Path) {
+				h.Set("Cache-Control", cacheControl)
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isStaticPath checks if path is for static content that can be cached
+func isStaticPath(path string) bool {
+	// Metrics endpoint can be cached briefly
+	staticPaths := []string{"/metrics"}
+	for _, p := range staticPaths {
+		if strings.HasPrefix(path, p) {
+			return true
 		}
 	}
+	return false
 }
 
-// ServeHTTP implements http.Handler
-func (s *SecurityHeaders) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Set security headers before passing to next handler
-	s.setSecurityHeaders(w)
-	s.next.ServeHTTP(w, r)
+// SetEnabled enables or disables security headers
+func (s *Security) SetEnabled(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.Enabled = enabled
 }
 
-// setSecurityHeaders adds all configured security headers
-func (s *SecurityHeaders) setSecurityHeaders(w http.ResponseWriter) {
-	// HSTS - only enable in production (when using HTTPS)
-	if s.config.EnableHSTS && s.config.HSTSMaxAge > 0 {
-		// Note: This header is ignored over HTTP, only effective over HTTPS
-		w.Header().Set("Strict-Transport-Security",
-			"max-age="+itoa(s.config.HSTSMaxAge)+"; includeSubDomains")
-	}
-
-	// X-Frame-Options - prevent clickjacking
-	if s.config.FrameOptions != "" {
-		w.Header().Set("X-Frame-Options", s.config.FrameOptions)
-	}
-
-	// X-Content-Type-Options - prevent MIME sniffing
-	if s.config.ContentTypeNosniff {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-	}
-
-	// X-XSS-Protection - legacy but still useful for older browsers
-	if s.config.XSSProtection {
-		w.Header().Set("X-XSS-Protection", "1; mode=block")
-	}
-
-	// Referrer-Policy - control referrer information
-	if s.config.ReferrerPolicy != "" {
-		w.Header().Set("Referrer-Policy", s.config.ReferrerPolicy)
-	}
-
-	// Content-Security-Policy - restrict resource loading
-	if s.config.CSPPolicy != "" {
-		w.Header().Set("Content-Security-Policy", s.config.CSPPolicy)
-	}
-
-	// Permissions-Policy - restrict browser features
-	if s.config.PermissionsPolicy != "" {
-		w.Header().Set("Permissions-Policy", s.config.PermissionsPolicy)
-	}
-
-	// Cache-Control for API responses - prevent caching of sensitive data
-	// Individual handlers can override this for cacheable responses
-	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
-	w.Header().Set("Pragma", "no-cache")
+// SetHSTS sets the HSTS header value
+// Example: "max-age=31536000; includeSubDomains"
+func (s *Security) SetHSTS(value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.StrictTransportSecurity = value
 }
 
-// itoa converts int to string without importing strconv
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var digits []byte
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	return string(digits)
+// SetCSP sets the Content-Security-Policy header
+func (s *Security) SetCSP(value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.config.ContentSecurityPolicy = value
+}
+
+// GetConfig returns a copy of the current configuration
+func (s *Security) GetConfig() SecurityConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return *s.config
 }

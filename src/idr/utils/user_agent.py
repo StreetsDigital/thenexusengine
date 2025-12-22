@@ -2,7 +2,6 @@
 
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -10,9 +9,9 @@ class ParsedUserAgent:
     """Parsed user agent information."""
 
     browser: str
-    browser_version: Optional[str]
+    browser_version: str | None
     os: str
-    os_version: Optional[str]
+    os_version: str | None
     device_type: str
     is_mobile: bool
     is_tablet: bool
@@ -21,49 +20,49 @@ class ParsedUserAgent:
 
 # Browser detection patterns (order matters - more specific first)
 BROWSER_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ('edge', re.compile(r'Edg(?:e|A|iOS)?/(\d+)', re.I)),
-    ('opera', re.compile(r'(?:Opera|OPR)/(\d+)', re.I)),
-    ('samsung', re.compile(r'SamsungBrowser/(\d+)', re.I)),
-    ('ucbrowser', re.compile(r'UCBrowser/(\d+)', re.I)),
-    ('chrome', re.compile(r'(?:Chrome|CriOS)/(\d+)', re.I)),
-    ('firefox', re.compile(r'(?:Firefox|FxiOS)/(\d+)', re.I)),
-    ('safari', re.compile(r'Version/(\d+).*Safari', re.I)),
-    ('ie', re.compile(r'(?:MSIE |Trident.*rv:)(\d+)', re.I)),
+    ("edge", re.compile(r"Edg(?:e|A|iOS)?/(\d+)", re.I)),
+    ("opera", re.compile(r"(?:Opera|OPR)/(\d+)", re.I)),
+    ("samsung", re.compile(r"SamsungBrowser/(\d+)", re.I)),
+    ("ucbrowser", re.compile(r"UCBrowser/(\d+)", re.I)),
+    ("chrome", re.compile(r"(?:Chrome|CriOS)/(\d+)", re.I)),
+    ("firefox", re.compile(r"(?:Firefox|FxiOS)/(\d+)", re.I)),
+    ("safari", re.compile(r"Version/(\d+).*Safari", re.I)),
+    ("ie", re.compile(r"(?:MSIE |Trident.*rv:)(\d+)", re.I)),
 ]
 
 # OS detection patterns
 OS_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ('ios', re.compile(r'(?:iPhone|iPad|iPod).*OS (\d+[_\.]\d+)', re.I)),
-    ('android', re.compile(r'Android (\d+\.?\d*)', re.I)),
-    ('windows', re.compile(r'Windows NT (\d+\.\d+)', re.I)),
-    ('macos', re.compile(r'Mac OS X (\d+[_\.]\d+)', re.I)),
-    ('linux', re.compile(r'Linux', re.I)),
-    ('chromeos', re.compile(r'CrOS', re.I)),
+    ("ios", re.compile(r"(?:iPhone|iPad|iPod).*OS (\d+[_\.]\d+)", re.I)),
+    ("android", re.compile(r"Android (\d+\.?\d*)", re.I)),
+    ("windows", re.compile(r"Windows NT (\d+\.\d+)", re.I)),
+    ("macos", re.compile(r"Mac OS X (\d+[_\.]\d+)", re.I)),
+    ("linux", re.compile(r"Linux", re.I)),
+    ("chromeos", re.compile(r"CrOS", re.I)),
 ]
 
 # Mobile detection patterns
 MOBILE_PATTERNS: list[re.Pattern] = [
-    re.compile(r'Mobile|Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini', re.I),
+    re.compile(r"Mobile|Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini", re.I),
 ]
 
 # Tablet detection patterns
 TABLET_PATTERNS: list[re.Pattern] = [
-    re.compile(r'iPad|Android(?!.*Mobile)|Tablet', re.I),
+    re.compile(r"iPad|Android(?!.*Mobile)|Tablet", re.I),
 ]
 
 # Bot detection patterns
 BOT_PATTERNS: list[re.Pattern] = [
-    re.compile(r'bot|crawl|spider|slurp|googlebot|bingbot|yandex|baidu', re.I),
+    re.compile(r"bot|crawl|spider|slurp|googlebot|bingbot|yandex|baidu", re.I),
 ]
 
 # Windows version mapping
 WINDOWS_VERSIONS: dict[str, str] = {
-    '10.0': '10',
-    '6.3': '8.1',
-    '6.2': '8',
-    '6.1': '7',
-    '6.0': 'Vista',
-    '5.1': 'XP',
+    "10.0": "10",
+    "6.3": "8.1",
+    "6.2": "8",
+    "6.1": "7",
+    "6.0": "Vista",
+    "5.1": "XP",
 }
 
 
@@ -79,11 +78,11 @@ def parse_user_agent(ua_string: str) -> ParsedUserAgent:
     """
     if not ua_string:
         return ParsedUserAgent(
-            browser='unknown',
+            browser="unknown",
             browser_version=None,
-            os='unknown',
+            os="unknown",
             os_version=None,
-            device_type='unknown',
+            device_type="unknown",
             is_mobile=False,
             is_tablet=False,
             is_bot=False,
@@ -97,13 +96,13 @@ def parse_user_agent(ua_string: str) -> ParsedUserAgent:
 
     # Determine device type
     if is_bot:
-        device_type = 'bot'
+        device_type = "bot"
     elif is_tablet:
-        device_type = 'tablet'
+        device_type = "tablet"
     elif is_mobile:
-        device_type = 'mobile'
+        device_type = "mobile"
     else:
-        device_type = 'desktop'
+        device_type = "desktop"
 
     return ParsedUserAgent(
         browser=browser,
@@ -117,7 +116,7 @@ def parse_user_agent(ua_string: str) -> ParsedUserAgent:
     )
 
 
-def extract_browser(ua_string: str) -> tuple[str, Optional[str]]:
+def extract_browser(ua_string: str) -> tuple[str, str | None]:
     """
     Extract browser name and version from user agent.
 
@@ -128,7 +127,7 @@ def extract_browser(ua_string: str) -> tuple[str, Optional[str]]:
         Tuple of (browser_name, version) - version may be None
     """
     if not ua_string:
-        return ('unknown', None)
+        return ("unknown", None)
 
     for browser_name, pattern in BROWSER_PATTERNS:
         match = pattern.search(ua_string)
@@ -136,10 +135,10 @@ def extract_browser(ua_string: str) -> tuple[str, Optional[str]]:
             version = match.group(1) if match.lastindex else None
             return (browser_name, version)
 
-    return ('unknown', None)
+    return ("unknown", None)
 
 
-def extract_os(ua_string: str) -> tuple[str, Optional[str]]:
+def extract_os(ua_string: str) -> tuple[str, str | None]:
     """
     Extract operating system and version from user agent.
 
@@ -150,20 +149,20 @@ def extract_os(ua_string: str) -> tuple[str, Optional[str]]:
         Tuple of (os_name, version) - version may be None
     """
     if not ua_string:
-        return ('unknown', None)
+        return ("unknown", None)
 
     for os_name, pattern in OS_PATTERNS:
         match = pattern.search(ua_string)
         if match:
             version = None
             if match.lastindex:
-                version = match.group(1).replace('_', '.')
+                version = match.group(1).replace("_", ".")
                 # Map Windows NT versions to friendly names
-                if os_name == 'windows' and version in WINDOWS_VERSIONS:
+                if os_name == "windows" and version in WINDOWS_VERSIONS:
                     version = WINDOWS_VERSIONS[version]
             return (os_name, version)
 
-    return ('unknown', None)
+    return ("unknown", None)
 
 
 def _is_mobile(ua_string: str) -> bool:

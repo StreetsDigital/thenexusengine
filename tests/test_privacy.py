@@ -4,14 +4,11 @@ import pytest
 
 from src.idr.privacy.consent_models import (
     ConsentSignals,
-    GPPConsent,
     TCFConsent,
-    TCFPurpose,
     USPrivacy,
 )
 from src.idr.privacy.privacy_filter import (
     BIDDER_PRIVACY_CONFIG,
-    BidderPrivacyRequirements,
     FilterReason,
     PrivacyFilter,
     infer_privacy_jurisdiction,
@@ -127,17 +124,11 @@ class TestConsentSignals:
     def test_from_openrtb_gdpr(self):
         """Should extract GDPR signals from OpenRTB."""
         request = {
-            "regs": {
-                "ext": {"gdpr": 1}
-            },
+            "regs": {"ext": {"gdpr": 1}},
             "user": {
-                "ext": {
-                    "consent": "CPXxRfAPXxRfAAfKABENB-CgAAAAAAAAAAYgAAAAAAAA"
-                }
+                "ext": {"consent": "CPXxRfAPXxRfAAfKABENB-CgAAAAAAAAAAYgAAAAAAAA"}
             },
-            "device": {
-                "geo": {"country": "DE"}
-            }
+            "device": {"geo": {"country": "DE"}},
         }
         signals = ConsentSignals.from_openrtb(request)
         assert signals.gdpr_applies is True
@@ -148,12 +139,8 @@ class TestConsentSignals:
     def test_from_openrtb_ccpa(self):
         """Should extract CCPA signals from OpenRTB."""
         request = {
-            "regs": {
-                "ext": {"us_privacy": "1YYN"}
-            },
-            "device": {
-                "geo": {"country": "US", "region": "CA"}
-            }
+            "regs": {"ext": {"us_privacy": "1YYN"}},
+            "device": {"geo": {"country": "US", "region": "CA"}},
         }
         signals = ConsentSignals.from_openrtb(request)
         assert signals.ccpa_applies is True
@@ -162,9 +149,7 @@ class TestConsentSignals:
 
     def test_from_openrtb_coppa(self):
         """Should extract COPPA signals from OpenRTB."""
-        request = {
-            "regs": {"coppa": 1}
-        }
+        request = {"regs": {"coppa": 1}}
         signals = ConsentSignals.from_openrtb(request)
         assert signals.coppa_applies is True
 
@@ -280,7 +265,10 @@ class TestPrivacyFilter:
         result = filter.filter_bidder("criteo", signals)
         assert result.allowed is False
         # Will be NO_PURPOSE_CONSENT since we check TCF purposes before personalization
-        assert result.reason in (FilterReason.NO_PURPOSE_CONSENT, FilterReason.PERSONALIZATION_DENIED)
+        assert result.reason in (
+            FilterReason.NO_PURPOSE_CONSENT,
+            FilterReason.PERSONALIZATION_DENIED,
+        )
 
     def test_filter_multiple_bidders(self, filter):
         """Should filter multiple bidders at once."""
@@ -317,9 +305,9 @@ class TestPrivacyFilter:
         _, results = filter.filter_bidders(bidders, signals)
 
         summary = filter.get_privacy_summary(signals, results)
-        assert summary['gdpr_applies'] is True
-        assert summary['total_bidders'] == 2
-        assert summary['filtered'] >= 1
+        assert summary["gdpr_applies"] is True
+        assert summary["total_bidders"] == 2
+        assert summary["filtered"] >= 1
 
     def test_strict_mode_blocks_unknown_gvl(self):
         """Strict mode should block bidders with unknown GVL ID."""
@@ -344,8 +332,15 @@ class TestBidderPrivacyConfig:
     def test_known_bidders_have_config(self):
         """Known bidders should have privacy config."""
         known_bidders = [
-            "appnexus", "rubicon", "pubmatic", "openx", "ix",
-            "triplelift", "criteo", "teads", "spotx"
+            "appnexus",
+            "rubicon",
+            "pubmatic",
+            "openx",
+            "ix",
+            "triplelift",
+            "criteo",
+            "teads",
+            "spotx",
         ]
         for bidder in known_bidders:
             assert bidder in BIDDER_PRIVACY_CONFIG
@@ -369,7 +364,7 @@ class TestInferPrivacyJurisdiction:
 
     def test_eu_countries_have_gdpr(self):
         """EU countries should have GDPR."""
-        from src.idr.privacy.privacy_filter import PrivacyRegulation, EU_EEA_COUNTRIES
+        from src.idr.privacy.privacy_filter import EU_EEA_COUNTRIES, PrivacyRegulation
 
         for country in ["DE", "FR", "IT", "ES", "NL"]:
             assert country in EU_EEA_COUNTRIES
@@ -408,15 +403,11 @@ class TestIntegrationWithClassifier:
         classifier = RequestClassifier()
         request = {
             "imp": [{"id": "1", "banner": {"w": 300, "h": 250}}],
-            "regs": {
-                "ext": {"gdpr": 1, "us_privacy": "1YNN"}
-            },
+            "regs": {"ext": {"gdpr": 1, "us_privacy": "1YNN"}},
             "user": {
                 "ext": {"consent": "CPXxRfAPXxRfAAfKABENB-CgAAAAAAAAAAYgAAAAAAAA"}
             },
-            "device": {
-                "geo": {"country": "DE"}
-            }
+            "device": {"geo": {"country": "DE"}},
         }
 
         classified = classifier.classify(request)
@@ -447,9 +438,12 @@ class TestIntegrationWithSelector:
 
     def test_selector_applies_privacy_filter(self):
         """Selector should apply privacy filter when enabled."""
-        from src.idr.selector.partner_selector import PartnerSelector, SelectorConfig
         from src.idr.models.bidder_score import BidderScore
-        from src.idr.models.classified_request import ClassifiedRequest, AdFormat, DeviceType
+        from src.idr.models.classified_request import (
+            AdFormat,
+            ClassifiedRequest,
+        )
+        from src.idr.selector.partner_selector import PartnerSelector, SelectorConfig
 
         privacy_filter = PrivacyFilter()
         config = SelectorConfig(privacy_enabled=True, max_bidders=10)
@@ -480,9 +474,12 @@ class TestIntegrationWithSelector:
 
     def test_selector_allows_with_consent(self):
         """Selector should allow bidders with proper consent."""
-        from src.idr.selector.partner_selector import PartnerSelector, SelectorConfig
         from src.idr.models.bidder_score import BidderScore
-        from src.idr.models.classified_request import ClassifiedRequest, AdFormat, DeviceType
+        from src.idr.models.classified_request import (
+            AdFormat,
+            ClassifiedRequest,
+        )
+        from src.idr.selector.partner_selector import PartnerSelector, SelectorConfig
 
         privacy_filter = PrivacyFilter()
         config = SelectorConfig(privacy_enabled=True, max_bidders=10)
@@ -517,9 +514,9 @@ class TestIntegrationWithSelector:
 
     def test_selector_privacy_disabled(self):
         """Selector should skip privacy filter when disabled."""
-        from src.idr.selector.partner_selector import PartnerSelector, SelectorConfig
         from src.idr.models.bidder_score import BidderScore
-        from src.idr.models.classified_request import ClassifiedRequest, AdFormat
+        from src.idr.models.classified_request import AdFormat, ClassifiedRequest
+        from src.idr.selector.partner_selector import PartnerSelector, SelectorConfig
 
         privacy_filter = PrivacyFilter()
         config = SelectorConfig(privacy_enabled=False, max_bidders=10)

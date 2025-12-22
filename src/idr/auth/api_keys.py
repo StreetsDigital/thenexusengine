@@ -17,17 +17,14 @@ Usage:
     keys = manager.list_keys()
 """
 
-import hashlib
-import hmac
 import os
 import secrets
-import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 try:
     import redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -45,10 +42,11 @@ REDIS_KEY_METADATA = "nexus:key_meta"  # hash: api_key -> JSON metadata
 @dataclass
 class APIKeyInfo:
     """Information about an API key."""
+
     key: str
     publisher_id: str
     created_at: str
-    last_used: Optional[str] = None
+    last_used: str | None = None
     enabled: bool = True
     request_count: int = 0
 
@@ -81,7 +79,7 @@ class APIKeyManager:
             key_prefix: Prefix for generated keys (default: "nxs")
         """
         self.key_prefix = key_prefix
-        self._redis: Optional[redis.Redis] = None
+        self._redis: redis.Redis | None = None
         self._redis_url = redis_url
 
         if REDIS_AVAILABLE:
@@ -114,7 +112,7 @@ class APIKeyManager:
         publisher_id: str,
         environment: str = "live",
         replace_existing: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Generate a new API key for a publisher.
 
@@ -156,20 +154,23 @@ class APIKeyManager:
 
         # Store metadata
         import json
-        metadata = json.dumps({
-            "publisher_id": publisher_id,
-            "created_at": now,
-            "environment": environment,
-            "enabled": True,
-            "request_count": 0,
-        })
+
+        metadata = json.dumps(
+            {
+                "publisher_id": publisher_id,
+                "created_at": now,
+                "environment": environment,
+                "enabled": True,
+                "request_count": 0,
+            }
+        )
         pipe.hset(REDIS_KEY_METADATA, api_key, metadata)
 
         pipe.execute()
 
         return api_key
 
-    def validate_key(self, api_key: str) -> Optional[str]:
+    def validate_key(self, api_key: str) -> str | None:
         """
         Validate an API key and return the associated publisher ID.
 
@@ -191,6 +192,7 @@ class APIKeyManager:
             # Update last used timestamp (async, don't block)
             try:
                 import json
+
                 meta_json = self._redis.hget(REDIS_KEY_METADATA, api_key)
                 if meta_json:
                     meta = json.loads(meta_json)
@@ -206,13 +208,13 @@ class APIKeyManager:
 
         return publisher_id
 
-    def get_publisher_key(self, publisher_id: str) -> Optional[str]:
+    def get_publisher_key(self, publisher_id: str) -> str | None:
         """Get the API key for a publisher."""
         if not self._redis:
             return None
         return self._redis.hget(REDIS_PUBLISHER_KEYS, publisher_id)
 
-    def get_key_info(self, api_key: str) -> Optional[APIKeyInfo]:
+    def get_key_info(self, api_key: str) -> APIKeyInfo | None:
         """Get detailed information about an API key."""
         if not self._redis:
             return None
@@ -222,6 +224,7 @@ class APIKeyManager:
             return None
 
         import json
+
         meta_json = self._redis.hget(REDIS_KEY_METADATA, api_key)
         meta = json.loads(meta_json) if meta_json else {}
 
@@ -265,6 +268,7 @@ class APIKeyManager:
             return False
 
         import json
+
         meta_json = self._redis.hget(REDIS_KEY_METADATA, api_key)
         if not meta_json:
             return False
@@ -280,6 +284,7 @@ class APIKeyManager:
             return False
 
         import json
+
         meta_json = self._redis.hget(REDIS_KEY_METADATA, api_key)
         if not meta_json:
             return False
@@ -297,7 +302,7 @@ class APIKeyManager:
         keys = self._redis.hgetall(REDIS_API_KEYS_HASH)
         result = []
 
-        for api_key, publisher_id in keys.items():
+        for api_key, _publisher_id in keys.items():
             info = self.get_key_info(api_key)
             if info:
                 result.append(info)
@@ -321,7 +326,7 @@ class APIKeyManager:
 
         synced = 0
         for pub_id, config in configs.items():
-            if hasattr(config, 'api_key') and config.api_key.key:
+            if hasattr(config, "api_key") and config.api_key.key:
                 # Store existing key in Redis
                 api_key = config.api_key.key
 
@@ -330,12 +335,16 @@ class APIKeyManager:
                 pipe.hset(REDIS_PUBLISHER_KEYS, pub_id, api_key)
 
                 import json
-                metadata = json.dumps({
-                    "publisher_id": pub_id,
-                    "created_at": config.api_key.created_at or datetime.utcnow().isoformat(),
-                    "enabled": config.api_key.enabled,
-                    "request_count": 0,
-                })
+
+                metadata = json.dumps(
+                    {
+                        "publisher_id": pub_id,
+                        "created_at": config.api_key.created_at
+                        or datetime.utcnow().isoformat(),
+                        "enabled": config.api_key.enabled,
+                        "request_count": 0,
+                    }
+                )
                 pipe.hset(REDIS_KEY_METADATA, api_key, metadata)
                 pipe.execute()
                 synced += 1
@@ -344,10 +353,10 @@ class APIKeyManager:
 
 
 # Global instance
-_api_key_manager: Optional[APIKeyManager] = None
+_api_key_manager: APIKeyManager | None = None
 
 
-def get_api_key_manager(redis_url: Optional[str] = None) -> APIKeyManager:
+def get_api_key_manager(redis_url: str | None = None) -> APIKeyManager:
     """Get the global API key manager instance."""
     global _api_key_manager
 

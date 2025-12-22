@@ -10,19 +10,21 @@ Reference: https://github.com/InteractiveAdvertisingBureau/openrtb2.x
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class BidderStatus(str, Enum):
     """Bidder operational status."""
-    ACTIVE = "active"           # Bidder is enabled and receiving traffic
-    PAUSED = "paused"           # Temporarily disabled
-    TESTING = "testing"         # Only receives test traffic
-    DISABLED = "disabled"       # Fully disabled
+
+    ACTIVE = "active"  # Bidder is enabled and receiving traffic
+    PAUSED = "paused"  # Temporarily disabled
+    TESTING = "testing"  # Only receives test traffic
+    DISABLED = "disabled"  # Fully disabled
 
 
 class MediaType(str, Enum):
     """Supported media types per OpenRTB 2.6."""
+
     BANNER = "banner"
     VIDEO = "video"
     AUDIO = "audio"
@@ -31,12 +33,14 @@ class MediaType(str, Enum):
 
 class AuctionType(int, Enum):
     """OpenRTB auction types."""
+
     FIRST_PRICE = 1
     SECOND_PRICE = 2
 
 
 class ProtocolVersion(str, Enum):
     """Supported OpenRTB protocol versions."""
+
     ORTB_2_5 = "2.5"
     ORTB_2_6 = "2.6"
 
@@ -52,18 +56,19 @@ class BidderEndpoint:
         timeout_ms: Request timeout in milliseconds
         protocol_version: OpenRTB version (2.5 or 2.6)
     """
+
     url: str
     method: str = "POST"
     timeout_ms: int = 200
     protocol_version: str = "2.6"
 
     # Optional authentication
-    auth_type: Optional[str] = None  # "none", "basic", "bearer", "header"
-    auth_username: Optional[str] = None
-    auth_password: Optional[str] = None
-    auth_token: Optional[str] = None
-    auth_header_name: Optional[str] = None
-    auth_header_value: Optional[str] = None
+    auth_type: str | None = None  # "none", "basic", "bearer", "header"
+    auth_username: str | None = None
+    auth_password: str | None = None
+    auth_token: str | None = None
+    auth_header_name: str | None = None
+    auth_header_value: str | None = None
 
     # Additional headers
     custom_headers: dict[str, str] = field(default_factory=dict)
@@ -113,6 +118,7 @@ class BidderCapabilities:
         protocols: Supported video protocols (VAST versions)
         apis: Supported APIs (VPAID, MRAID, etc.)
     """
+
     media_types: list[str] = field(default_factory=lambda: ["banner"])
     currencies: list[str] = field(default_factory=lambda: ["USD"])
 
@@ -125,8 +131,8 @@ class BidderCapabilities:
     video_mimes: list[str] = field(default_factory=list)
     video_linearity: list[int] = field(default_factory=list)
     video_playback_methods: list[int] = field(default_factory=list)
-    video_max_duration: Optional[int] = None
-    video_min_duration: Optional[int] = None
+    video_max_duration: int | None = None
+    video_min_duration: int | None = None
 
     # Banner capabilities
     banner_mimes: list[str] = field(default_factory=lambda: ["text/html"])
@@ -225,6 +231,7 @@ class BidderRateLimits:
         daily_limit: Maximum requests per day (0 = unlimited)
         concurrent_limit: Maximum concurrent requests
     """
+
     qps_limit: int = 1000
     daily_limit: int = 0  # 0 = unlimited
     concurrent_limit: int = 100
@@ -253,6 +260,103 @@ class BidderRateLimits:
 
 
 @dataclass
+class SChainNode:
+    """
+    Supply Chain node for schain augmentation.
+
+    Per IAB OpenRTB Supply Chain spec:
+    https://iabtechlab.com/standards/openrtb-supply-chain/
+
+    Attributes:
+        asi: Canonical domain name of the SSP, Exchange, Header Wrapper, etc.
+        sid: Identifier associated with the seller or reseller account.
+        hp: Indicates if this node is involved in payment flow (1=yes, 0=no).
+        rid: Optional request ID for tracking (typically omitted).
+        name: Optional human-readable name of the entity.
+        domain: Optional domain of the entity (may differ from asi).
+        ext: Optional extension object for custom data.
+    """
+    asi: str
+    sid: str
+    hp: int = 1  # 1 = direct/payment flow, 0 = indirect
+    rid: Optional[str] = None
+    name: Optional[str] = None
+    domain: Optional[str] = None
+    ext: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        result = {
+            "asi": self.asi,
+            "sid": self.sid,
+            "hp": self.hp,
+        }
+        if self.rid:
+            result["rid"] = self.rid
+        if self.name:
+            result["name"] = self.name
+        if self.domain:
+            result["domain"] = self.domain
+        if self.ext:
+            result["ext"] = self.ext
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SChainNode":
+        """Create from dictionary."""
+        return cls(
+            asi=data.get("asi", ""),
+            sid=data.get("sid", ""),
+            hp=data.get("hp", 1),
+            rid=data.get("rid"),
+            name=data.get("name"),
+            domain=data.get("domain"),
+            ext=data.get("ext", {}),
+        )
+
+
+@dataclass
+class SChainAugmentation:
+    """
+    Supply Chain augmentation configuration for per-bidder schain modification.
+
+    This allows adding supply chain nodes to bid requests sent to specific bidders,
+    enabling proper transparency and ads.txt/sellers.json compliance.
+
+    Attributes:
+        enabled: Whether schain augmentation is enabled for this bidder.
+        nodes: List of supply chain nodes to append to the request's schain.
+        complete: Override the schain complete flag (None = preserve original).
+        version: SChain version string (default "1.0").
+    """
+    enabled: bool = False
+    nodes: list[SChainNode] = field(default_factory=list)
+    complete: Optional[int] = None  # None = preserve, 0 = incomplete, 1 = complete
+    version: str = "1.0"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "enabled": self.enabled,
+            "nodes": [node.to_dict() for node in self.nodes],
+            "complete": self.complete,
+            "version": self.version,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SChainAugmentation":
+        """Create from dictionary."""
+        nodes_data = data.get("nodes", [])
+        nodes = [SChainNode.from_dict(n) for n in nodes_data]
+        return cls(
+            enabled=data.get("enabled", False),
+            nodes=nodes,
+            complete=data.get("complete"),
+            version=data.get("version", "1.0"),
+        )
+
+
+@dataclass
 class RequestTransform:
     """
     Request transformation rules to adapt the OpenRTB request
@@ -264,7 +368,9 @@ class RequestTransform:
         field_removals: Fields to remove from the request
         imp_ext_template: Template for imp.ext object
         request_ext_template: Template for request.ext object
+        schain_augment: Supply chain augmentation configuration
     """
+
     field_mappings: dict[str, str] = field(default_factory=dict)
     field_additions: dict[str, Any] = field(default_factory=dict)
     field_removals: list[str] = field(default_factory=list)
@@ -276,7 +382,10 @@ class RequestTransform:
     user_ext_template: dict[str, Any] = field(default_factory=dict)
 
     # Bidder-specific seat ID
-    seat_id: Optional[str] = None
+    seat_id: str | None = None
+
+    # Supply chain augmentation
+    schain_augment: SChainAugmentation = field(default_factory=SChainAugmentation)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -289,6 +398,7 @@ class RequestTransform:
             "site_ext_template": self.site_ext_template,
             "user_ext_template": self.user_ext_template,
             "seat_id": self.seat_id,
+            "schain_augment": self.schain_augment.to_dict(),
         }
 
     @classmethod
@@ -303,6 +413,7 @@ class RequestTransform:
             site_ext_template=data.get("site_ext_template", {}),
             user_ext_template=data.get("user_ext_template", {}),
             seat_id=data.get("seat_id"),
+            schain_augment=SChainAugmentation.from_dict(data.get("schain_augment", {})),
         )
 
 
@@ -317,6 +428,7 @@ class ResponseTransform:
         price_adjustment: Price adjustment (e.g., 0.95 for 5% fee)
         currency_conversion: Whether to convert currencies
     """
+
     bid_field_mappings: dict[str, str] = field(default_factory=dict)
     price_adjustment: float = 1.0  # Multiplier for bid price
     currency_conversion: bool = True
@@ -368,9 +480,15 @@ class BidderConfig:
         gvl_vendor_id: IAB Global Vendor List ID (for privacy)
         priority: Bidder priority (higher = preferred)
     """
+
     bidder_code: str
     name: str
     endpoint: BidderEndpoint
+
+    # Instance identification (for multi-instance support)
+    bidder_family: str = ""  # Base bidder type (e.g., "appnexus" for appnexus_2)
+    instance_number: int = 1  # Instance number (1, 2, 3...)
+    publisher_id: str | None = None  # If set, publisher-specific instance
 
     # Optional fields
     description: str = ""
@@ -381,7 +499,7 @@ class BidderConfig:
 
     # Status and metadata
     status: BidderStatus = BidderStatus.TESTING
-    gvl_vendor_id: Optional[int] = None  # IAB GVL ID
+    gvl_vendor_id: int | None = None  # IAB GVL ID
     priority: int = 50  # 0-100, higher = more preferred
 
     # Contact information
@@ -397,9 +515,9 @@ class BidderConfig:
     blocked_countries: list[str] = field(default_factory=list)
 
     # Timestamps
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    last_active_at: Optional[str] = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    last_active_at: str | None = None
 
     # Statistics (updated by system)
     total_requests: int = 0
@@ -419,10 +537,16 @@ class BidderConfig:
         # Normalize bidder_code
         self.bidder_code = self._normalize_code(self.bidder_code)
 
+        # Set bidder_family if not provided (extract from bidder_code)
+        if not self.bidder_family:
+            self.bidder_family = self._extract_family(self.bidder_code)
+            self.instance_number = self._extract_instance_number(self.bidder_code)
+
     @staticmethod
     def _normalize_code(code: str) -> str:
         """Normalize bidder code to lowercase alphanumeric with hyphens."""
         import re
+
         # Replace spaces and underscores with hyphens
         code = code.lower().replace(" ", "-").replace("_", "-")
         # Remove any non-alphanumeric characters except hyphens
@@ -431,6 +555,47 @@ class BidderConfig:
         code = re.sub(r"-+", "-", code)
         # Remove leading/trailing hyphens
         return code.strip("-")
+
+    @staticmethod
+    def _extract_family(bidder_code: str) -> str:
+        """
+        Extract bidder family from bidder code.
+
+        Examples:
+            "appnexus" -> "appnexus"
+            "appnexus-2" -> "appnexus"
+            "rubicon-3" -> "rubicon"
+        """
+        import re
+
+        # Check if code ends with -N (instance suffix)
+        match = re.match(r"^(.+)-(\d+)$", bidder_code)
+        if match:
+            return match.group(1)
+        return bidder_code
+
+    @staticmethod
+    def _extract_instance_number(bidder_code: str) -> int:
+        """
+        Extract instance number from bidder code.
+
+        Examples:
+            "appnexus" -> 1
+            "appnexus-2" -> 2
+            "rubicon-3" -> 3
+        """
+        import re
+
+        # Check if code ends with -N (instance suffix)
+        match = re.match(r"^(.+)-(\d+)$", bidder_code)
+        if match:
+            return int(match.group(2))
+        return 1
+
+    @property
+    def is_publisher_specific(self) -> bool:
+        """Check if this is a publisher-specific bidder instance."""
+        return self.publisher_id is not None
 
     @property
     def is_enabled(self) -> bool:
@@ -464,6 +629,9 @@ class BidderConfig:
             "bidder_code": self.bidder_code,
             "name": self.name,
             "description": self.description,
+            "bidder_family": self.bidder_family,
+            "instance_number": self.instance_number,
+            "publisher_id": self.publisher_id,
             "endpoint": self.endpoint.to_dict(),
             "capabilities": self.capabilities.to_dict(),
             "rate_limits": self.rate_limits.to_dict(),
@@ -496,11 +664,18 @@ class BidderConfig:
             bidder_code=data.get("bidder_code", ""),
             name=data.get("name", ""),
             description=data.get("description", ""),
+            bidder_family=data.get("bidder_family", ""),
+            instance_number=data.get("instance_number", 1),
+            publisher_id=data.get("publisher_id"),
             endpoint=BidderEndpoint.from_dict(data.get("endpoint", {})),
             capabilities=BidderCapabilities.from_dict(data.get("capabilities", {})),
             rate_limits=BidderRateLimits.from_dict(data.get("rate_limits", {})),
-            request_transform=RequestTransform.from_dict(data.get("request_transform", {})),
-            response_transform=ResponseTransform.from_dict(data.get("response_transform", {})),
+            request_transform=RequestTransform.from_dict(
+                data.get("request_transform", {})
+            ),
+            response_transform=ResponseTransform.from_dict(
+                data.get("response_transform", {})
+            ),
             status=BidderStatus(data.get("status", "testing")),
             gvl_vendor_id=data.get("gvl_vendor_id"),
             priority=data.get("priority", 50),
@@ -524,10 +699,12 @@ class BidderConfig:
     def to_json(self) -> str:
         """Convert to JSON string."""
         import json
+
         return json.dumps(self.to_dict())
 
     @classmethod
     def from_json(cls, json_str: str) -> "BidderConfig":
         """Create from JSON string."""
         import json
+
         return cls.from_dict(json.loads(json_str))

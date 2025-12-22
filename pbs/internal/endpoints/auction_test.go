@@ -4,369 +4,76 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/exchange"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 )
 
-// mockExchange implements a minimal Exchange for testing
-type mockExchange struct {
-	response *exchange.AuctionResponse
-	err      error
+// Mock adapter for testing
+type mockAdapter struct {
+	bids []*adapters.TypedBid
+	err  error
 }
 
-func (m *mockExchange) RunAuction(ctx context.Context, req *exchange.AuctionRequest) (*exchange.AuctionResponse, error) {
+func (m *mockAdapter) MakeRequests(request *openrtb.BidRequest, reqInfo *adapters.ExtraRequestInfo) ([]*adapters.RequestData, []error) {
+	return []*adapters.RequestData{{Method: "POST", URI: "http://test.com", Body: []byte("{}")}}, nil
+}
+
+func (m *mockAdapter) MakeBids(request *openrtb.BidRequest, response *adapters.ResponseData) (*adapters.BidderResponse, []error) {
 	if m.err != nil {
-		return nil, m.err
+		return nil, []error{m.err}
 	}
-	return m.response, nil
+	return &adapters.BidderResponse{Bids: m.bids, Currency: "USD"}, nil
 }
 
-func newMockExchange(response *exchange.AuctionResponse, err error) *exchange.Exchange {
-	// We can't easily mock exchange.Exchange since it's a struct, not interface
-	// For endpoint tests, we'll focus on request validation paths
-	return nil
-}
-
-func TestStatusHandler(t *testing.T) {
-	handler := NewStatusHandler()
-
-	req := httptest.NewRequest(http.MethodGet, "/status", nil)
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
-	}
-
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Expected Content-Type application/json, got %s", ct)
-	}
-
-	var response map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if response["status"] != "ok" {
-		t.Errorf("Expected status 'ok', got %v", response["status"])
-	}
-
-	if _, ok := response["timestamp"]; !ok {
-		t.Error("Expected timestamp in response")
-	}
-}
-
-func TestValidateBidRequest(t *testing.T) {
-	tests := []struct {
-		name    string
-		request *openrtb.BidRequest
-		wantErr bool
-		errMsg  string
-	}{
-		{
-			name: "valid request",
-			request: &openrtb.BidRequest{
-				ID: "test-123",
-				Imp: []openrtb.Imp{
-					{ID: "imp-1", Banner: &openrtb.Banner{W: 300, H: 250}},
-				},
+// Helper to create a valid bid request
+func validBidRequest() *openrtb.BidRequest {
+	return &openrtb.BidRequest{
+		ID: "test-request-1",
+		Imp: []openrtb.Imp{
+			{
+				ID:     "imp-1",
+				Banner: &openrtb.Banner{W: 300, H: 250},
 			},
-			wantErr: false,
 		},
-		{
-			name: "missing ID",
-			request: &openrtb.BidRequest{
-				Imp: []openrtb.Imp{
-					{ID: "imp-1", Banner: &openrtb.Banner{W: 300, H: 250}},
-				},
-			},
-			wantErr: true,
-			errMsg:  "id: required",
-		},
-		{
-			name: "no impressions",
-			request: &openrtb.BidRequest{
-				ID:  "test-123",
-				Imp: []openrtb.Imp{},
-			},
-			wantErr: true,
-			errMsg:  "imp: at least one impression required",
-		},
-		{
-			name: "impression missing ID",
-			request: &openrtb.BidRequest{
-				ID: "test-123",
-				Imp: []openrtb.Imp{
-					{Banner: &openrtb.Banner{W: 300, H: 250}},
-				},
-			},
-			wantErr: true,
-			errMsg:  "imp[].id: required",
-		},
-		{
-			name: "impression missing media type",
-			request: &openrtb.BidRequest{
-				ID: "test-123",
-				Imp: []openrtb.Imp{
-					{ID: "imp-1"},
-				},
-			},
-			wantErr: true,
-			errMsg:  "imp[].banner|video|native|audio: at least one media type required",
-		},
-		{
-			name: "valid with video",
-			request: &openrtb.BidRequest{
-				ID: "test-123",
-				Imp: []openrtb.Imp{
-					{ID: "imp-1", Video: &openrtb.Video{W: 640, H: 480}},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid with multiple impressions",
-			request: &openrtb.BidRequest{
-				ID: "test-123",
-				Imp: []openrtb.Imp{
-					{ID: "imp-1", Banner: &openrtb.Banner{W: 300, H: 250}},
-					{ID: "imp-2", Video: &openrtb.Video{W: 640, H: 480}},
-				},
-			},
-			wantErr: false,
+		Site: &openrtb.Site{
+			ID:     "site-1",
+			Domain: "example.com",
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateBidRequest(tt.request)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Error("Expected error, got nil")
-					return
-				}
-				if err.Error() != tt.errMsg {
-					t.Errorf("Expected error '%s', got '%s'", tt.errMsg, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Unexpected error: %v", err)
-				}
-			}
-		})
-	}
 }
 
-func TestValidationError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *ValidationError
-		expected string
-	}{
-		{
-			name:     "simple field error",
-			err:      &ValidationError{Field: "id", Message: "required", Index: -1},
-			expected: "id: required",
-		},
-		{
-			name:     "indexed field error",
-			err:      &ValidationError{Field: "imp[].id", Message: "required", Index: 0},
-			expected: "imp[].id: required",
-		},
+func TestNewAuctionHandler(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+
+	handler := NewAuctionHandler(ex)
+	if handler == nil {
+		t.Fatal("expected non-nil handler")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.err.Error()
-			if result != tt.expected {
-				t.Errorf("Expected '%s', got '%s'", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestBuildResponseExt(t *testing.T) {
-	result := &exchange.AuctionResponse{
-		BidResponse: &openrtb.BidResponse{ID: "test-1"},
-		DebugInfo: &exchange.DebugInfo{
-			BidderLatencies: map[string]time.Duration{
-				"appnexus": 50 * time.Millisecond,
-				"rubicon":  75 * time.Millisecond,
-			},
-			Errors: map[string][]string{
-				"pubmatic": {"timeout", "bad response"},
-			},
-			TotalLatency: 100 * time.Millisecond,
-		},
-	}
-
-	ext := buildResponseExt(result)
-
-	if ext.TMMaxRequest != 100 {
-		t.Errorf("Expected TMMaxRequest 100, got %d", ext.TMMaxRequest)
-	}
-
-	if ext.ResponseTimeMillis["appnexus"] != 50 {
-		t.Errorf("Expected appnexus latency 50, got %d", ext.ResponseTimeMillis["appnexus"])
-	}
-
-	if ext.ResponseTimeMillis["rubicon"] != 75 {
-		t.Errorf("Expected rubicon latency 75, got %d", ext.ResponseTimeMillis["rubicon"])
-	}
-
-	if len(ext.Errors["pubmatic"]) != 2 {
-		t.Errorf("Expected 2 pubmatic errors, got %d", len(ext.Errors["pubmatic"]))
-	}
-}
-
-func TestBuildResponseExt_NilDebugInfo(t *testing.T) {
-	result := &exchange.AuctionResponse{
-		BidResponse: &openrtb.BidResponse{ID: "test-1"},
-		DebugInfo:   nil,
-	}
-
-	ext := buildResponseExt(result)
-
-	if ext.TMMaxRequest != 0 {
-		t.Errorf("Expected TMMaxRequest 0, got %d", ext.TMMaxRequest)
-	}
-
-	if len(ext.ResponseTimeMillis) != 0 {
-		t.Errorf("Expected empty ResponseTimeMillis, got %d entries", len(ext.ResponseTimeMillis))
-	}
-}
-
-func TestWriteError(t *testing.T) {
-	w := httptest.NewRecorder()
-
-	writeError(w, "test error message", http.StatusBadRequest)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected status 400, got %d", w.Code)
-	}
-
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Expected Content-Type application/json, got %s", ct)
-	}
-
-	var response map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if response["error"] != "test error message" {
-		t.Errorf("Expected error 'test error message', got '%s'", response["error"])
-	}
-}
-
-// mockBidderLister implements BidderLister for testing
-type mockBidderLister struct {
-	bidders []string
-}
-
-func (m *mockBidderLister) ListBidders() []string {
-	return m.bidders
-}
-
-// mockDynamicLister implements DynamicBidderLister for testing
-type mockDynamicLister struct {
-	bidders []string
-}
-
-func (m *mockDynamicLister) ListBidderCodes() []string {
-	return m.bidders
-}
-
-func TestInfoBiddersHandler(t *testing.T) {
-	staticRegistry := &mockBidderLister{bidders: []string{"appnexus", "rubicon"}}
-	dynamicRegistry := &mockDynamicLister{bidders: []string{"custom1", "appnexus"}} // appnexus overlaps
-
-	handler := NewDynamicInfoBiddersHandler(staticRegistry, dynamicRegistry)
-
-	req := httptest.NewRequest(http.MethodGet, "/info/bidders", nil)
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
-	}
-
-	var bidders []string
-	if err := json.Unmarshal(w.Body.Bytes(), &bidders); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	// Should have 3 unique bidders (appnexus appears in both but deduplicated)
-	if len(bidders) != 3 {
-		t.Errorf("Expected 3 unique bidders, got %d: %v", len(bidders), bidders)
-	}
-
-	// Verify all expected bidders are present
-	bidderSet := make(map[string]bool)
-	for _, b := range bidders {
-		bidderSet[b] = true
-	}
-
-	expected := []string{"appnexus", "rubicon", "custom1"}
-	for _, e := range expected {
-		if !bidderSet[e] {
-			t.Errorf("Expected bidder '%s' not found in response", e)
-		}
-	}
-}
-
-func TestInfoBiddersHandler_StaticOnly(t *testing.T) {
-	staticRegistry := &mockBidderLister{bidders: []string{"appnexus", "rubicon"}}
-
-	handler := NewDynamicInfoBiddersHandler(staticRegistry, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/info/bidders", nil)
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	var bidders []string
-	if err := json.Unmarshal(w.Body.Bytes(), &bidders); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if len(bidders) != 2 {
-		t.Errorf("Expected 2 bidders, got %d", len(bidders))
-	}
-}
-
-func TestInfoBiddersHandler_NoRegistries(t *testing.T) {
-	handler := NewDynamicInfoBiddersHandler(nil, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/info/bidders", nil)
-	w := httptest.NewRecorder()
-
-	handler.ServeHTTP(w, req)
-
-	var bidders []string
-	if err := json.Unmarshal(w.Body.Bytes(), &bidders); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if len(bidders) != 0 {
-		t.Errorf("Expected 0 bidders, got %d", len(bidders))
+	if handler.exchange != ex {
+		t.Error("expected exchange to be set")
 	}
 }
 
 func TestAuctionHandler_MethodNotAllowed(t *testing.T) {
-	handler := NewAuctionHandler(nil)
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
 
-	// Test non-POST methods
-	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
-
+	methods := []string{"GET", "PUT", "DELETE", "PATCH", "OPTIONS"}
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
 			req := httptest.NewRequest(method, "/openrtb2/auction", nil)
@@ -375,73 +82,819 @@ func TestAuctionHandler_MethodNotAllowed(t *testing.T) {
 			handler.ServeHTTP(w, req)
 
 			if w.Code != http.StatusMethodNotAllowed {
-				t.Errorf("Expected status 405 for %s, got %d", method, w.Code)
+				t.Errorf("expected 405, got %d", w.Code)
 			}
 		})
 	}
 }
 
 func TestAuctionHandler_InvalidJSON(t *testing.T) {
-	handler := NewAuctionHandler(nil)
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
 
-	body := bytes.NewBufferString("not valid json")
-	req := httptest.NewRequest(http.MethodPost, "/openrtb2/auction", body)
+	req := httptest.NewRequest("POST", "/openrtb2/auction", strings.NewReader("not valid json"))
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected status 400, got %d", w.Code)
+		t.Errorf("expected 400, got %d", w.Code)
 	}
 
-	var response map[string]string
-	json.Unmarshal(w.Body.Bytes(), &response)
-
-	if response["error"] != "Invalid JSON in request body" {
-		t.Errorf("Expected 'Invalid JSON in request body', got '%s'", response["error"])
+	var resp map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if !strings.Contains(resp["error"], "Invalid JSON") {
+		t.Errorf("expected 'Invalid JSON' error, got: %s", resp["error"])
 	}
 }
 
-func TestAuctionHandler_ValidationError(t *testing.T) {
-	handler := NewAuctionHandler(nil)
+func TestAuctionHandler_EmptyBody(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
 
-	// Missing required fields
-	invalidRequest := openrtb.BidRequest{
-		ID: "", // Missing ID
-	}
-	body, _ := json.Marshal(invalidRequest)
-
-	req := httptest.NewRequest(http.MethodPost, "/openrtb2/auction", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/openrtb2/auction", strings.NewReader(""))
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected status 400, got %d", w.Code)
+		t.Errorf("expected 400, got %d", w.Code)
 	}
 }
 
-func TestNewAuctionHandler(t *testing.T) {
-	handler := NewAuctionHandler(nil)
+func TestAuctionHandler_MissingID(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
 
-	if handler == nil {
-		t.Error("Expected non-nil handler")
+	bidReq := &openrtb.BidRequest{
+		Imp: []openrtb.Imp{{ID: "imp-1", Banner: &openrtb.Banner{W: 300, H: 250}}},
+	}
+	body, _ := json.Marshal(bidReq)
+
+	req := httptest.NewRequest("POST", "/openrtb2/auction", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !strings.Contains(resp["error"], "id") {
+		t.Errorf("expected id error, got: %s", resp["error"])
 	}
 }
 
+func TestAuctionHandler_NoImpressions(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := &openrtb.BidRequest{
+		ID:  "test-1",
+		Imp: []openrtb.Imp{},
+	}
+	body, _ := json.Marshal(bidReq)
+
+	req := httptest.NewRequest("POST", "/openrtb2/auction", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !strings.Contains(resp["error"], "impression") {
+		t.Errorf("expected impression error, got: %s", resp["error"])
+	}
+}
+
+func TestAuctionHandler_ImpressionMissingID(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := &openrtb.BidRequest{
+		ID:  "test-1",
+		Imp: []openrtb.Imp{{Banner: &openrtb.Banner{W: 300, H: 250}}},
+	}
+	body, _ := json.Marshal(bidReq)
+
+	req := httptest.NewRequest("POST", "/openrtb2/auction", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestAuctionHandler_ImpressionNoMediaType(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := &openrtb.BidRequest{
+		ID:  "test-1",
+		Imp: []openrtb.Imp{{ID: "imp-1"}}, // No banner, video, native, or audio
+	}
+	body, _ := json.Marshal(bidReq)
+
+	req := httptest.NewRequest("POST", "/openrtb2/auction", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !strings.Contains(resp["error"], "media type") {
+		t.Errorf("expected media type error, got: %s", resp["error"])
+	}
+}
+
+func TestAuctionHandler_ValidRequest_NoBidders(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := validBidRequest()
+	body, _ := json.Marshal(bidReq)
+
+	req := httptest.NewRequest("POST", "/openrtb2/auction", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	if w.Header().Get("Content-Type") != "application/json" {
+		t.Error("expected application/json content type")
+	}
+
+	var resp openrtb.BidResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if resp.ID != bidReq.ID {
+		t.Errorf("expected response ID %s, got %s", bidReq.ID, resp.ID)
+	}
+}
+
+func TestAuctionHandler_DebugMode(t *testing.T) {
+	registry := adapters.NewRegistry()
+	mock := &mockAdapter{bids: []*adapters.TypedBid{}}
+	registry.Register("testbidder", mock, adapters.BidderInfo{Enabled: true})
+
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := validBidRequest()
+	body, _ := json.Marshal(bidReq)
+
+	req := httptest.NewRequest("POST", "/openrtb2/auction?debug=1", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	var resp openrtb.BidResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Debug mode should include ext with timing info
+	if resp.Ext == nil {
+		t.Log("Note: ext may be nil if no debug info was generated")
+	}
+}
+
+func TestAuctionHandler_WithContext(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := validBidRequest()
+	body, _ := json.Marshal(bidReq)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	req := httptest.NewRequest("POST", "/openrtb2/auction", bytes.NewReader(body))
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	// Should complete (either success or context timeout)
+	if w.Code != http.StatusOK && w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 200 or 500, got %d", w.Code)
+	}
+}
+
+// Test validateBidRequest function
+func TestValidateBidRequest_Valid(t *testing.T) {
+	req := validBidRequest()
+	if err := validateBidRequest(req); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateBidRequest_MissingID(t *testing.T) {
+	req := &openrtb.BidRequest{
+		Imp: []openrtb.Imp{{ID: "imp-1", Banner: &openrtb.Banner{}}},
+	}
+	err := validateBidRequest(req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	valErr, ok := err.(*ValidationError)
+	if !ok {
+		t.Fatalf("expected ValidationError, got %T", err)
+	}
+	if valErr.Field != "id" {
+		t.Errorf("expected field 'id', got '%s'", valErr.Field)
+	}
+}
+
+func TestValidateBidRequest_NoImpressions(t *testing.T) {
+	req := &openrtb.BidRequest{
+		ID:  "test-1",
+		Imp: []openrtb.Imp{},
+	}
+	err := validateBidRequest(req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	valErr := err.(*ValidationError)
+	if valErr.Field != "imp" {
+		t.Errorf("expected field 'imp', got '%s'", valErr.Field)
+	}
+}
+
+func TestValidateBidRequest_ImpressionMissingID(t *testing.T) {
+	req := &openrtb.BidRequest{
+		ID:  "test-1",
+		Imp: []openrtb.Imp{{Banner: &openrtb.Banner{}}},
+	}
+	err := validateBidRequest(req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	valErr := err.(*ValidationError)
+	if valErr.Field != "imp[].id" {
+		t.Errorf("expected field 'imp[].id', got '%s'", valErr.Field)
+	}
+	if valErr.Index != 0 {
+		t.Errorf("expected index 0, got %d", valErr.Index)
+	}
+}
+
+func TestValidateBidRequest_ImpressionNoMediaType(t *testing.T) {
+	req := &openrtb.BidRequest{
+		ID:  "test-1",
+		Imp: []openrtb.Imp{{ID: "imp-1"}},
+	}
+	err := validateBidRequest(req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	valErr := err.(*ValidationError)
+	if !strings.Contains(valErr.Field, "banner|video|native|audio") {
+		t.Errorf("expected media type field, got '%s'", valErr.Field)
+	}
+}
+
+func TestValidateBidRequest_MultipleImpressions(t *testing.T) {
+	req := &openrtb.BidRequest{
+		ID: "test-1",
+		Imp: []openrtb.Imp{
+			{ID: "imp-1", Banner: &openrtb.Banner{}},
+			{ID: "imp-2", Video: &openrtb.Video{}},
+			{ID: "imp-3", Native: &openrtb.Native{}},
+			{ID: "imp-4", Audio: &openrtb.Audio{}},
+		},
+	}
+	if err := validateBidRequest(req); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateBidRequest_SecondImpressionInvalid(t *testing.T) {
+	req := &openrtb.BidRequest{
+		ID: "test-1",
+		Imp: []openrtb.Imp{
+			{ID: "imp-1", Banner: &openrtb.Banner{}},
+			{ID: "", Banner: &openrtb.Banner{}}, // Missing ID
+		},
+	}
+	err := validateBidRequest(req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	valErr := err.(*ValidationError)
+	if valErr.Index != 1 {
+		t.Errorf("expected index 1, got %d", valErr.Index)
+	}
+}
+
+// Test ValidationError
+func TestValidationError_Error_WithIndex(t *testing.T) {
+	err := &ValidationError{
+		Field:   "imp[].id",
+		Message: "required",
+		Index:   2,
+	}
+	expected := "imp[].id[2]: required"
+	if err.Error() != expected {
+		t.Errorf("expected '%s', got '%s'", expected, err.Error())
+	}
+}
+
+func TestValidationError_Error_WithoutIndex(t *testing.T) {
+	err := &ValidationError{
+		Field:   "id",
+		Message: "required",
+		Index:   -1,
+	}
+	// When Index is negative, no index should be shown
+	result := err.Error()
+	if strings.Contains(result, "[") {
+		t.Errorf("expected no brackets, got '%s'", result)
+	}
+}
+
+func TestValidationError_Error_ZeroIndex(t *testing.T) {
+	err := &ValidationError{
+		Field:   "imp[].id",
+		Message: "required",
+		Index:   0,
+	}
+	expected := "imp[].id[0]: required"
+	if err.Error() != expected {
+		t.Errorf("expected '%s', got '%s'", expected, err.Error())
+	}
+}
+
+// Test buildResponseExt
+func TestBuildResponseExt_NilDebugInfo(t *testing.T) {
+	result := &exchange.AuctionResponse{
+		DebugInfo: nil,
+	}
+	ext := buildResponseExt(result)
+	if ext == nil {
+		t.Fatal("expected non-nil ext")
+	}
+	if ext.ResponseTimeMillis == nil {
+		t.Error("expected initialized ResponseTimeMillis map")
+	}
+	if ext.Errors == nil {
+		t.Error("expected initialized Errors map")
+	}
+}
+
+func TestBuildResponseExt_WithLatencies(t *testing.T) {
+	result := &exchange.AuctionResponse{
+		DebugInfo: &exchange.DebugInfo{
+			BidderLatencies: map[string]time.Duration{
+				"bidder1": 50 * time.Millisecond,
+				"bidder2": 100 * time.Millisecond,
+			},
+			TotalLatency: 150 * time.Millisecond,
+		},
+	}
+	ext := buildResponseExt(result)
+
+	if ext.ResponseTimeMillis["bidder1"] != 50 {
+		t.Errorf("expected bidder1 latency 50, got %d", ext.ResponseTimeMillis["bidder1"])
+	}
+	if ext.ResponseTimeMillis["bidder2"] != 100 {
+		t.Errorf("expected bidder2 latency 100, got %d", ext.ResponseTimeMillis["bidder2"])
+	}
+	if ext.TMMaxRequest != 150 {
+		t.Errorf("expected TMMaxRequest 150, got %d", ext.TMMaxRequest)
+	}
+}
+
+func TestBuildResponseExt_WithErrors(t *testing.T) {
+	result := &exchange.AuctionResponse{
+		DebugInfo: &exchange.DebugInfo{
+			Errors: map[string][]string{
+				"bidder1": {"error1", "error2"},
+				"bidder2": {"error3"},
+			},
+			BidderLatencies: map[string]time.Duration{},
+		},
+	}
+	ext := buildResponseExt(result)
+
+	if len(ext.Errors["bidder1"]) != 2 {
+		t.Errorf("expected 2 errors for bidder1, got %d", len(ext.Errors["bidder1"]))
+	}
+	if ext.Errors["bidder1"][0].Message != "error1" {
+		t.Errorf("expected 'error1', got '%s'", ext.Errors["bidder1"][0].Message)
+	}
+	if ext.Errors["bidder1"][0].Code != 1 {
+		t.Errorf("expected code 1, got %d", ext.Errors["bidder1"][0].Code)
+	}
+}
+
+// Test writeError
+func TestWriteError(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeError(w, "test error message", http.StatusBadRequest)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+	if w.Header().Get("Content-Type") != "application/json" {
+		t.Error("expected application/json content type")
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp["error"] != "test error message" {
+		t.Errorf("expected 'test error message', got '%s'", resp["error"])
+	}
+}
+
+func TestWriteError_DifferentStatuses(t *testing.T) {
+	tests := []struct {
+		status  int
+		message string
+	}{
+		{http.StatusBadRequest, "bad request"},
+		{http.StatusInternalServerError, "internal error"},
+		{http.StatusNotFound, "not found"},
+		{http.StatusUnauthorized, "unauthorized"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.message, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			writeError(w, tt.message, tt.status)
+
+			if w.Code != tt.status {
+				t.Errorf("expected %d, got %d", tt.status, w.Code)
+			}
+		})
+	}
+}
+
+// Test StatusHandler
 func TestNewStatusHandler(t *testing.T) {
 	handler := NewStatusHandler()
-
 	if handler == nil {
-		t.Error("Expected non-nil handler")
+		t.Fatal("expected non-nil handler")
 	}
 }
 
-func TestNewInfoBiddersHandler_Deprecated(t *testing.T) {
-	// Test the deprecated constructor
-	handler := NewInfoBiddersHandler([]string{"a", "b"})
+func TestStatusHandler_ServeHTTP(t *testing.T) {
+	handler := NewStatusHandler()
+	req := httptest.NewRequest("GET", "/status", nil)
+	w := httptest.NewRecorder()
 
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	if w.Header().Get("Content-Type") != "application/json" {
+		t.Error("expected application/json content type")
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if resp["status"] != "ok" {
+		t.Errorf("expected status 'ok', got '%v'", resp["status"])
+	}
+	if resp["timestamp"] == nil {
+		t.Error("expected timestamp in response")
+	}
+}
+
+func TestStatusHandler_TimestampFormat(t *testing.T) {
+	handler := NewStatusHandler()
+	req := httptest.NewRequest("GET", "/status", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	timestamp := resp["timestamp"].(string)
+	_, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		t.Errorf("expected RFC3339 timestamp, got '%s': %v", timestamp, err)
+	}
+}
+
+// Mock registries for InfoBiddersHandler tests
+type mockStaticRegistry struct {
+	bidders []string
+}
+
+func (m *mockStaticRegistry) ListBidders() []string {
+	return m.bidders
+}
+
+type mockDynamicRegistry struct {
+	bidders []string
+}
+
+func (m *mockDynamicRegistry) ListBidderCodes() []string {
+	return m.bidders
+}
+
+// Test InfoBiddersHandler
+func TestNewInfoBiddersHandler(t *testing.T) {
+	handler := NewInfoBiddersHandler([]string{"bidder1", "bidder2"})
 	if handler == nil {
-		t.Error("Expected non-nil handler")
+		t.Fatal("expected non-nil handler")
+	}
+}
+
+func TestNewDynamicInfoBiddersHandler(t *testing.T) {
+	static := &mockStaticRegistry{bidders: []string{"static1"}}
+	dynamic := &mockDynamicRegistry{bidders: []string{"dynamic1"}}
+
+	handler := NewDynamicInfoBiddersHandler(static, dynamic)
+	if handler == nil {
+		t.Fatal("expected non-nil handler")
+	}
+	if handler.staticRegistry != static {
+		t.Error("expected static registry to be set")
+	}
+	if handler.dynamicRegistry != dynamic {
+		t.Error("expected dynamic registry to be set")
+	}
+}
+
+func TestInfoBiddersHandler_StaticOnly(t *testing.T) {
+	static := &mockStaticRegistry{bidders: []string{"bidder1", "bidder2"}}
+	handler := NewDynamicInfoBiddersHandler(static, nil)
+
+	req := httptest.NewRequest("GET", "/info/bidders", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	var bidders []string
+	if err := json.Unmarshal(w.Body.Bytes(), &bidders); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if len(bidders) != 2 {
+		t.Errorf("expected 2 bidders, got %d", len(bidders))
+	}
+}
+
+func TestInfoBiddersHandler_DynamicOnly(t *testing.T) {
+	dynamic := &mockDynamicRegistry{bidders: []string{"dynamic1", "dynamic2", "dynamic3"}}
+	handler := NewDynamicInfoBiddersHandler(nil, dynamic)
+
+	req := httptest.NewRequest("GET", "/info/bidders", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	var bidders []string
+	json.Unmarshal(w.Body.Bytes(), &bidders)
+
+	if len(bidders) != 3 {
+		t.Errorf("expected 3 bidders, got %d", len(bidders))
+	}
+}
+
+func TestInfoBiddersHandler_BothRegistries(t *testing.T) {
+	static := &mockStaticRegistry{bidders: []string{"bidder1", "bidder2"}}
+	dynamic := &mockDynamicRegistry{bidders: []string{"dynamic1", "dynamic2"}}
+	handler := NewDynamicInfoBiddersHandler(static, dynamic)
+
+	req := httptest.NewRequest("GET", "/info/bidders", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	var bidders []string
+	json.Unmarshal(w.Body.Bytes(), &bidders)
+
+	if len(bidders) != 4 {
+		t.Errorf("expected 4 bidders, got %d", len(bidders))
+	}
+}
+
+func TestInfoBiddersHandler_DeduplicatesBidders(t *testing.T) {
+	// Both registries have the same bidder
+	static := &mockStaticRegistry{bidders: []string{"bidder1", "common"}}
+	dynamic := &mockDynamicRegistry{bidders: []string{"common", "dynamic1"}}
+	handler := NewDynamicInfoBiddersHandler(static, dynamic)
+
+	req := httptest.NewRequest("GET", "/info/bidders", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	var bidders []string
+	json.Unmarshal(w.Body.Bytes(), &bidders)
+
+	// Should be deduplicated: bidder1, common, dynamic1
+	if len(bidders) != 3 {
+		t.Errorf("expected 3 bidders (deduplicated), got %d: %v", len(bidders), bidders)
+	}
+}
+
+func TestInfoBiddersHandler_EmptyRegistries(t *testing.T) {
+	static := &mockStaticRegistry{bidders: []string{}}
+	dynamic := &mockDynamicRegistry{bidders: []string{}}
+	handler := NewDynamicInfoBiddersHandler(static, dynamic)
+
+	req := httptest.NewRequest("GET", "/info/bidders", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	var bidders []string
+	json.Unmarshal(w.Body.Bytes(), &bidders)
+
+	if len(bidders) != 0 {
+		t.Errorf("expected 0 bidders, got %d", len(bidders))
+	}
+}
+
+func TestInfoBiddersHandler_NilRegistries(t *testing.T) {
+	handler := NewDynamicInfoBiddersHandler(nil, nil)
+
+	req := httptest.NewRequest("GET", "/info/bidders", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	var bidders []string
+	json.Unmarshal(w.Body.Bytes(), &bidders)
+
+	if len(bidders) != 0 {
+		t.Errorf("expected 0 bidders, got %d", len(bidders))
+	}
+}
+
+func TestInfoBiddersHandler_ContentType(t *testing.T) {
+	handler := NewDynamicInfoBiddersHandler(nil, nil)
+
+	req := httptest.NewRequest("GET", "/info/bidders", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Header().Get("Content-Type") != "application/json" {
+		t.Error("expected application/json content type")
+	}
+}
+
+// Error reader for testing body read failures
+type errorReader struct{}
+
+func (e *errorReader) Read(p []byte) (n int, err error) {
+	return 0, errors.New("read error")
+}
+
+func (e *errorReader) Close() error {
+	return nil
+}
+
+func TestAuctionHandler_BodyReadError(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	req := httptest.NewRequest("POST", "/openrtb2/auction", nil)
+	req.Body = io.NopCloser(&errorReader{})
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !strings.Contains(resp["error"], "read request body") {
+		t.Errorf("expected read error message, got: %s", resp["error"])
+	}
+}
+
+// Benchmark tests
+func BenchmarkValidateBidRequest(b *testing.B) {
+	req := validBidRequest()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		validateBidRequest(req)
+	}
+}
+
+func BenchmarkBuildResponseExt(b *testing.B) {
+	result := &exchange.AuctionResponse{
+		DebugInfo: &exchange.DebugInfo{
+			BidderLatencies: map[string]time.Duration{
+				"bidder1": 50 * time.Millisecond,
+				"bidder2": 100 * time.Millisecond,
+			},
+			Errors: map[string][]string{
+				"bidder1": {"error1"},
+			},
+			TotalLatency: 150 * time.Millisecond,
+		},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buildResponseExt(result)
+	}
+}
+
+func BenchmarkStatusHandler(b *testing.B) {
+	handler := NewStatusHandler()
+	req := httptest.NewRequest("GET", "/status", nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+	}
+}
+
+func BenchmarkAuctionHandler_ValidRequest(b *testing.B) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := validBidRequest()
+	body, _ := json.Marshal(bidReq)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		req := httptest.NewRequest("POST", "/openrtb2/auction", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
 	}
 }

@@ -11,12 +11,12 @@ import (
 type BidderErrorCode string
 
 const (
-	ErrorCodeMarshal     BidderErrorCode = "MARSHAL_ERROR"
-	ErrorCodeBadRequest  BidderErrorCode = "BAD_REQUEST"
-	ErrorCodeBadStatus   BidderErrorCode = "BAD_STATUS"
-	ErrorCodeParse       BidderErrorCode = "PARSE_ERROR"
-	ErrorCodeTimeout     BidderErrorCode = "TIMEOUT"
-	ErrorCodeConnection  BidderErrorCode = "CONNECTION_ERROR"
+	ErrorCodeMarshal    BidderErrorCode = "MARSHAL_ERROR"
+	ErrorCodeBadRequest BidderErrorCode = "BAD_REQUEST"
+	ErrorCodeBadStatus  BidderErrorCode = "BAD_STATUS"
+	ErrorCodeParse      BidderErrorCode = "PARSE_ERROR"
+	ErrorCodeTimeout    BidderErrorCode = "TIMEOUT"
+	ErrorCodeConnection BidderErrorCode = "CONNECTION_ERROR"
 )
 
 // BidderError represents a standardized adapter error

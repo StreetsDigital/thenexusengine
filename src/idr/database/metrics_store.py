@@ -9,10 +9,19 @@ import hashlib
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional, Union
+from typing import Any
 
-from src.idr.database.redis_client import RedisMetricsClient, RealTimeMetrics, MockRedisClient, DEFAULT_SAMPLE_RATE
-from src.idr.database.timescale_client import TimescaleClient, BidderPerformance, MockTimescaleClient
+from src.idr.database.redis_client import (
+    DEFAULT_SAMPLE_RATE,
+    MockRedisClient,
+    RealTimeMetrics,
+    RedisMetricsClient,
+)
+from src.idr.database.timescale_client import (
+    BidderPerformance,
+    MockTimescaleClient,
+    TimescaleClient,
+)
 from src.idr.models.classified_request import ClassifiedRequest
 
 
@@ -24,6 +33,7 @@ class BidderMetricsSnapshot:
     Merges real-time (Redis) and historical (TimescaleDB) data
     with appropriate weighting based on sample size.
     """
+
     bidder_code: str
     timestamp: datetime
 
@@ -91,8 +101,8 @@ class MetricsStore:
 
     def __init__(
         self,
-        redis_client: Optional[Union[RedisMetricsClient, MockRedisClient]] = None,
-        timescale_client: Optional[Union[TimescaleClient, MockTimescaleClient]] = None,
+        redis_client: RedisMetricsClient | MockRedisClient | None = None,
+        timescale_client: TimescaleClient | MockTimescaleClient | None = None,
     ):
         self.redis = redis_client
         self.timescale = timescale_client
@@ -108,7 +118,7 @@ class MetricsStore:
         timescale_user: str = "idr",
         timescale_password: str = "",
         use_mocks: bool = False,
-        redis_sample_rate: Optional[float] = None,
+        redis_sample_rate: float | None = None,
     ) -> "MetricsStore":
         """
         Factory method to create a configured MetricsStore.
@@ -120,7 +130,9 @@ class MetricsStore:
         """
         # Get sample rate from env var if not specified
         if redis_sample_rate is None:
-            redis_sample_rate = float(os.getenv("REDIS_SAMPLE_RATE", str(DEFAULT_SAMPLE_RATE)))
+            redis_sample_rate = float(
+                os.getenv("REDIS_SAMPLE_RATE", str(DEFAULT_SAMPLE_RATE))
+            )
 
         if use_mocks:
             return cls(
@@ -181,10 +193,10 @@ class MetricsStore:
         request: ClassifiedRequest,
         latency_ms: float,
         had_bid: bool,
-        bid_cpm: Optional[float] = None,
+        bid_cpm: float | None = None,
         timed_out: bool = False,
         had_error: bool = False,
-        floor_price: Optional[float] = None,
+        floor_price: float | None = None,
     ) -> None:
         """Record a bid request event to both stores."""
         context_hash = self._context_hash(request)
@@ -203,9 +215,8 @@ class MetricsStore:
 
         # Record to TimescaleDB (historical)
         if self.timescale:
-            cleared_floor = None
             if floor_price is not None and bid_cpm is not None:
-                cleared_floor = bid_cpm >= floor_price
+                pass
 
             self.timescale.record_bid_event(
                 auction_id=auction_id,
@@ -229,7 +240,7 @@ class MetricsStore:
         bidder_code: str,
         request: ClassifiedRequest,
         win_cpm: float,
-        clearing_price: Optional[float] = None,
+        clearing_price: float | None = None,
     ) -> None:
         """Record a win event."""
         context_hash = self._context_hash(request)
@@ -263,7 +274,7 @@ class MetricsStore:
     def get_metrics(
         self,
         bidder_code: str,
-        request: Optional[ClassifiedRequest] = None,
+        request: ClassifiedRequest | None = None,
     ) -> BidderMetricsSnapshot:
         """
         Get combined metrics for a bidder.
@@ -278,14 +289,14 @@ class MetricsStore:
         context_hash = self._context_hash(request) if request else None
 
         # Get real-time metrics from Redis
-        rt_metrics: Optional[RealTimeMetrics] = None
+        rt_metrics: RealTimeMetrics | None = None
         rt_p95: float = 0.0
         if self.redis:
             rt_metrics = self.redis.get_metrics(bidder_code, context_hash)
             rt_p95 = self.redis.get_p95_latency(bidder_code)
 
         # Get historical metrics from TimescaleDB
-        hist_metrics: Optional[BidderPerformance] = None
+        hist_metrics: BidderPerformance | None = None
         hist_p95: float = 0.0
         if self.timescale:
             hist_metrics = self.timescale.get_bidder_performance(
@@ -309,8 +320,8 @@ class MetricsStore:
     def _combine_metrics(
         self,
         bidder_code: str,
-        realtime: Optional[RealTimeMetrics],
-        historical: Optional[BidderPerformance],
+        realtime: RealTimeMetrics | None,
+        historical: BidderPerformance | None,
         rt_p95: float,
         hist_p95: float,
     ) -> BidderMetricsSnapshot:
@@ -396,7 +407,7 @@ class MetricsStore:
 
         if self.redis:
             try:
-                if hasattr(self.redis, 'get_stats'):
+                if hasattr(self.redis, "get_stats"):
                     status["redis"] = {"status": "connected", **self.redis.get_stats()}
                 else:
                     status["redis"] = {"status": "connected (mock)"}

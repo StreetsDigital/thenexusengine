@@ -7,20 +7,15 @@ inheritance chain: Ad Unit → Site → Publisher → Global.
 Child configurations inherit from parent and can override specific values.
 """
 
-import json
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
 from .feature_config import (
-    BidderSettings,
     ConfigLevel,
     FeatureConfig,
-    FeatureFlags,
-    FloorSettings,
     IDRSettings,
     PrivacySettings,
     RateLimitSettings,
@@ -92,7 +87,9 @@ def merge_configs(child: FeatureConfig, parent: FeatureConfig) -> FeatureConfig:
     )
 
 
-def to_resolved_config(config: FeatureConfig, resolution_chain: list[str]) -> ResolvedConfig:
+def to_resolved_config(
+    config: FeatureConfig, resolution_chain: list[str]
+) -> ResolvedConfig:
     """
     Convert a merged FeatureConfig to a fully resolved config.
 
@@ -118,89 +115,144 @@ def to_resolved_config(config: FeatureConfig, resolution_chain: list[str]) -> Re
         config_id=config.config_id,
         config_level=config.config_level,
         resolution_chain=resolution_chain,
-
         # IDR settings
-        idr_enabled=get_val(idr, 'enabled', default.idr) or True,
-        bypass_enabled=get_val(idr, 'bypass_enabled', default.idr) or False,
-        shadow_mode=get_val(idr, 'shadow_mode', default.idr) or False,
-        max_bidders=get_val(idr, 'max_bidders', default.idr) or 15,
-        min_score_threshold=get_val(idr, 'min_score_threshold', default.idr) or 25.0,
-        exploration_enabled=get_val(idr, 'exploration_enabled', default.idr) if get_val(idr, 'exploration_enabled', default.idr) is not None else True,
-        exploration_rate=get_val(idr, 'exploration_rate', default.idr) or 0.1,
-        exploration_slots=get_val(idr, 'exploration_slots', default.idr) or 2,
-        low_confidence_threshold=get_val(idr, 'low_confidence_threshold', default.idr) or 0.5,
-        exploration_confidence_threshold=get_val(idr, 'exploration_confidence_threshold', default.idr) or 0.3,
-        anchor_bidders_enabled=get_val(idr, 'anchor_bidders_enabled', default.idr) if get_val(idr, 'anchor_bidders_enabled', default.idr) is not None else True,
-        anchor_bidder_count=get_val(idr, 'anchor_bidder_count', default.idr) or 3,
-        custom_anchor_bidders=get_val(idr, 'custom_anchor_bidders', default.idr) or [],
-        diversity_enabled=get_val(idr, 'diversity_enabled', default.idr) if get_val(idr, 'diversity_enabled', default.idr) is not None else True,
-        diversity_categories=get_val(idr, 'diversity_categories', default.idr) or ['premium', 'mid_tier', 'video_specialist', 'native'],
-        scoring_weights=get_val(idr, 'scoring_weights', default.idr) or {
-            'win_rate': 0.25, 'bid_rate': 0.20, 'cpm': 0.15,
-            'floor_clearance': 0.15, 'latency': 0.10, 'recency': 0.10, 'id_match': 0.05,
+        idr_enabled=get_val(idr, "enabled", default.idr) or True,
+        bypass_enabled=get_val(idr, "bypass_enabled", default.idr) or False,
+        shadow_mode=get_val(idr, "shadow_mode", default.idr) or False,
+        max_bidders=get_val(idr, "max_bidders", default.idr) or 15,
+        min_score_threshold=get_val(idr, "min_score_threshold", default.idr) or 25.0,
+        exploration_enabled=get_val(idr, "exploration_enabled", default.idr)
+        if get_val(idr, "exploration_enabled", default.idr) is not None
+        else True,
+        exploration_rate=get_val(idr, "exploration_rate", default.idr) or 0.1,
+        exploration_slots=get_val(idr, "exploration_slots", default.idr) or 2,
+        low_confidence_threshold=get_val(idr, "low_confidence_threshold", default.idr)
+        or 0.5,
+        exploration_confidence_threshold=get_val(
+            idr, "exploration_confidence_threshold", default.idr
+        )
+        or 0.3,
+        anchor_bidders_enabled=get_val(idr, "anchor_bidders_enabled", default.idr)
+        if get_val(idr, "anchor_bidders_enabled", default.idr) is not None
+        else True,
+        anchor_bidder_count=get_val(idr, "anchor_bidder_count", default.idr) or 3,
+        custom_anchor_bidders=get_val(idr, "custom_anchor_bidders", default.idr) or [],
+        diversity_enabled=get_val(idr, "diversity_enabled", default.idr)
+        if get_val(idr, "diversity_enabled", default.idr) is not None
+        else True,
+        diversity_categories=get_val(idr, "diversity_categories", default.idr)
+        or ["premium", "mid_tier", "video_specialist", "native"],
+        scoring_weights=get_val(idr, "scoring_weights", default.idr)
+        or {
+            "win_rate": 0.25,
+            "bid_rate": 0.20,
+            "cpm": 0.15,
+            "floor_clearance": 0.15,
+            "latency": 0.10,
+            "recency": 0.10,
+            "id_match": 0.05,
         },
-        latency_excellent_ms=get_val(idr, 'latency_excellent_ms', default.idr) or 100,
-        latency_poor_ms=get_val(idr, 'latency_poor_ms', default.idr) or 500,
-        selection_timeout_ms=get_val(idr, 'selection_timeout_ms', default.idr) or 50,
-
+        latency_excellent_ms=get_val(idr, "latency_excellent_ms", default.idr) or 100,
+        latency_poor_ms=get_val(idr, "latency_poor_ms", default.idr) or 500,
+        selection_timeout_ms=get_val(idr, "selection_timeout_ms", default.idr) or 50,
         # Privacy settings
-        privacy_enabled=get_val(privacy, 'privacy_enabled', default.privacy) if get_val(privacy, 'privacy_enabled', default.privacy) is not None else True,
-        privacy_strict_mode=get_val(privacy, 'privacy_strict_mode', default.privacy) or False,
-        gdpr_applies=get_val(privacy, 'gdpr_applies', default.privacy) if get_val(privacy, 'gdpr_applies', default.privacy) is not None else True,
-        ccpa_applies=get_val(privacy, 'ccpa_applies', default.privacy) if get_val(privacy, 'ccpa_applies', default.privacy) is not None else True,
-        coppa_applies=get_val(privacy, 'coppa_applies', default.privacy) or False,
-        require_consent=get_val(privacy, 'require_consent', default.privacy) if get_val(privacy, 'require_consent', default.privacy) is not None else True,
-        allow_legitimate_interest=get_val(privacy, 'allow_legitimate_interest', default.privacy) if get_val(privacy, 'allow_legitimate_interest', default.privacy) is not None else True,
-
+        privacy_enabled=get_val(privacy, "privacy_enabled", default.privacy)
+        if get_val(privacy, "privacy_enabled", default.privacy) is not None
+        else True,
+        privacy_strict_mode=get_val(privacy, "privacy_strict_mode", default.privacy)
+        or False,
+        gdpr_applies=get_val(privacy, "gdpr_applies", default.privacy)
+        if get_val(privacy, "gdpr_applies", default.privacy) is not None
+        else True,
+        ccpa_applies=get_val(privacy, "ccpa_applies", default.privacy)
+        if get_val(privacy, "ccpa_applies", default.privacy) is not None
+        else True,
+        coppa_applies=get_val(privacy, "coppa_applies", default.privacy) or False,
+        require_consent=get_val(privacy, "require_consent", default.privacy)
+        if get_val(privacy, "require_consent", default.privacy) is not None
+        else True,
+        allow_legitimate_interest=get_val(
+            privacy, "allow_legitimate_interest", default.privacy
+        )
+        if get_val(privacy, "allow_legitimate_interest", default.privacy) is not None
+        else True,
         # Bidder settings
-        enabled_bidders=get_val(bidders, 'enabled_bidders', default.bidders) or [],
-        disabled_bidders=get_val(bidders, 'disabled_bidders', default.bidders) or [],
-        bidder_params=get_val(bidders, 'bidder_params', default.bidders) or {},
-        bidder_allowlist=get_val(bidders, 'bidder_allowlist', default.bidders) or [],
-        bidder_blocklist=get_val(bidders, 'bidder_blocklist', default.bidders) or [],
-
+        enabled_bidders=get_val(bidders, "enabled_bidders", default.bidders) or [],
+        disabled_bidders=get_val(bidders, "disabled_bidders", default.bidders) or [],
+        bidder_params=get_val(bidders, "bidder_params", default.bidders) or {},
+        bidder_allowlist=get_val(bidders, "bidder_allowlist", default.bidders) or [],
+        bidder_blocklist=get_val(bidders, "bidder_blocklist", default.bidders) or [],
         # Floor settings
-        floor_enabled=get_val(floors, 'floor_enabled', default.floors) if get_val(floors, 'floor_enabled', default.floors) is not None else True,
-        default_floor_price=get_val(floors, 'default_floor_price', default.floors) or 0.0,
-        floor_currency=get_val(floors, 'floor_currency', default.floors) or "USD",
-        dynamic_floors_enabled=get_val(floors, 'dynamic_floors_enabled', default.floors) or False,
-        floor_adjustment_factor=get_val(floors, 'floor_adjustment_factor', default.floors) or 1.0,
-        banner_floor=get_val(floors, 'banner_floor', default.floors) or 0.0,
-        video_floor=get_val(floors, 'video_floor', default.floors) or 0.0,
-        native_floor=get_val(floors, 'native_floor', default.floors) or 0.0,
-        audio_floor=get_val(floors, 'audio_floor', default.floors) or 0.0,
-
+        floor_enabled=get_val(floors, "floor_enabled", default.floors)
+        if get_val(floors, "floor_enabled", default.floors) is not None
+        else True,
+        default_floor_price=get_val(floors, "default_floor_price", default.floors)
+        or 0.0,
+        floor_currency=get_val(floors, "floor_currency", default.floors) or "USD",
+        dynamic_floors_enabled=get_val(floors, "dynamic_floors_enabled", default.floors)
+        or False,
+        floor_adjustment_factor=get_val(
+            floors, "floor_adjustment_factor", default.floors
+        )
+        or 1.0,
+        banner_floor=get_val(floors, "banner_floor", default.floors) or 0.0,
+        video_floor=get_val(floors, "video_floor", default.floors) or 0.0,
+        native_floor=get_val(floors, "native_floor", default.floors) or 0.0,
+        audio_floor=get_val(floors, "audio_floor", default.floors) or 0.0,
         # Rate limit settings
-        rate_limit_enabled=get_val(rate_limits, 'rate_limit_enabled', default.rate_limits) if get_val(rate_limits, 'rate_limit_enabled', default.rate_limits) is not None else True,
-        requests_per_second=get_val(rate_limits, 'requests_per_second', default.rate_limits) or 1000,
-        burst=get_val(rate_limits, 'burst', default.rate_limits) or 100,
-
+        rate_limit_enabled=get_val(
+            rate_limits, "rate_limit_enabled", default.rate_limits
+        )
+        if get_val(rate_limits, "rate_limit_enabled", default.rate_limits) is not None
+        else True,
+        requests_per_second=get_val(
+            rate_limits, "requests_per_second", default.rate_limits
+        )
+        or 1000,
+        burst=get_val(rate_limits, "burst", default.rate_limits) or 100,
         # Feature flags
-        prebid_enabled=get_val(features, 'prebid_enabled', default.features) if get_val(features, 'prebid_enabled', default.features) is not None else True,
-        header_bidding_enabled=get_val(features, 'header_bidding_enabled', default.features) if get_val(features, 'header_bidding_enabled', default.features) is not None else True,
-        lazy_loading_enabled=get_val(features, 'lazy_loading_enabled', default.features) or False,
-        refresh_enabled=get_val(features, 'refresh_enabled', default.features) or False,
-        refresh_interval_seconds=get_val(features, 'refresh_interval_seconds', default.features) or 30,
-        analytics_enabled=get_val(features, 'analytics_enabled', default.features) if get_val(features, 'analytics_enabled', default.features) is not None else True,
-        detailed_logging_enabled=get_val(features, 'detailed_logging_enabled', default.features) or False,
-        ab_testing_enabled=get_val(features, 'ab_testing_enabled', default.features) or False,
-        ab_test_group=get_val(features, 'ab_test_group', default.features) or "",
-        custom_features=get_val(features, 'custom_features', default.features) or {},
+        prebid_enabled=get_val(features, "prebid_enabled", default.features)
+        if get_val(features, "prebid_enabled", default.features) is not None
+        else True,
+        header_bidding_enabled=get_val(
+            features, "header_bidding_enabled", default.features
+        )
+        if get_val(features, "header_bidding_enabled", default.features) is not None
+        else True,
+        lazy_loading_enabled=get_val(features, "lazy_loading_enabled", default.features)
+        or False,
+        refresh_enabled=get_val(features, "refresh_enabled", default.features) or False,
+        refresh_interval_seconds=get_val(
+            features, "refresh_interval_seconds", default.features
+        )
+        or 30,
+        analytics_enabled=get_val(features, "analytics_enabled", default.features)
+        if get_val(features, "analytics_enabled", default.features) is not None
+        else True,
+        detailed_logging_enabled=get_val(
+            features, "detailed_logging_enabled", default.features
+        )
+        or False,
+        ab_testing_enabled=get_val(features, "ab_testing_enabled", default.features)
+        or False,
+        ab_test_group=get_val(features, "ab_test_group", default.features) or "",
+        custom_features=get_val(features, "custom_features", default.features) or {},
     )
 
 
 @dataclass
 class AdUnitConfig:
     """Configuration for an ad unit."""
+
     unit_id: str
     name: str = ""
     enabled: bool = True
     sizes: list[list[int]] = field(default_factory=list)
     media_type: str = "banner"
     position: str = "unknown"
-    floor_price: Optional[float] = None
+    floor_price: float | None = None
     floor_currency: str = "USD"
-    video: Optional[dict[str, Any]] = None
+    video: dict[str, Any] | None = None
 
     # Ad unit specific feature overrides
     features: FeatureConfig = field(default_factory=FeatureConfig)
@@ -227,6 +279,7 @@ class AdUnitConfig:
 @dataclass
 class SiteConfig:
     """Configuration for a site."""
+
     site_id: str
     domain: str
     name: str = ""
@@ -257,6 +310,7 @@ class PublisherConfigV2:
 
     Supports per-publisher, per-site, and per-ad-unit configuration.
     """
+
     publisher_id: str
     name: str
     enabled: bool = True
@@ -276,14 +330,14 @@ class PublisherConfigV2:
     # Publisher-level feature configuration
     features: FeatureConfig = field(default_factory=FeatureConfig)
 
-    def get_site(self, site_id: str) -> Optional[SiteConfig]:
+    def get_site(self, site_id: str) -> SiteConfig | None:
         """Get a site by ID."""
         for site in self.sites:
             if site.site_id == site_id:
                 return site
         return None
 
-    def get_ad_unit(self, site_id: str, unit_id: str) -> Optional[AdUnitConfig]:
+    def get_ad_unit(self, site_id: str, unit_id: str) -> AdUnitConfig | None:
         """Get an ad unit by site and unit ID."""
         site = self.get_site(site_id)
         if site:
@@ -320,8 +374,8 @@ class ConfigResolver:
 
     def __init__(
         self,
-        global_config: Optional[FeatureConfig] = None,
-        config_dir: Optional[str] = None,
+        global_config: FeatureConfig | None = None,
+        config_dir: str | None = None,
         persist: bool = True,
         auto_load: bool = True,
     ):
@@ -343,7 +397,7 @@ class ConfigResolver:
         self._resolved_cache: dict[str, ResolvedConfig] = {}
 
         # Config store for persistence
-        self._store: Optional[Any] = None
+        self._store: Any | None = None
 
         # Auto-load from Redis if enabled
         if auto_load and persist:
@@ -353,6 +407,7 @@ class ConfigResolver:
         """Get or create the config store."""
         if self._store is None:
             from .config_store import get_config_store
+
             self._store = get_config_store()
         return self._store
 
@@ -364,6 +419,7 @@ class ConfigResolver:
             self._publisher_configs = store.load_all_publishers()
         except Exception as e:
             import logging
+
             logging.warning(f"Failed to load configs from store: {e}")
 
     def set_global_config(self, config: FeatureConfig, save: bool = True) -> None:
@@ -595,7 +651,7 @@ class ConfigResolver:
         except Exception:
             return False
 
-    def get_publisher_config(self, publisher_id: str) -> Optional[PublisherConfigV2]:
+    def get_publisher_config(self, publisher_id: str) -> PublisherConfigV2 | None:
         """Get a publisher configuration."""
         return self._publisher_configs.get(publisher_id)
 
@@ -701,9 +757,9 @@ class ConfigResolver:
 
     def resolve(
         self,
-        publisher_id: Optional[str] = None,
-        site_id: Optional[str] = None,
-        unit_id: Optional[str] = None,
+        publisher_id: str | None = None,
+        site_id: str | None = None,
+        unit_id: str | None = None,
     ) -> ResolvedConfig:
         """
         Resolve configuration for any level.
@@ -721,10 +777,7 @@ class ConfigResolver:
 
     def _clear_publisher_cache(self, publisher_id: str) -> None:
         """Clear cache entries for a publisher and its children."""
-        keys_to_remove = [
-            k for k in self._resolved_cache
-            if publisher_id in k
-        ]
+        keys_to_remove = [k for k in self._resolved_cache if publisher_id in k]
         for key in keys_to_remove:
             del self._resolved_cache[key]
 
@@ -893,7 +946,9 @@ class ConfigResolver:
         }
 
         if config.ad_units:
-            data["ad_units"] = [self._serialize_ad_unit_config(u) for u in config.ad_units]
+            data["ad_units"] = [
+                self._serialize_ad_unit_config(u) for u in config.ad_units
+            ]
 
         if config.features.config_id:
             data["features"] = config.features.to_dict()
@@ -925,7 +980,7 @@ class ConfigResolver:
 
 
 # Global resolver instance
-_resolver: Optional[ConfigResolver] = None
+_resolver: ConfigResolver | None = None
 
 
 def get_config_resolver() -> ConfigResolver:
@@ -937,9 +992,9 @@ def get_config_resolver() -> ConfigResolver:
 
 
 def resolve_config(
-    publisher_id: Optional[str] = None,
-    site_id: Optional[str] = None,
-    unit_id: Optional[str] = None,
+    publisher_id: str | None = None,
+    site_id: str | None = None,
+    unit_id: str | None = None,
 ) -> ResolvedConfig:
     """
     Convenience function to resolve configuration.

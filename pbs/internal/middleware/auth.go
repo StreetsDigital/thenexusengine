@@ -15,6 +15,7 @@ import (
 
 // Redis key patterns (must match IDR's api_keys.py)
 const (
+	// #nosec G101 -- Redis key name, not a credential
 	RedisAPIKeysHash = "nexus:api_keys" // hash: api_key -> publisher_id
 )
 
@@ -41,7 +42,7 @@ func DefaultAuthConfig() *AuthConfig {
 		Enabled:     os.Getenv("AUTH_ENABLED") == "true",
 		APIKeys:     parseAPIKeys(os.Getenv("API_KEYS")),
 		HeaderName:  "X-API-Key",
-		BypassPaths: []string{"/health", "/status", "/metrics", "/info/bidders"},
+		BypassPaths: []string{"/health", "/status", "/metrics", "/info/bidders", "/cookie_sync", "/setuid", "/optout", "/openrtb2/auction"},
 		RedisURL:    redisURL,
 		UseRedis:    redisURL != "" && os.Getenv("AUTH_USE_REDIS") != "false",
 	}
@@ -112,18 +113,21 @@ func (a *Auth) SetRedisClient(client RedisClient) {
 // Middleware returns the authentication middleware handler
 func (a *Auth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Copy all needed config fields while holding the lock to prevent data race
 		a.mu.RLock()
-		config := a.config
+		enabled := a.config.Enabled
+		bypassPaths := a.config.BypassPaths
+		headerName := a.config.HeaderName
 		a.mu.RUnlock()
 
 		// Skip auth if disabled
-		if !config.Enabled {
+		if !enabled {
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		// Check bypass paths
-		for _, path := range config.BypassPaths {
+		for _, path := range bypassPaths {
 			if strings.HasPrefix(r.URL.Path, path) {
 				next.ServeHTTP(w, r)
 				return
@@ -131,7 +135,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		}
 
 		// Get API key from header
-		apiKey := r.Header.Get(config.HeaderName)
+		apiKey := r.Header.Get(headerName)
 		if apiKey == "" {
 			// Also check Authorization header with Bearer scheme
 			authHeader := r.Header.Get("Authorization")

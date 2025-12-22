@@ -14,7 +14,6 @@ instead of assuming consent when the string is valid.
 import logging
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional
 
 # P0-1: Import IAB TCF library for proper consent parsing
 try:
@@ -29,29 +28,31 @@ logger = logging.getLogger(__name__)
 
 class PrivacyRegulation(Enum):
     """Privacy regulations supported by the IDR."""
-    GDPR = auto()      # EU General Data Protection Regulation
-    CCPA = auto()      # California Consumer Privacy Act
-    CPRA = auto()      # California Privacy Rights Act (supersedes CCPA)
-    LGPD = auto()      # Brazil Lei Geral de Proteção de Dados
-    PIPL = auto()      # China Personal Information Protection Law
+
+    GDPR = auto()  # EU General Data Protection Regulation
+    CCPA = auto()  # California Consumer Privacy Act
+    CPRA = auto()  # California Privacy Rights Act (supersedes CCPA)
+    LGPD = auto()  # Brazil Lei Geral de Proteção de Dados
+    PIPL = auto()  # China Personal Information Protection Law
     VIRGINIA = auto()  # Virginia Consumer Data Protection Act
     COLORADO = auto()  # Colorado Privacy Act
     CONNECTICUT = auto()  # Connecticut Data Privacy Act
-    UTAH = auto()      # Utah Consumer Privacy Act
+    UTAH = auto()  # Utah Consumer Privacy Act
 
 
 # TCF v2 Purpose IDs
 class TCFPurpose(Enum):
     """IAB TCF v2 Purpose definitions."""
-    STORE_ACCESS = 1           # Store and/or access information on a device
-    BASIC_ADS = 2              # Select basic ads
-    PERSONALIZED_ADS = 3       # Create a personalised ads profile
-    PERSONALIZED_CONTENT = 4   # Select personalised content
-    AD_MEASUREMENT = 5         # Create a personalised content profile
-    CONTENT_MEASUREMENT = 6    # Measure ad performance
-    MARKET_RESEARCH = 7        # Measure content performance
-    PRODUCT_DEVELOPMENT = 8    # Understand audiences through statistics
-    SPECIAL_FEATURE_GEO = 9    # Develop and improve products
+
+    STORE_ACCESS = 1  # Store and/or access information on a device
+    BASIC_ADS = 2  # Select basic ads
+    PERSONALIZED_ADS = 3  # Create a personalised ads profile
+    PERSONALIZED_CONTENT = 4  # Select personalised content
+    AD_MEASUREMENT = 5  # Create a personalised content profile
+    CONTENT_MEASUREMENT = 6  # Measure ad performance
+    MARKET_RESEARCH = 7  # Measure content performance
+    PRODUCT_DEVELOPMENT = 8  # Understand audiences through statistics
+    SPECIAL_FEATURE_GEO = 9  # Develop and improve products
     SPECIAL_FEATURE_DEVICE = 10  # Use limited data to select content
 
 
@@ -63,6 +64,7 @@ class TCFConsent:
     The TCF consent string is a base64-encoded binary format.
     This class extracts key signals without full decoding.
     """
+
     raw_string: str
     version: int = 2
 
@@ -224,9 +226,8 @@ class TCFConsent:
 
     def can_personalize_ads(self) -> bool:
         """Check if personalized advertising is allowed."""
-        return (
-            self.has_consent and
-            self.has_purpose_consent(TCFPurpose.PERSONALIZED_ADS)
+        return self.has_consent and self.has_purpose_consent(
+            TCFPurpose.PERSONALIZED_ADS
         )
 
 
@@ -246,13 +247,14 @@ class USPrivacy:
     - "1YYN" = Notice given, opted out of sale
     - "1---" = Not applicable
     """
+
     raw_string: str
     version: int = 1
 
     # Signal values
-    explicit_notice: Optional[bool] = None  # Y=True, N=False, -=None
-    opt_out_sale: Optional[bool] = None     # Y=True (opted out), N=False
-    lspa_covered: Optional[bool] = None     # Y=True, N=False
+    explicit_notice: bool | None = None  # Y=True, N=False, -=None
+    opt_out_sale: bool | None = None  # Y=True (opted out), N=False
+    lspa_covered: bool | None = None  # Y=True, N=False
 
     @classmethod
     def parse(cls, us_privacy_string: str) -> "USPrivacy":
@@ -260,10 +262,10 @@ class USPrivacy:
         if not us_privacy_string or len(us_privacy_string) != 4:
             return cls(raw_string=us_privacy_string or "")
 
-        def parse_char(c: str) -> Optional[bool]:
-            if c == 'Y':
+        def parse_char(c: str) -> bool | None:
+            if c == "Y":
                 return True
-            elif c == 'N':
+            elif c == "N":
                 return False
             return None  # '-' or invalid
 
@@ -306,6 +308,7 @@ class GPPConsent:
     - Header with section IDs indicating which regulations apply
     - Section-specific consent data
     """
+
     raw_string: str
 
     # Applicable sections
@@ -333,7 +336,7 @@ class GPPConsent:
         try:
             # GPP strings are tilde-delimited
             # Format: HEADER~SECTION1~SECTION2~...
-            parts = gpp_string.split('~')
+            parts = gpp_string.split("~")
 
             if len(parts) < 1:
                 return cls(raw_string=gpp_string)
@@ -362,14 +365,14 @@ class GPPConsent:
         us_sections = {6, 7, 8, 9, 10, 11, 12}
         return bool(set(self.section_ids) & us_sections)
 
-    def get_tcf_consent(self) -> Optional[TCFConsent]:
+    def get_tcf_consent(self) -> TCFConsent | None:
         """Extract TCF consent from GPP if present."""
         if 2 in self.sections:
             tcf_data = self.sections[2]
             # Convert to TCFConsent
             return TCFConsent(
-                raw_string=tcf_data.get('raw', ''),
-                has_consent=tcf_data.get('has_consent', False),
+                raw_string=tcf_data.get("raw", ""),
+                has_consent=tcf_data.get("has_consent", False),
             )
         return None
 
@@ -384,15 +387,16 @@ class ConsentSignals:
     - regs.ext.us_privacy (CCPA)
     - regs.gpp + regs.gpp_sid (GPP)
     """
+
     # Raw signals from request
     gdpr_applies: bool = False
     ccpa_applies: bool = False
     coppa_applies: bool = False
 
     # Parsed consent objects
-    tcf: Optional[TCFConsent] = None
-    us_privacy: Optional[USPrivacy] = None
-    gpp: Optional[GPPConsent] = None
+    tcf: TCFConsent | None = None
+    us_privacy: USPrivacy | None = None
+    gpp: GPPConsent | None = None
 
     # Geographic context
     country: str = ""
@@ -409,28 +413,28 @@ class ConsentSignals:
         Returns:
             ConsentSignals with parsed consent data
         """
-        regs = request.get('regs', {})
-        regs_ext = regs.get('ext', {})
-        user = request.get('user', {})
-        user_ext = user.get('ext', {})
-        geo = request.get('device', {}).get('geo', {})
+        regs = request.get("regs", {})
+        regs_ext = regs.get("ext", {})
+        user = request.get("user", {})
+        user_ext = user.get("ext", {})
+        geo = request.get("device", {}).get("geo", {})
 
         # GDPR / TCF
-        gdpr_applies = regs_ext.get('gdpr', 0) == 1
-        tcf_consent_string = user_ext.get('consent', '')
+        gdpr_applies = regs_ext.get("gdpr", 0) == 1
+        tcf_consent_string = user_ext.get("consent", "")
         tcf = TCFConsent.parse(tcf_consent_string) if tcf_consent_string else None
 
         # CCPA / US Privacy
-        us_privacy_string = regs_ext.get('us_privacy', '')
+        us_privacy_string = regs_ext.get("us_privacy", "")
         us_privacy = USPrivacy.parse(us_privacy_string) if us_privacy_string else None
         ccpa_applies = bool(us_privacy_string)
 
         # GPP
-        gpp_string = regs.get('gpp', '')
+        gpp_string = regs.get("gpp", "")
         gpp = GPPConsent.parse(gpp_string) if gpp_string else None
 
         # COPPA
-        coppa_applies = regs.get('coppa', 0) == 1
+        coppa_applies = regs.get("coppa", 0) == 1
 
         return cls(
             gdpr_applies=gdpr_applies,
@@ -439,8 +443,8 @@ class ConsentSignals:
             tcf=tcf,
             us_privacy=us_privacy,
             gpp=gpp,
-            country=geo.get('country', ''),
-            region=geo.get('region', ''),
+            country=geo.get("country", ""),
+            region=geo.get("region", ""),
         )
 
     def has_valid_consent(self) -> bool:
@@ -505,11 +509,13 @@ class ConsentSignals:
     def get_restrictions_summary(self) -> dict:
         """Get a summary of privacy restrictions."""
         return {
-            'gdpr_applies': self.gdpr_applies,
-            'ccpa_applies': self.ccpa_applies,
-            'coppa_applies': self.coppa_applies,
-            'has_tcf_consent': self.tcf.has_consent if self.tcf else False,
-            'ccpa_opted_out': self.us_privacy.has_opted_out() if self.us_privacy else False,
-            'can_basic_ads': self.can_process_for_basic_ads(),
-            'can_personalize': self.can_personalize_ads(),
+            "gdpr_applies": self.gdpr_applies,
+            "ccpa_applies": self.ccpa_applies,
+            "coppa_applies": self.coppa_applies,
+            "has_tcf_consent": self.tcf.has_consent if self.tcf else False,
+            "ccpa_opted_out": self.us_privacy.has_opted_out()
+            if self.us_privacy
+            else False,
+            "can_basic_ads": self.can_process_for_basic_ads(),
+            "can_personalize": self.can_personalize_ads(),
         }

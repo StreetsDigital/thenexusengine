@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prebid.js Demo - The Nexus Engine</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 { color: #333; }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .header h1 { color: white; margin: 0 0 10px 0; }
+        .header p { margin: 0; opacity: 0.9; }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 30px;
+        }
+        .content {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .ad-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .ad-slot {
+            background: #f0f0f0;
+            border: 2px dashed #ccc;
+            min-height: 250px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #999;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        .ad-slot.loaded {
+            border: 2px solid #4CAF50;
+            background: white;
+        }
+        .debug-panel {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .debug-panel h3 {
+            color: #569cd6;
+            margin: 0 0 10px 0;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #569cd6;
+            padding-left: 10px;
+        }
+        .log-entry.success { border-color: #4CAF50; }
+        .log-entry.error { border-color: #f44336; }
+        .log-entry.warning { border-color: #ff9800; }
+        .log-entry .time { color: #888; }
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .status.loading { background: #fff3cd; color: #856404; }
+        .status.ready { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .config-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .config-section h4 { margin: 0 0 10px 0; }
+        code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        .btn:hover { background: #5a6fd6; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            text-align: left;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        th { background: #f8f9fa; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>The Nexus Engine - Prebid.js Demo</h1>
+        <p>Server-side header bidding integration example</p>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+        <span class="status loading" id="status">Loading Prebid.js...</span>
+        <button class="btn" id="refreshBtn" onclick="refreshAds()" disabled>Refresh Ads</button>
+        <button class="btn" onclick="toggleDebug()">Toggle Debug</button>
+    </div>
+
+    <div class="grid">
+        <div class="content">
+            <h2>How It Works</h2>
+            <p>This demo page shows how to integrate your website with The Nexus Engine PBS (Prebid Server).</p>
+
+            <div class="config-section">
+                <h4>Your Configuration</h4>
+                <table>
+                    <tr>
+                        <th>Setting</th>
+                        <th>Value</th>
+                    </tr>
+                    <tr>
+                        <td>Publisher ID</td>
+                        <td><code>demo-publisher</code></td>
+                    </tr>
+                    <tr>
+                        <td>PBS Endpoint</td>
+                        <td><code>https://nexus-pbs.fly.dev/openrtb2/auction</code></td>
+                    </tr>
+                    <tr>
+                        <td>Cookie Sync</td>
+                        <td><code>https://nexus-pbs.fly.dev/cookie_sync</code></td>
+                    </tr>
+                    <tr>
+                        <td>Bidders</td>
+                        <td><code>appnexus, rubicon, pubmatic</code></td>
+                    </tr>
+                </table>
+            </div>
+
+            <h3>Integration Steps</h3>
+            <ol>
+                <li><strong>Load Prebid.js</strong> - Include the script in your page</li>
+                <li><strong>Configure S2S</strong> - Point to our PBS endpoint</li>
+                <li><strong>Define Ad Units</strong> - Specify your ad placements</li>
+                <li><strong>Request Bids</strong> - Let Prebid.js handle the auction</li>
+                <li><strong>Render Ads</strong> - Display winning bids or passback to GAM</li>
+            </ol>
+
+            <div class="debug-panel" id="debugPanel">
+                <h3>Debug Log</h3>
+                <div id="logContainer">
+                    <div class="log-entry">Waiting for Prebid.js to load...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="ad-container">
+            <h3>Ad Placements</h3>
+
+            <h4>Medium Rectangle (300x250)</h4>
+            <div class="ad-slot" id="div-ad-1">
+                <span>Loading ad...</span>
+            </div>
+
+            <h4>Mobile Banner (320x50)</h4>
+            <div class="ad-slot" id="div-ad-2" style="min-height: 50px;">
+                <span>Loading ad...</span>
+            </div>
+
+            <div class="config-section">
+                <h4>Bid Response</h4>
+                <div id="bidInfo" style="font-size: 12px;">
+                    Waiting for bids...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prebid.js -->
+    <script async src="https://cdn.jsdelivr.net/npm/prebid.js@latest/dist/not-for-prod/prebid.js"></script>
+
+    <script>
+        // Debug logging
+        const logContainer = document.getElementById('logContainer');
+        function log(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.innerHTML = `<span class="time">[${time}]</span> ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(`[${type}] ${message}`);
+        }
+
+        function updateStatus(text, type) {
+            const status = document.getElementById('status');
+            status.textContent = text;
+            status.className = `status ${type}`;
+        }
+
+        function toggleDebug() {
+            const panel = document.getElementById('debugPanel');
+            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        }
+
+        // Prebid.js configuration
+        var pbjs = pbjs || {};
+        pbjs.que = pbjs.que || [];
+
+        // Wait for Prebid.js to load
+        pbjs.que.push(function() {
+            log('Prebid.js loaded successfully', 'success');
+            updateStatus('Configuring...', 'loading');
+
+            // ========================================
+            // STEP 1: Configure Server-Side Bidding
+            // ========================================
+            pbjs.setConfig({
+                debug: true,  // Enable for development
+                s2sConfig: {
+                    accountId: 'demo-publisher',
+                    bidders: ['appnexus', 'rubicon', 'pubmatic'],  // Only these 3 are registered
+                    defaultVendor: 'pbs',
+                    timeout: 1000,
+                    endpoint: {
+                        p1Consent: 'https://nexus-pbs.fly.dev/openrtb2/auction',
+                        noP1Consent: 'https://nexus-pbs.fly.dev/openrtb2/auction'
+                    },
+                    syncEndpoint: {
+                        p1Consent: 'https://nexus-pbs.fly.dev/cookie_sync',
+                        noP1Consent: 'https://nexus-pbs.fly.dev/cookie_sync'
+                    }
+                },
+                priceGranularity: 'medium',
+                enableSendAllBids: false,
+                bidderTimeout: 1500,
+                useBidCache: true
+            });
+
+            log('S2S config set: nexus-pbs.fly.dev', 'success');
+
+            // ========================================
+            // STEP 2: Define Your Ad Units
+            // ========================================
+            var adUnits = [
+                {
+                    code: 'div-ad-1',
+                    mediaTypes: {
+                        banner: {
+                            sizes: [[300, 250], [336, 280]]
+                        }
+                    },
+                    bids: [
+                        {
+                            bidder: 'appnexus',
+                            params: { placementId: 00000001 }  // Demo - replace with your placement ID
+                        },
+                        {
+                            bidder: 'rubicon',
+                            params: {
+                                accountId: 0001,    // Demo - replace with your account
+                                siteId: 000001,
+                                zoneId: 000001
+                            }
+                        }
+                    ]
+                },
+                {
+                    code: 'div-ad-2',
+                    mediaTypes: {
+                        banner: {
+                            sizes: [[320, 50], [300, 50]]
+                        }
+                    },
+                    bids: [
+                        {
+                            bidder: 'appnexus',
+                            params: { placementId: 00000002 }  // Demo - replace with your placement ID
+                        },
+                        {
+                            bidder: 'pubmatic',
+                            params: {
+                                publisherId: '000001',  // Demo - replace with your publisher ID
+                                adSlot: 'demo-slot'
+                            }
+                        }
+                    ]
+                }
+            ];
+
+            pbjs.addAdUnits(adUnits);
+            log(`Added ${adUnits.length} ad units`, 'success');
+
+            // Enable refresh button
+            document.getElementById('refreshBtn').disabled = false;
+
+            // Initial bid request
+            requestBids();
+        });
+
+        // ========================================
+        // STEP 3: Request Bids
+        // ========================================
+        function requestBids() {
+            log('Requesting bids from PBS...', 'info');
+            updateStatus('Requesting bids...', 'loading');
+
+            pbjs.requestBids({
+                bidsBackHandler: function(bidResponses) {
+                    log('Bids received!', 'success');
+                    handleBidResponses(bidResponses);
+                },
+                timeout: 2000
+            });
+        }
+
+        function refreshAds() {
+            log('Refreshing ads...', 'info');
+
+            // Reset ad slots
+            document.querySelectorAll('.ad-slot').forEach(slot => {
+                slot.innerHTML = '<span>Loading ad...</span>';
+                slot.classList.remove('loaded');
+            });
+
+            pbjs.que.push(function() {
+                requestBids();
+            });
+        }
+
+        // ========================================
+        // STEP 4: Handle Bid Responses
+        // ========================================
+        function handleBidResponses(bidResponses) {
+            updateStatus('Ready', 'ready');
+
+            let bidInfo = '';
+            let hasBids = false;
+
+            // Process each ad unit
+            for (const adUnitCode in bidResponses) {
+                const bids = bidResponses[adUnitCode].bids || [];
+
+                if (bids.length > 0) {
+                    hasBids = true;
+                    const winningBid = bids[0];  // Highest bid
+
+                    log(`${adUnitCode}: $${winningBid.cpm.toFixed(2)} from ${winningBid.bidder}`, 'success');
+
+                    bidInfo += `<strong>${adUnitCode}</strong><br>`;
+                    bidInfo += `Winner: ${winningBid.bidder}<br>`;
+                    bidInfo += `CPM: $${winningBid.cpm.toFixed(2)}<br>`;
+                    bidInfo += `Size: ${winningBid.width}x${winningBid.height}<br><br>`;
+
+                    // Render the ad
+                    renderAd(adUnitCode, winningBid);
+                } else {
+                    log(`${adUnitCode}: No bids received`, 'warning');
+                    bidInfo += `<strong>${adUnitCode}</strong>: No bids<br><br>`;
+
+                    // Show no-bid message
+                    const slot = document.getElementById(adUnitCode);
+                    if (slot) {
+                        slot.innerHTML = '<span style="color: #999;">No bids received</span>';
+                    }
+                }
+            }
+
+            if (!hasBids) {
+                bidInfo = '<em>No bids received from any bidder. This is normal in test mode - bidders need real placement IDs.</em>';
+            }
+
+            document.getElementById('bidInfo').innerHTML = bidInfo;
+        }
+
+        function renderAd(adUnitCode, bid) {
+            const slot = document.getElementById(adUnitCode);
+            if (!slot) return;
+
+            slot.classList.add('loaded');
+
+            // Create iframe for ad
+            const iframe = document.createElement('iframe');
+            iframe.width = bid.width;
+            iframe.height = bid.height;
+            iframe.frameBorder = 0;
+            iframe.scrolling = 'no';
+            iframe.style.border = 'none';
+
+            slot.innerHTML = '';
+            slot.appendChild(iframe);
+
+            // Write ad content to iframe
+            const doc = iframe.contentDocument || iframe.contentWindow.document;
+            doc.open();
+            doc.write(bid.ad);
+            doc.close();
+
+            log(`Rendered ad in ${adUnitCode} (${bid.width}x${bid.height})`, 'success');
+        }
+
+        // Log any errors
+        window.addEventListener('error', function(e) {
+            log(`Error: ${e.message}`, 'error');
+        });
+
+        // Initial log
+        log('Demo page initialized');
+    </script>
+</body>
+</html>

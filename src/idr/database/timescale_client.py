@@ -5,14 +5,14 @@ Stores aggregated metrics for analytics, ML training, and long-term trends.
 Uses TimescaleDB hypertables for efficient time-series queries.
 """
 
-import hashlib
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Any, Optional
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 try:
     import psycopg2
     import psycopg2.extras
+
     PSYCOPG2_AVAILABLE = True
 except ImportError:
     PSYCOPG2_AVAILABLE = False
@@ -21,6 +21,7 @@ except ImportError:
 @dataclass
 class BidderPerformance:
     """Historical performance record for a bidder."""
+
     bidder_code: str
     time_bucket: datetime
 
@@ -43,7 +44,7 @@ class BidderPerformance:
     total_latency_ms: float = 0.0
 
     floor_clears: int = 0  # Bids above floor
-    floor_total: int = 0   # Total bids with floor
+    floor_total: int = 0  # Total bids with floor
 
     # Computed
     @property
@@ -194,7 +195,9 @@ class TimescaleClient:
         password: str = "",
     ):
         if not PSYCOPG2_AVAILABLE:
-            raise ImportError("psycopg2 not installed. Run: pip install psycopg2-binary")
+            raise ImportError(
+                "psycopg2 not installed. Run: pip install psycopg2-binary"
+            )
 
         self.connection_params = {
             "host": host,
@@ -203,7 +206,7 @@ class TimescaleClient:
             "user": user,
             "password": password,
         }
-        self._conn: Optional[Any] = None
+        self._conn: Any | None = None
 
     def connect(self) -> bool:
         """Connect to TimescaleDB."""
@@ -232,7 +235,9 @@ class TimescaleClient:
         try:
             with self._conn.cursor() as cur:
                 # Split and execute statements separately
-                statements = [s.strip() for s in CREATE_TABLES_SQL.split(';') if s.strip()]
+                statements = [
+                    s.strip() for s in CREATE_TABLES_SQL.split(";") if s.strip()
+                ]
                 for stmt in statements:
                     try:
                         cur.execute(stmt)
@@ -261,13 +266,13 @@ class TimescaleClient:
         ad_size: str = "",
         publisher_id: str = "",
         had_bid: bool = False,
-        bid_cpm: Optional[float] = None,
+        bid_cpm: float | None = None,
         won: bool = False,
-        win_cpm: Optional[float] = None,
-        latency_ms: Optional[float] = None,
+        win_cpm: float | None = None,
+        latency_ms: float | None = None,
         timed_out: bool = False,
         had_error: bool = False,
-        floor_price: Optional[float] = None,
+        floor_price: float | None = None,
     ) -> bool:
         """Record a single bid event."""
         if not self.is_connected:
@@ -279,7 +284,8 @@ class TimescaleClient:
 
         try:
             with self._conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO bid_events (
                         time, auction_id, bidder_code, country, device_type,
                         media_type, ad_size, publisher_id, had_bid, bid_cpm,
@@ -288,11 +294,26 @@ class TimescaleClient:
                     ) VALUES (
                         NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
-                """, (
-                    auction_id, bidder_code, country, device_type, media_type,
-                    ad_size, publisher_id, had_bid, bid_cpm, won, win_cpm,
-                    latency_ms, timed_out, had_error, floor_price, cleared_floor
-                ))
+                """,
+                    (
+                        auction_id,
+                        bidder_code,
+                        country,
+                        device_type,
+                        media_type,
+                        ad_size,
+                        publisher_id,
+                        had_bid,
+                        bid_cpm,
+                        won,
+                        win_cpm,
+                        latency_ms,
+                        timed_out,
+                        had_error,
+                        floor_price,
+                        cleared_floor,
+                    ),
+                )
             self._conn.commit()
             return True
         except psycopg2.Error as e:
@@ -307,7 +328,9 @@ class TimescaleClient:
 
         try:
             with self._conn.cursor() as cur:
-                psycopg2.extras.execute_batch(cur, """
+                psycopg2.extras.execute_batch(
+                    cur,
+                    """
                     INSERT INTO bid_events (
                         time, auction_id, bidder_code, country, device_type,
                         media_type, ad_size, publisher_id, had_bid, bid_cpm,
@@ -319,7 +342,9 @@ class TimescaleClient:
                         %(won)s, %(win_cpm)s, %(latency_ms)s, %(timed_out)s, %(had_error)s,
                         %(floor_price)s, %(cleared_floor)s
                     )
-                """, events)
+                """,
+                    events,
+                )
             self._conn.commit()
             return len(events)
         except psycopg2.Error as e:
@@ -335,10 +360,10 @@ class TimescaleClient:
         self,
         bidder_code: str,
         hours: int = 24,
-        country: Optional[str] = None,
-        device_type: Optional[str] = None,
-        media_type: Optional[str] = None,
-    ) -> Optional[BidderPerformance]:
+        country: str | None = None,
+        device_type: str | None = None,
+        media_type: str | None = None,
+    ) -> BidderPerformance | None:
         """Get aggregated performance for a bidder."""
         if not self.is_connected:
             return None
@@ -369,7 +394,7 @@ class TimescaleClient:
                 COUNT(*) FILTER (WHERE cleared_floor) as floor_clears,
                 COUNT(*) FILTER (WHERE floor_price IS NOT NULL) as floor_total
             FROM bid_events
-            WHERE {' AND '.join(where_clauses)}
+            WHERE {" AND ".join(where_clauses)}
         """
 
         try:
@@ -407,13 +432,16 @@ class TimescaleClient:
 
         try:
             with self._conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
                     FROM bid_events
                     WHERE bidder_code = %s
                     AND time > NOW() - INTERVAL '%s hours'
                     AND latency_ms IS NOT NULL
-                """, (bidder_code, hours))
+                """,
+                    (bidder_code, hours),
+                )
                 row = cur.fetchone()
                 return float(row[0]) if row and row[0] else 0.0
         except psycopg2.Error:
@@ -426,7 +454,8 @@ class TimescaleClient:
 
         try:
             with self._conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT
                         bidder_code,
                         COUNT(*) as requests,
@@ -443,24 +472,28 @@ class TimescaleClient:
                     WHERE time > NOW() - INTERVAL '%s hours'
                     GROUP BY bidder_code
                     ORDER BY requests DESC
-                """, (hours,))
+                """,
+                    (hours,),
+                )
 
                 results = []
                 for row in cur.fetchall():
-                    results.append(BidderPerformance(
-                        bidder_code=row[0],
-                        time_bucket=datetime.now(),
-                        requests=row[1],
-                        bids=row[2],
-                        wins=row[3],
-                        timeouts=row[4],
-                        errors=row[5],
-                        total_bid_value=float(row[6]),
-                        total_win_value=float(row[7]),
-                        total_latency_ms=float(row[8]),
-                        floor_clears=row[9],
-                        floor_total=row[10],
-                    ))
+                    results.append(
+                        BidderPerformance(
+                            bidder_code=row[0],
+                            time_bucket=datetime.now(),
+                            requests=row[1],
+                            bids=row[2],
+                            wins=row[3],
+                            timeouts=row[4],
+                            errors=row[5],
+                            total_bid_value=float(row[6]),
+                            total_win_value=float(row[7]),
+                            total_latency_ms=float(row[8]),
+                            floor_clears=row[9],
+                            floor_total=row[10],
+                        )
+                    )
                 return results
         except psycopg2.Error as e:
             print(f"Query failed: {e}")
@@ -488,14 +521,18 @@ class MockTimescaleClient:
         return True
 
     def record_bid_event(self, auction_id: str, bidder_code: str, **kwargs) -> bool:
-        self._events.append({"auction_id": auction_id, "bidder_code": bidder_code, **kwargs})
+        self._events.append(
+            {"auction_id": auction_id, "bidder_code": bidder_code, **kwargs}
+        )
         return True
 
     def record_batch_events(self, events: list[dict]) -> int:
         self._events.extend(events)
         return len(events)
 
-    def get_bidder_performance(self, bidder_code: str, **kwargs) -> Optional[BidderPerformance]:
+    def get_bidder_performance(
+        self, bidder_code: str, **kwargs
+    ) -> BidderPerformance | None:
         events = [e for e in self._events if e.get("bidder_code") == bidder_code]
         if not events:
             return None
@@ -506,18 +543,23 @@ class MockTimescaleClient:
             requests=len(events),
             bids=sum(1 for e in events if e.get("had_bid")),
             wins=sum(1 for e in events if e.get("won")),
-            total_bid_value=sum(e.get("bid_cpm", 0) or 0 for e in events if e.get("had_bid")),
+            total_bid_value=sum(
+                e.get("bid_cpm", 0) or 0 for e in events if e.get("had_bid")
+            ),
             total_latency_ms=sum(e.get("latency_ms", 0) or 0 for e in events),
         )
 
     def get_p95_latency(self, bidder_code: str, hours: int = 1) -> float:
-        latencies = [e.get("latency_ms", 0) for e in self._events
-                     if e.get("bidder_code") == bidder_code and e.get("latency_ms")]
+        latencies = [
+            e.get("latency_ms", 0)
+            for e in self._events
+            if e.get("bidder_code") == bidder_code and e.get("latency_ms")
+        ]
         if not latencies:
             return 0.0
         latencies.sort()
         return latencies[int(len(latencies) * 0.95)]
 
     def get_all_bidder_stats(self, hours: int = 24) -> list[BidderPerformance]:
-        bidders = set(e.get("bidder_code") for e in self._events)
+        bidders = {e.get("bidder_code") for e in self._events}
         return [self.get_bidder_performance(b) for b in bidders if b]

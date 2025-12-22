@@ -1,14 +1,13 @@
 """Tests for the ID generator utilities."""
 
-import pytest
 import re
 
 from src.idr.utils.id_generator import (
+    ALPHANUMERIC_CHARS,
     generate_ad_unit_id,
     generate_alphanumeric_id,
     generate_publisher_id,
     generate_site_id,
-    ALPHANUMERIC_CHARS,
 )
 
 
@@ -52,8 +51,10 @@ class TestGeneratePublisherId:
 
         # Remove prefix and check random part
         random_part = result[4:]  # Remove "pub_"
-        assert random_part.islower() or random_part.isdigit() or all(
-            c.islower() or c.isdigit() for c in random_part
+        assert (
+            random_part.islower()
+            or random_part.isdigit()
+            or all(c.islower() or c.isdigit() for c in random_part)
         )
 
     def test_uniqueness(self):

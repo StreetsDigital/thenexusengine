@@ -50,11 +50,16 @@ func main() {
 	log.Info().Msg("Prometheus metrics enabled")
 
 	// Initialize middleware
+	cors := middleware.NewCORS(middleware.DefaultCORSConfig())
+	security := middleware.NewSecurity(nil) // Uses DefaultSecurityConfig()
 	auth := middleware.NewAuth(middleware.DefaultAuthConfig())
 	rateLimiter := middleware.NewRateLimiter(middleware.DefaultRateLimitConfig())
 	sizeLimiter := middleware.NewSizeLimiter(middleware.DefaultSizeLimitConfig())
+	gzipMiddleware := middleware.NewGzip(middleware.DefaultGzipConfig())
 
 	log.Info().
+		Bool("cors_enabled", true).
+		Bool("security_headers_enabled", security.GetConfig().Enabled).
 		Bool("auth_enabled", auth.IsEnabled()).
 		Bool("rate_limiting_enabled", rateLimiter != nil).
 		Msg("Middleware initialized")
@@ -107,7 +112,27 @@ func main() {
 	auctionHandler := endpoints.NewAuctionHandler(ex)
 	statusHandler := endpoints.NewStatusHandler()
 	// Use dynamic handler that queries registries at request time
-	biddersHandler := endpoints.NewDynamicInfoBiddersHandler(adapters.DefaultRegistry, dynamicRegistry)
+	// Note: Pass nil explicitly if dynamicRegistry is nil to avoid typed-nil interface issues
+	var dynamicBidderLister endpoints.DynamicBidderLister
+	if dynamicRegistry != nil {
+		dynamicBidderLister = dynamicRegistry
+	}
+	biddersHandler := endpoints.NewDynamicInfoBiddersHandler(adapters.DefaultRegistry, dynamicBidderLister)
+
+	// Cookie sync handlers
+	hostURL := os.Getenv("PBS_HOST_URL")
+	if hostURL == "" {
+		hostURL = "https://nexus-pbs.fly.dev"
+	}
+	cookieSyncConfig := endpoints.DefaultCookieSyncConfig(hostURL)
+	cookieSyncHandler := endpoints.NewCookieSyncHandler(cookieSyncConfig)
+	setuidHandler := endpoints.NewSetUIDHandler(cookieSyncHandler.ListBidders())
+	optoutHandler := endpoints.NewOptOutHandler()
+
+	log.Info().
+		Str("host_url", hostURL).
+		Int("syncers", len(cookieSyncHandler.ListBidders())).
+		Msg("Cookie sync initialized")
 
 	// P0-4: Initialize privacy middleware for GDPR/COPPA compliance
 	privacyConfig := middleware.DefaultPrivacyConfig()
@@ -134,6 +159,11 @@ func main() {
 	mux.Handle("/health", healthHandler())
 	mux.Handle("/info/bidders", biddersHandler)
 
+	// Cookie sync endpoints
+	mux.Handle("/cookie_sync", cookieSyncHandler)
+	mux.Handle("/setuid", setuidHandler)
+	mux.Handle("/optout", optoutHandler)
+
 	// Prometheus metrics endpoint
 	mux.Handle("/metrics", metrics.Handler())
 
@@ -142,29 +172,30 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		if ex.GetIDRClient() != nil {
 			stats := ex.GetIDRClient().CircuitBreakerStats()
-			json.NewEncoder(w).Encode(stats)
+			if err := json.NewEncoder(w).Encode(stats); err != nil {
+				log.Error().Err(err).Msg("failed to encode circuit breaker stats")
+			}
 		} else {
-			json.NewEncoder(w).Encode(map[string]string{"status": "IDR disabled"})
+			if err := json.NewEncoder(w).Encode(map[string]string{"status": "IDR disabled"}); err != nil {
+				log.Error().Err(err).Msg("failed to encode IDR disabled status")
+			}
 		}
 	})
 
-	// P1-17: Initialize security headers middleware
-	securityHeaders := middleware.NewSecurityHeaders(middleware.DefaultSecurityConfig())
-
-	// P1-16: Initialize CORS middleware for Prebid.js integration
-	corsMiddleware := middleware.NewCORS(middleware.DefaultCORSConfig())
-
-	// Build middleware chain: Logging -> Security -> CORS -> Size Limit -> Auth -> Rate Limit -> Metrics -> Handler
+	// Build middleware chain: CORS -> Security -> Logging -> Size Limit -> Auth -> Rate Limit -> Metrics -> Gzip -> Handler
+	// Note: CORS must be outermost to handle preflight OPTIONS requests
+	// Note: Security headers applied early to ensure all responses have them
 	// Note: Auth must run before Rate Limit so publisher ID is available for rate limiting
-	// Note: Security headers should be early in chain to ensure they're always set
+	// Note: Gzip is innermost so responses are compressed before being sent
 	handler := http.Handler(mux)
+	handler = gzipMiddleware.Middleware(handler) // Compress responses
 	handler = m.Middleware(handler)
 	handler = rateLimiter.Middleware(handler)
 	handler = auth.Middleware(handler)
 	handler = sizeLimiter.Middleware(handler)
-	handler = corsMiddleware(handler)
-	handler = securityHeaders(handler)
 	handler = loggingMiddleware(handler)
+	handler = security.Middleware(handler)
+	handler = cors(handler)
 
 	// Create server
 	server := &http.Server{
@@ -280,7 +311,9 @@ func healthHandler() http.Handler {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(health)
+		if err := json.NewEncoder(w).Encode(health); err != nil {
+			logger.Log.Error().Err(err).Msg("failed to encode health response")
+		}
 	})
 }
 

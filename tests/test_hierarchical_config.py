@@ -2,18 +2,6 @@
 
 import pytest
 
-from src.idr.config.feature_config import (
-    BidderSettings,
-    ConfigLevel,
-    FeatureConfig,
-    FeatureFlags,
-    FloorSettings,
-    IDRSettings,
-    PrivacySettings,
-    RateLimitSettings,
-    ResolvedConfig,
-    get_default_global_config,
-)
 from src.idr.config.config_resolver import (
     AdUnitConfig,
     ConfigResolver,
@@ -22,7 +10,14 @@ from src.idr.config.config_resolver import (
     get_config_resolver,
     merge_configs,
     resolve_config,
-    to_resolved_config,
+)
+from src.idr.config.feature_config import (
+    ConfigLevel,
+    FeatureConfig,
+    IDRSettings,
+    PrivacySettings,
+    ResolvedConfig,
+    get_default_global_config,
 )
 
 
@@ -275,7 +270,7 @@ class TestConfigResolver:
         """Test that cache is cleared when config is updated."""
         resolver.register_publisher(sample_publisher)
 
-        resolved1 = resolver.resolve_for_publisher("test-pub")
+        resolver.resolve_for_publisher("test-pub")
 
         # Update publisher
         sample_publisher.features.idr.max_bidders = 20

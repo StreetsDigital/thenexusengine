@@ -3,8 +3,10 @@ package adapters
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -26,18 +28,18 @@ type Adapter interface {
 
 // ExtraRequestInfo contains additional info for request building
 type ExtraRequestInfo struct {
-	PbsEntryPoint string
-	GlobalPrivacy GlobalPrivacy
+	PbsEntryPoint  string
+	GlobalPrivacy  GlobalPrivacy
 	BidderCoreName string
 }
 
 // GlobalPrivacy contains privacy settings
 type GlobalPrivacy struct {
-	GDPR      bool
+	GDPR        bool
 	GDPRConsent string
-	CCPA      string
-	GPP       string
-	GPPSID    []int
+	CCPA        string
+	GPP         string
+	GPPSID      []int
 }
 
 // RequestData represents an HTTP request to a bidder
@@ -64,10 +66,10 @@ type BidderResponse struct {
 
 // TypedBid is a bid with its type
 type TypedBid struct {
-	Bid      *openrtb.Bid
-	BidType  BidType
-	BidVideo *BidVideo
-	BidMeta  *openrtb.ExtBidPrebidMeta
+	Bid          *openrtb.Bid
+	BidType      BidType
+	BidVideo     *BidVideo
+	BidMeta      *openrtb.ExtBidPrebidMeta
 	DealPriority int
 }
 
@@ -128,8 +130,8 @@ type SyncerInfo struct {
 
 // AdapterConfig holds runtime adapter configuration
 type AdapterConfig struct {
-	Endpoint string
-	Disabled bool
+	Endpoint  string
+	Disabled  bool
 	ExtraInfo string
 }
 
@@ -159,23 +161,33 @@ type DefaultHTTPClient struct {
 
 // NewHTTPClient creates a new HTTP client with connection pooling
 // P1-14: Configure transport for high-performance connection reuse
+// Connection pooling reduces latency by reusing TCP connections and TLS sessions
+// for repeated requests to the same bidder endpoints.
 func NewHTTPClient(timeout time.Duration) *DefaultHTTPClient {
 	transport := &http.Transport{
-		// Connection pool settings for high-throughput bidder requests
-		MaxIdleConns:        100,             // Total idle connections across all hosts
-		MaxIdleConnsPerHost: 10,              // Idle connections per bidder endpoint
-		MaxConnsPerHost:     50,              // Max concurrent connections per bidder
-		IdleConnTimeout:     90 * time.Second, // Keep connections alive for reuse
+		// Connection pooling settings
+		MaxIdleConns:        100,              // Total idle connections across all hosts
+		MaxIdleConnsPerHost: 10,               // Idle connections per bidder endpoint
+		MaxConnsPerHost:     50,               // Max concurrent connections per host
+		IdleConnTimeout:     90 * time.Second, // Keep idle connections for 90s
+
+		// TLS session caching reduces handshake overhead for repeated connections
+		TLSClientConfig: &tls.Config{
+			ClientSessionCache: tls.NewLRUClientSessionCache(100),
+			MinVersion:         tls.VersionTLS12, // Require TLS 1.2+
+		},
 
 		// Timeouts for connection establishment
-		ResponseHeaderTimeout: timeout,                   // Time to wait for response headers
-		ExpectContinueTimeout: 1 * time.Second,          // Time to wait for 100-continue
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,  // Connection timeout
+			KeepAlive: 30 * time.Second, // TCP keepalive interval
+		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
 
 		// Disable compression to reduce latency (bidder responses are usually small)
 		DisableCompression: true,
-
-		// Force HTTP/1.1 for predictable connection behavior
-		ForceAttemptHTTP2: false,
 	}
 
 	return &DefaultHTTPClient{
