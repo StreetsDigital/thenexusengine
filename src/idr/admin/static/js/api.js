@@ -8,7 +8,7 @@
  */
 
 const BASE_URL = '/api/v2/config';
-const BIDDERS_BASE = '/api';
+const BIDDERS_BASE = '/api/v2/config';
 
 /**
  * Helper function to handle API responses
