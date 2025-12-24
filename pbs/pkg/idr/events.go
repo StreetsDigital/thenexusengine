@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,6 +34,12 @@ type EventRecorder struct {
 	flushQueue chan []BidEvent
 	stopCh     chan struct{}
 	wg         sync.WaitGroup
+
+	// Metrics for monitoring (atomic for lock-free access)
+	droppedEvents  atomic.Int64 // Count of events dropped due to full queue
+	droppedBatches atomic.Int64 // Count of batches dropped
+	totalEvents    atomic.Int64 // Total events recorded
+	flushedEvents  atomic.Int64 // Total events successfully queued for flush
 }
 
 // BidEvent represents a bid event to record
@@ -169,6 +176,8 @@ func (r *EventRecorder) RecordBidResponse(
 		ErrorMsg:    errorMsg,
 	}
 
+	r.totalEvents.Add(1)
+
 	r.mu.Lock()
 	r.buffer = append(r.buffer, event)
 	shouldFlush := len(r.buffer) >= r.bufferSize
@@ -181,12 +190,16 @@ func (r *EventRecorder) RecordBidResponse(
 
 	// Queue flush if buffer was full (non-blocking send)
 	if eventsToFlush != nil {
+		batchSize := int64(len(eventsToFlush))
 		select {
 		case r.flushQueue <- eventsToFlush:
 			// Queued successfully
+			r.flushedEvents.Add(batchSize)
 		default:
 			// Queue full - drop events rather than block or leak goroutines
-			// In production, would log this
+			// Track dropped events for monitoring/alerting
+			r.droppedEvents.Add(batchSize)
+			r.droppedBatches.Add(1)
 		}
 	}
 }
@@ -214,6 +227,8 @@ func (r *EventRecorder) RecordWin(
 		PublisherID: publisherID,
 	}
 
+	r.totalEvents.Add(1)
+
 	r.mu.Lock()
 	r.buffer = append(r.buffer, event)
 	shouldFlush := len(r.buffer) >= r.bufferSize
@@ -226,11 +241,16 @@ func (r *EventRecorder) RecordWin(
 
 	// Queue flush if buffer was full (non-blocking send)
 	if eventsToFlush != nil {
+		batchSize := int64(len(eventsToFlush))
 		select {
 		case r.flushQueue <- eventsToFlush:
 			// Queued successfully
+			r.flushedEvents.Add(batchSize)
 		default:
 			// Queue full - drop events rather than block or leak goroutines
+			// Track dropped events for monitoring/alerting
+			r.droppedEvents.Add(batchSize)
+			r.droppedBatches.Add(1)
 		}
 	}
 }
@@ -266,4 +286,31 @@ func (r *EventRecorder) Close() error {
 	r.wg.Wait()
 
 	return err
+}
+
+// EventRecorderStats contains metrics for monitoring the event recorder
+type EventRecorderStats struct {
+	TotalEvents    int64 `json:"total_events"`    // Total events recorded
+	FlushedEvents  int64 `json:"flushed_events"`  // Events successfully queued for flush
+	DroppedEvents  int64 `json:"dropped_events"`  // Events dropped due to full queue
+	DroppedBatches int64 `json:"dropped_batches"` // Batches dropped due to full queue
+	BufferedEvents int   `json:"buffered_events"` // Events currently in buffer
+	QueuedBatches  int   `json:"queued_batches"`  // Batches waiting in flush queue
+}
+
+// Stats returns current metrics for the event recorder.
+// Use these metrics for monitoring and alerting on event loss.
+func (r *EventRecorder) Stats() EventRecorderStats {
+	r.mu.Lock()
+	buffered := len(r.buffer)
+	r.mu.Unlock()
+
+	return EventRecorderStats{
+		TotalEvents:    r.totalEvents.Load(),
+		FlushedEvents:  r.flushedEvents.Load(),
+		DroppedEvents:  r.droppedEvents.Load(),
+		DroppedBatches: r.droppedBatches.Load(),
+		BufferedEvents: buffered,
+		QueuedBatches:  len(r.flushQueue),
+	}
 }

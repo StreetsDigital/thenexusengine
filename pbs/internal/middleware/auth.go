@@ -188,15 +188,25 @@ func (a *Auth) validateKey(ctx context.Context, key string) (string, bool) {
 	}
 
 	// Fall back to local config
-	a.mu.RLock()
-	defer a.mu.RUnlock()
+	// Note: We release the lock before calling updateCache to maintain
+	// consistent lock ordering (mu before cacheMu) and prevent potential deadlocks
+	var foundPubID string
+	var found bool
 
+	a.mu.RLock()
 	for validKey, pubID := range a.config.APIKeys {
 		// Use constant-time comparison to prevent timing attacks
 		if subtle.ConstantTimeCompare([]byte(key), []byte(validKey)) == 1 {
-			a.updateCache(key, pubID)
-			return pubID, true
+			foundPubID = pubID
+			found = true
+			break
 		}
+	}
+	a.mu.RUnlock()
+
+	if found {
+		a.updateCache(key, foundPubID)
+		return foundPubID, true
 	}
 
 	// Cache negative result briefly to avoid hammering Redis
@@ -247,26 +257,26 @@ func (a *Auth) ClearCache() {
 
 // AddAPIKey adds a new API key at runtime
 func (a *Auth) AddAPIKey(key, publisherID string) {
+	// Update config first
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if a.config.APIKeys == nil {
 		a.config.APIKeys = make(map[string]string)
 	}
 	a.config.APIKeys[key] = publisherID
+	a.mu.Unlock()
 
-	// Also update cache
+	// Update cache after releasing mu to maintain consistent lock ordering
 	a.updateCache(key, publisherID)
 }
 
 // RemoveAPIKey removes an API key at runtime
 func (a *Auth) RemoveAPIKey(key string) {
+	// Remove from config first
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	delete(a.config.APIKeys, key)
+	a.mu.Unlock()
 
-	// Clear from cache
+	// Clear from cache after releasing mu to maintain consistent lock ordering
 	a.cacheMu.Lock()
 	delete(a.keyCache, key)
 	a.cacheMu.Unlock()

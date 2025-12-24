@@ -51,6 +51,9 @@ type CircuitBreaker struct {
 	totalFailures   int64
 	totalSuccesses  int64
 	totalRejected   int64
+
+	// Callback lifecycle management
+	callbackWg sync.WaitGroup
 }
 
 // NewCircuitBreaker creates a new circuit breaker
@@ -173,7 +176,12 @@ func (cb *CircuitBreaker) setState(newState string) {
 	cb.successes = 0
 
 	if cb.config.OnStateChange != nil {
-		go cb.config.OnStateChange(oldState, newState)
+		// Track callback goroutine for graceful shutdown
+		cb.callbackWg.Add(1)
+		go func(from, to string) {
+			defer cb.callbackWg.Done()
+			cb.config.OnStateChange(from, to)
+		}(oldState, newState)
 	}
 }
 
@@ -232,4 +240,10 @@ func (cb *CircuitBreaker) IsOpen() bool {
 	cb.mu.RLock()
 	defer cb.mu.RUnlock()
 	return cb.state == StateOpen
+}
+
+// Close waits for any pending state change callbacks to complete.
+// Call this during graceful shutdown to ensure all callbacks finish.
+func (cb *CircuitBreaker) Close() {
+	cb.callbackWg.Wait()
 }

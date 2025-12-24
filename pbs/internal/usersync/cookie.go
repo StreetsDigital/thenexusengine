@@ -156,9 +156,10 @@ func (c *Cookie) cleanExpired() {
 }
 
 // ToHTTPCookie converts to an http.Cookie for setting in response
+// Note: Uses Lock() instead of RLock() because trimToFit() may modify c.UIDs
 func (c *Cookie) ToHTTPCookie(domain string) (*http.Cookie, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	data, err := json.Marshal(c)
 	if err != nil {

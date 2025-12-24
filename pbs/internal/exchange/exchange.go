@@ -27,6 +27,10 @@ type Exchange struct {
 	config           *Config
 	fpdProcessor     *fpd.Processor
 	eidFilter        *fpd.EIDFilter
+
+	// configMu protects dynamicRegistry, fpdProcessor, eidFilter, and config.FPD
+	// for safe concurrent access during runtime config updates
+	configMu sync.RWMutex
 }
 
 // AuctionType defines the type of auction to run
@@ -237,11 +241,15 @@ func New(registry *adapters.Registry, config *Config) *Exchange {
 
 // SetDynamicRegistry sets the dynamic bidder registry
 func (e *Exchange) SetDynamicRegistry(dr *ortb.DynamicRegistry) {
+	e.configMu.Lock()
+	defer e.configMu.Unlock()
 	e.dynamicRegistry = dr
 }
 
 // GetDynamicRegistry returns the dynamic registry
 func (e *Exchange) GetDynamicRegistry() *ortb.DynamicRegistry {
+	e.configMu.RLock()
+	defer e.configMu.RUnlock()
 	return e.dynamicRegistry
 }
 
@@ -685,9 +693,16 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	// Get available bidders from static registry
 	availableBidders := e.registry.ListEnabledBidders()
 
+	// Snapshot config-protected fields under lock for consistent view during auction
+	e.configMu.RLock()
+	dynamicRegistry := e.dynamicRegistry
+	fpdProcessor := e.fpdProcessor
+	eidFilter := e.eidFilter
+	e.configMu.RUnlock()
+
 	// Add dynamic bidders if enabled
-	if e.config.DynamicBiddersEnabled && e.dynamicRegistry != nil {
-		dynamicCodes := e.dynamicRegistry.ListEnabledBidderCodes()
+	if e.config.DynamicBiddersEnabled && dynamicRegistry != nil {
+		dynamicCodes := dynamicRegistry.ListEnabledBidderCodes()
 		availableBidders = append(availableBidders, dynamicCodes...)
 	}
 
@@ -723,17 +738,17 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 
 	response.DebugInfo.SelectedBidders = selectedBidders
 
-	// Process FPD and filter EIDs
+	// Process FPD and filter EIDs (using snapshotted processor/filter for consistency)
 	var bidderFPD fpd.BidderFPD
-	if e.fpdProcessor != nil {
+	if fpdProcessor != nil {
 		// Filter EIDs first
-		if e.eidFilter != nil {
-			e.eidFilter.ProcessRequestEIDs(req.BidRequest)
+		if eidFilter != nil {
+			eidFilter.ProcessRequestEIDs(req.BidRequest)
 		}
 
 		// Process FPD for each bidder
 		var err error
-		bidderFPD, err = e.fpdProcessor.ProcessRequest(req.BidRequest, selectedBidders)
+		bidderFPD, err = fpdProcessor.ProcessRequest(req.BidRequest, selectedBidders)
 		if err != nil {
 			// Log error but continue - FPD is not critical
 			response.DebugInfo.AddError("fpd", []string{err.Error()})
@@ -958,6 +973,11 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 	var results sync.Map // P0-1: Thread-safe map for concurrent writes
 	var wg sync.WaitGroup
 
+	// Snapshot dynamicRegistry for consistent access during bidder calls
+	e.configMu.RLock()
+	dynamicRegistry := e.dynamicRegistry
+	e.configMu.RUnlock()
+
 	// P0-4: Create semaphore to limit concurrent bidder calls
 	maxConcurrent := e.config.MaxConcurrentBidders
 	if maxConcurrent <= 0 {
@@ -997,9 +1017,9 @@ func (e *Exchange) callBiddersWithFPD(ctx context.Context, req *openrtb.BidReque
 			continue
 		}
 
-		// Try dynamic registry
-		if e.dynamicRegistry != nil {
-			dynamicAdapter, found := e.dynamicRegistry.Get(bidderCode)
+		// Try dynamic registry (using snapshotted reference)
+		if dynamicRegistry != nil {
+			dynamicAdapter, found := dynamicRegistry.Get(bidderCode)
 			if found {
 				wg.Add(1)
 				go func(code string, da *ortb.GenericAdapter) {
@@ -1520,13 +1540,21 @@ func (e *Exchange) UpdateFPDConfig(config *fpd.Config) {
 		return
 	}
 
+	// Create new processor and filter before acquiring lock to minimize lock hold time
+	newProcessor := fpd.NewProcessor(config)
+	newFilter := fpd.NewEIDFilter(config)
+
+	e.configMu.Lock()
+	defer e.configMu.Unlock()
 	e.config.FPD = config
-	e.fpdProcessor = fpd.NewProcessor(config)
-	e.eidFilter = fpd.NewEIDFilter(config)
+	e.fpdProcessor = newProcessor
+	e.eidFilter = newFilter
 }
 
 // GetFPDConfig returns the current FPD configuration
 func (e *Exchange) GetFPDConfig() *fpd.Config {
+	e.configMu.RLock()
+	defer e.configMu.RUnlock()
 	if e.config == nil {
 		return nil
 	}
