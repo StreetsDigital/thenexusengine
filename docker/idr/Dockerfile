@@ -30,7 +30,8 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV IDR_PORT=5050
 ENV REDIS_URL=redis://redis:6379
-ENV TIMESCALE_URL=postgresql://postgres:postgres@timescaledb:5432/idr
+# TIMESCALE_URL must be provided at runtime - no default to prevent credential leaks
+# ENV TIMESCALE_URL=postgresql://user:password@host:5432/idr
 
 EXPOSE 5050
 

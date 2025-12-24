@@ -39,7 +39,7 @@ services:
     environment:
       - IDR_PORT=5050
       - REDIS_URL=redis://redis:6379
-      - TIMESCALE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-nexusengine}@timescaledb:5432/idr
+      - TIMESCALE_URL=postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@timescaledb:5432/idr
       - USE_MOCK_DB=${USE_MOCK_DB:-false}
     volumes:
       - ./config:/app/config:ro
@@ -80,7 +80,7 @@ services:
       - "${TIMESCALE_PORT:-5432}:5432"
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nexusengine}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       - POSTGRES_DB=idr
     volumes:
       - timescale-data:/var/lib/postgresql/data

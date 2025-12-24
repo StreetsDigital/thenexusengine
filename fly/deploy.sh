@@ -119,14 +119,51 @@ setup_secrets() {
     # Generate a default API key if not provided
     DEFAULT_API_KEY="${API_KEY_DEFAULT:-$(openssl rand -hex 32)}"
 
+    # Generate a secret key for session management
+    SECRET_KEY="${SECRET_KEY:-$(openssl rand -hex 32)}"
+
     echo ""
     echo "Setting API keys for authentication..."
     fly secrets set API_KEY_DEFAULT="$DEFAULT_API_KEY" -a "$IDR_APP"
     fly secrets set API_KEY_DEFAULT="$DEFAULT_API_KEY" -a "$PBS_APP"
 
     echo ""
-    log_info "API Key set. Save this for client access:"
-    echo "  API_KEY: $DEFAULT_API_KEY"
+    echo "Setting IDR admin secrets..."
+    fly secrets set SECRET_KEY="$SECRET_KEY" -a "$IDR_APP"
+
+    # Prompt for admin users
+    echo ""
+    log_info "Admin users configuration (required for dashboard access)"
+    echo "Format: username:bcrypt_hash,username2:bcrypt_hash2"
+    echo "Generate bcrypt hash: python3 -c \"import bcrypt; print(bcrypt.hashpw(b'password', bcrypt.gensalt()).decode())\""
+    echo ""
+    read -p "Enter ADMIN_USERS (or press Enter to skip): " ADMIN_USERS_INPUT
+
+    if [ -n "$ADMIN_USERS_INPUT" ]; then
+        fly secrets set ADMIN_USERS="$ADMIN_USERS_INPUT" -a "$IDR_APP"
+        log_info "Admin users configured"
+    else
+        log_warn "No admin users configured. Dashboard will be inaccessible until you set:"
+        echo "  fly secrets set ADMIN_USERS='admin:bcrypt_hash' -a $IDR_APP"
+    fi
+
+    # Write secrets to secure file (NOT the bcrypt hashes)
+    SECRETS_FILE=".fly-secrets"
+    cat > "$SECRETS_FILE" << EOF
+# The Nexus Engine - Fly.io Secrets
+# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+# DO NOT COMMIT THIS FILE
+
+API_KEY_DEFAULT=$DEFAULT_API_KEY
+SECRET_KEY=$SECRET_KEY
+
+# To use these with curl:
+# curl -H "X-API-Key: \$API_KEY_DEFAULT" https://$PBS_APP.fly.dev/openrtb2/auction
+EOF
+    chmod 600 "$SECRETS_FILE"
+    echo ""
+    log_info "Secrets saved to $SECRETS_FILE (chmod 600)"
+    log_warn "Keep this file secure and add to .gitignore"
     echo ""
 }
 

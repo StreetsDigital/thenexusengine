@@ -53,6 +53,7 @@ func main() {
 	cors := middleware.NewCORS(middleware.DefaultCORSConfig())
 	security := middleware.NewSecurity(nil) // Uses DefaultSecurityConfig()
 	auth := middleware.NewAuth(middleware.DefaultAuthConfig())
+	publisherAuth := middleware.NewPublisherAuth(middleware.DefaultPublisherAuthConfig())
 	rateLimiter := middleware.NewRateLimiter(middleware.DefaultRateLimitConfig())
 	sizeLimiter := middleware.NewSizeLimiter(middleware.DefaultSizeLimitConfig())
 	gzipMiddleware := middleware.NewGzip(middleware.DefaultGzipConfig())
@@ -87,6 +88,11 @@ func main() {
 		if err != nil {
 			log.Warn().Err(err).Msg("Failed to connect to Redis, dynamic bidders disabled")
 		} else {
+			// Set Redis client on auth middlewares for shared validation
+			auth.SetRedisClient(redisClient)
+			publisherAuth.SetRedisClient(redisClient)
+			log.Info().Msg("Redis client set for auth middlewares")
+
 			dynamicRegistry = ortb.NewDynamicRegistry(redisClient, 30*time.Second)
 			if err := dynamicRegistry.Start(context.Background()); err != nil {
 				log.Warn().Err(err).Msg("Failed to start dynamic registry")
@@ -182,15 +188,17 @@ func main() {
 		}
 	})
 
-	// Build middleware chain: CORS -> Security -> Logging -> Size Limit -> Auth -> Rate Limit -> Metrics -> Gzip -> Handler
+	// Build middleware chain: CORS -> Security -> Logging -> Size Limit -> Auth -> PublisherAuth -> Rate Limit -> Metrics -> Gzip -> Handler
 	// Note: CORS must be outermost to handle preflight OPTIONS requests
 	// Note: Security headers applied early to ensure all responses have them
-	// Note: Auth must run before Rate Limit so publisher ID is available for rate limiting
+	// Note: Auth handles API key auth for admin endpoints
+	// Note: PublisherAuth handles publisher validation for auction endpoints
 	// Note: Gzip is innermost so responses are compressed before being sent
 	handler := http.Handler(mux)
 	handler = gzipMiddleware.Middleware(handler) // Compress responses
 	handler = m.Middleware(handler)
 	handler = rateLimiter.Middleware(handler)
+	handler = publisherAuth.Middleware(handler) // Publisher auth for auction endpoints
 	handler = auth.Middleware(handler)
 	handler = sizeLimiter.Middleware(handler)
 	handler = loggingMiddleware(handler)

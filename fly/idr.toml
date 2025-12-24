@@ -23,6 +23,9 @@ primary_region = "iad"  # US East - change based on your users
   # 10% sampling reduces Redis commands by 90% while maintaining accuracy
   # At 40M req/month: ~60M Redis commands/month instead of ~600M
   REDIS_SAMPLE_RATE = "0.1"
+  # Admin dashboard settings
+  SESSION_COOKIE_SECURE = "true"  # HTTPS only
+  # ADMIN_USERS and SECRET_KEY must be set as secrets (not env vars)
 
 [http_service]
   internal_port = 5050

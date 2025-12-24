@@ -305,13 +305,26 @@ def create_app(config_path: Path | None = None) -> Flask:
     admin_users = _parse_admin_users()
     auth_enabled = bool(admin_users)
 
+    # P0 Security: Block unprotected access in production
+    # Only allow unprotected access if explicitly opted in via environment variable
+    allow_unprotected = os.environ.get("ADMIN_ALLOW_UNPROTECTED", "false").lower() == "true"
+
     if not auth_enabled:
-        print("\n" + "=" * 60)
-        print("  WARNING: No admin users configured!")
-        print("  The admin dashboard is UNPROTECTED.")
-        print("  Set ADMIN_USERS or ADMIN_USER_1/2/3 environment variables.")
-        print("  Example: ADMIN_USERS=admin:secretpass123")
-        print("=" * 60 + "\n")
+        if allow_unprotected:
+            print("\n" + "=" * 60)
+            print("  WARNING: Admin dashboard is UNPROTECTED!")
+            print("  This is ONLY acceptable for local development.")
+            print("  Set ADMIN_USERS for production.")
+            print("=" * 60 + "\n")
+        else:
+            print("\n" + "=" * 60)
+            print("  SECURITY: No admin users configured.")
+            print("  Admin dashboard access is BLOCKED.")
+            print("  Set ADMIN_USERS or ADMIN_USER_1/2/3 environment variables.")
+            print("  Example: ADMIN_USERS=admin:secretpass123")
+            print("")
+            print("  For local development only, set ADMIN_ALLOW_UNPROTECTED=true")
+            print("=" * 60 + "\n")
 
     def login_required(f):
         """Decorator to require authentication for a route."""
@@ -319,9 +332,18 @@ def create_app(config_path: Path | None = None) -> Flask:
         @wraps(f)
         def decorated_function(*args, **kwargs):
             if not auth_enabled:
-                # Auth disabled - allow access but set a warning
-                g.user = None
-                return f(*args, **kwargs)
+                if allow_unprotected:
+                    # Only allow unprotected access if explicitly opted in
+                    g.user = None
+                    return f(*args, **kwargs)
+                else:
+                    # Block access when no users configured (security default)
+                    if request.is_json:
+                        return jsonify({
+                            "error": "Admin authentication not configured",
+                            "message": "Set ADMIN_USERS environment variable to enable admin access"
+                        }), 403
+                    return render_template("login.html", error="Admin access is disabled. Configure ADMIN_USERS to enable.")
 
             if "user" not in session:
                 if request.is_json:

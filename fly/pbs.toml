@@ -25,6 +25,13 @@ primary_region = "iad"  # US East - change based on your users
   RATE_LIMIT_ENABLED = "true"
   RATE_LIMIT_RPS = "5000"
   MAX_REQUEST_SIZE = "1048576"  # 1MB
+  # Privacy compliance (GDPR/COPPA/CCPA)
+  PBS_ENFORCE_GDPR = "true"
+  PBS_ENFORCE_COPPA = "true"
+  PBS_ENFORCE_CCPA = "true"
+  PBS_PRIVACY_STRICT_MODE = "false"  # Set to true to reject on invalid consent
+  # Host URL for cookie sync (set to your actual domain)
+  PBS_HOST_URL = "https://nexus-pbs.fly.dev"
 
 [http_service]
   internal_port = 8000

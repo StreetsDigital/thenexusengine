@@ -3,19 +3,27 @@ TimescaleDB client for historical bidder performance data.
 
 Stores aggregated metrics for analytics, ML training, and long-term trends.
 Uses TimescaleDB hypertables for efficient time-series queries.
+
+Uses connection pooling for production reliability and performance.
 """
 
+import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Generator
+from urllib.parse import urlparse
 
 try:
     import psycopg2
     import psycopg2.extras
+    from psycopg2 import pool
 
     PSYCOPG2_AVAILABLE = True
 except ImportError:
     PSYCOPG2_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -178,13 +186,18 @@ SELECT add_retention_policy('bidder_performance', INTERVAL '365 days', if_not_ex
 
 class TimescaleClient:
     """
-    TimescaleDB client for historical bidder metrics.
+    TimescaleDB client for historical bidder metrics with connection pooling.
 
     Provides:
     - Recording bid events
     - Querying aggregated performance
     - Time-series analytics
+    - Thread-safe connection pooling
     """
+
+    # Default pool settings for production
+    DEFAULT_MIN_CONNECTIONS = 2
+    DEFAULT_MAX_CONNECTIONS = 10
 
     def __init__(
         self,
@@ -193,11 +206,25 @@ class TimescaleClient:
         database: str = "idr",
         user: str = "idr",
         password: str = "",
+        # Connection pool settings
+        min_connections: int = DEFAULT_MIN_CONNECTIONS,
+        max_connections: int = DEFAULT_MAX_CONNECTIONS,
+        # URL-based connection (overrides host/port/user/password/database)
+        url: str | None = None,
     ):
         if not PSYCOPG2_AVAILABLE:
             raise ImportError(
                 "psycopg2 not installed. Run: pip install psycopg2-binary"
             )
+
+        # Parse URL if provided
+        if url:
+            parsed = urlparse(url)
+            host = parsed.hostname or "localhost"
+            port = parsed.port or 5432
+            user = parsed.username or "postgres"
+            password = parsed.password or ""
+            database = parsed.path.lstrip("/") or "idr"
 
         self.connection_params = {
             "host": host,
@@ -206,26 +233,69 @@ class TimescaleClient:
             "user": user,
             "password": password,
         }
-        self._conn: Any | None = None
+        self._pool: pool.ThreadedConnectionPool | None = None
+        self._min_connections = min_connections
+        self._max_connections = max_connections
+        self._connected = False
 
     def connect(self) -> bool:
-        """Connect to TimescaleDB."""
+        """Create connection pool and verify connectivity."""
         try:
-            self._conn = psycopg2.connect(**self.connection_params)
+            self._pool = pool.ThreadedConnectionPool(
+                minconn=self._min_connections,
+                maxconn=self._max_connections,
+                **self.connection_params,
+            )
+            # Test the connection
+            conn = self._pool.getconn()
+            conn.cursor().execute("SELECT 1")
+            self._pool.putconn(conn)
+            self._connected = True
+            logger.info(
+                f"TimescaleDB pool created: {self.connection_params['host']}:{self.connection_params['port']}/{self.connection_params['database']} "
+                f"(min={self._min_connections}, max={self._max_connections})"
+            )
             return True
         except psycopg2.Error as e:
-            print(f"Failed to connect to TimescaleDB: {e}")
+            logger.warning(f"Failed to connect to TimescaleDB: {e}")
+            self._connected = False
             return False
 
     def close(self) -> None:
-        """Close connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        """Close all connections in the pool."""
+        if self._pool:
+            self._pool.closeall()
+            self._pool = None
+            self._connected = False
+            logger.info("TimescaleDB connection pool closed")
 
     @property
     def is_connected(self) -> bool:
-        return self._conn is not None and not self._conn.closed
+        return self._connected and self._pool is not None
+
+    @contextmanager
+    def get_connection(self) -> Generator[Any, None, None]:
+        """Get a connection from the pool with automatic return."""
+        if not self._pool:
+            raise RuntimeError("Connection pool not initialized. Call connect() first.")
+
+        conn = self._pool.getconn()
+        try:
+            yield conn
+        finally:
+            self._pool.putconn(conn)
+
+    def get_pool_stats(self) -> dict[str, Any]:
+        """Get connection pool statistics for monitoring."""
+        if not self._pool:
+            return {"pool_available": False}
+
+        # Note: psycopg2 pool doesn't expose detailed stats, so we provide config
+        return {
+            "pool_available": True,
+            "min_connections": self._min_connections,
+            "max_connections": self._max_connections,
+        }
 
     def initialize_schema(self) -> bool:
         """Create tables and hypertables if they don't exist."""
@@ -233,23 +303,23 @@ class TimescaleClient:
             return False
 
         try:
-            with self._conn.cursor() as cur:
-                # Split and execute statements separately
-                statements = [
-                    s.strip() for s in CREATE_TABLES_SQL.split(";") if s.strip()
-                ]
-                for stmt in statements:
-                    try:
-                        cur.execute(stmt)
-                    except psycopg2.Error as e:
-                        # Ignore "already exists" errors
-                        if "already exists" not in str(e):
-                            print(f"Warning: {e}")
-            self._conn.commit()
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Split and execute statements separately
+                    statements = [
+                        s.strip() for s in CREATE_TABLES_SQL.split(";") if s.strip()
+                    ]
+                    for stmt in statements:
+                        try:
+                            cur.execute(stmt)
+                        except psycopg2.Error as e:
+                            # Ignore "already exists" errors
+                            if "already exists" not in str(e):
+                                logger.warning(f"Schema init warning: {e}")
+                conn.commit()
             return True
         except psycopg2.Error as e:
-            print(f"Failed to initialize schema: {e}")
-            self._conn.rollback()
+            logger.error(f"Failed to initialize schema: {e}")
             return False
 
     # =========================================================================
@@ -283,42 +353,42 @@ class TimescaleClient:
             cleared_floor = bid_cpm >= floor_price
 
         try:
-            with self._conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO bid_events (
-                        time, auction_id, bidder_code, country, device_type,
-                        media_type, ad_size, publisher_id, had_bid, bid_cpm,
-                        won, win_cpm, latency_ms, timed_out, had_error,
-                        floor_price, cleared_floor
-                    ) VALUES (
-                        NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO bid_events (
+                            time, auction_id, bidder_code, country, device_type,
+                            media_type, ad_size, publisher_id, had_bid, bid_cpm,
+                            won, win_cpm, latency_ms, timed_out, had_error,
+                            floor_price, cleared_floor
+                        ) VALUES (
+                            NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        )
+                    """,
+                        (
+                            auction_id,
+                            bidder_code,
+                            country,
+                            device_type,
+                            media_type,
+                            ad_size,
+                            publisher_id,
+                            had_bid,
+                            bid_cpm,
+                            won,
+                            win_cpm,
+                            latency_ms,
+                            timed_out,
+                            had_error,
+                            floor_price,
+                            cleared_floor,
+                        ),
                     )
-                """,
-                    (
-                        auction_id,
-                        bidder_code,
-                        country,
-                        device_type,
-                        media_type,
-                        ad_size,
-                        publisher_id,
-                        had_bid,
-                        bid_cpm,
-                        won,
-                        win_cpm,
-                        latency_ms,
-                        timed_out,
-                        had_error,
-                        floor_price,
-                        cleared_floor,
-                    ),
-                )
-            self._conn.commit()
+                conn.commit()
             return True
         except psycopg2.Error as e:
-            print(f"Failed to record event: {e}")
-            self._conn.rollback()
+            logger.error(f"Failed to record event: {e}")
             return False
 
     def record_batch_events(self, events: list[dict]) -> int:
@@ -327,29 +397,29 @@ class TimescaleClient:
             return 0
 
         try:
-            with self._conn.cursor() as cur:
-                psycopg2.extras.execute_batch(
-                    cur,
-                    """
-                    INSERT INTO bid_events (
-                        time, auction_id, bidder_code, country, device_type,
-                        media_type, ad_size, publisher_id, had_bid, bid_cpm,
-                        won, win_cpm, latency_ms, timed_out, had_error,
-                        floor_price, cleared_floor
-                    ) VALUES (
-                        NOW(), %(auction_id)s, %(bidder_code)s, %(country)s, %(device_type)s,
-                        %(media_type)s, %(ad_size)s, %(publisher_id)s, %(had_bid)s, %(bid_cpm)s,
-                        %(won)s, %(win_cpm)s, %(latency_ms)s, %(timed_out)s, %(had_error)s,
-                        %(floor_price)s, %(cleared_floor)s
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    psycopg2.extras.execute_batch(
+                        cur,
+                        """
+                        INSERT INTO bid_events (
+                            time, auction_id, bidder_code, country, device_type,
+                            media_type, ad_size, publisher_id, had_bid, bid_cpm,
+                            won, win_cpm, latency_ms, timed_out, had_error,
+                            floor_price, cleared_floor
+                        ) VALUES (
+                            NOW(), %(auction_id)s, %(bidder_code)s, %(country)s, %(device_type)s,
+                            %(media_type)s, %(ad_size)s, %(publisher_id)s, %(had_bid)s, %(bid_cpm)s,
+                            %(won)s, %(win_cpm)s, %(latency_ms)s, %(timed_out)s, %(had_error)s,
+                            %(floor_price)s, %(cleared_floor)s
+                        )
+                    """,
+                        events,
                     )
-                """,
-                    events,
-                )
-            self._conn.commit()
+                conn.commit()
             return len(events)
         except psycopg2.Error as e:
-            print(f"Failed to record batch: {e}")
-            self._conn.rollback()
+            logger.error(f"Failed to record batch: {e}")
             return 0
 
     # =========================================================================
@@ -398,31 +468,32 @@ class TimescaleClient:
         """
 
         try:
-            with self._conn.cursor() as cur:
-                cur.execute(query, params)
-                row = cur.fetchone()
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    row = cur.fetchone()
 
-                if row and row[0] > 0:
-                    return BidderPerformance(
-                        bidder_code=bidder_code,
-                        time_bucket=datetime.now(),
-                        country=country or "",
-                        device_type=device_type or "",
-                        media_type=media_type or "",
-                        requests=row[0],
-                        bids=row[1],
-                        wins=row[2],
-                        timeouts=row[3],
-                        errors=row[4],
-                        total_bid_value=float(row[5]),
-                        total_win_value=float(row[6]),
-                        total_latency_ms=float(row[7]),
-                        floor_clears=row[8],
-                        floor_total=row[9],
-                    )
-                return None
+                    if row and row[0] > 0:
+                        return BidderPerformance(
+                            bidder_code=bidder_code,
+                            time_bucket=datetime.now(),
+                            country=country or "",
+                            device_type=device_type or "",
+                            media_type=media_type or "",
+                            requests=row[0],
+                            bids=row[1],
+                            wins=row[2],
+                            timeouts=row[3],
+                            errors=row[4],
+                            total_bid_value=float(row[5]),
+                            total_win_value=float(row[6]),
+                            total_latency_ms=float(row[7]),
+                            floor_clears=row[8],
+                            floor_total=row[9],
+                        )
+                    return None
         except psycopg2.Error as e:
-            print(f"Query failed: {e}")
+            logger.error(f"Query failed: {e}")
             return None
 
     def get_p95_latency(self, bidder_code: str, hours: int = 1) -> float:
@@ -431,19 +502,20 @@ class TimescaleClient:
             return 0.0
 
         try:
-            with self._conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
-                    FROM bid_events
-                    WHERE bidder_code = %s
-                    AND time > NOW() - INTERVAL '%s hours'
-                    AND latency_ms IS NOT NULL
-                """,
-                    (bidder_code, hours),
-                )
-                row = cur.fetchone()
-                return float(row[0]) if row and row[0] else 0.0
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
+                        FROM bid_events
+                        WHERE bidder_code = %s
+                        AND time > NOW() - INTERVAL '%s hours'
+                        AND latency_ms IS NOT NULL
+                    """,
+                        (bidder_code, hours),
+                    )
+                    row = cur.fetchone()
+                    return float(row[0]) if row and row[0] else 0.0
         except psycopg2.Error:
             return 0.0
 
@@ -453,50 +525,51 @@ class TimescaleClient:
             return []
 
         try:
-            with self._conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                        bidder_code,
-                        COUNT(*) as requests,
-                        COUNT(*) FILTER (WHERE had_bid) as bids,
-                        COUNT(*) FILTER (WHERE won) as wins,
-                        COUNT(*) FILTER (WHERE timed_out) as timeouts,
-                        COUNT(*) FILTER (WHERE had_error) as errors,
-                        COALESCE(SUM(bid_cpm) FILTER (WHERE had_bid), 0) as total_bid_value,
-                        COALESCE(SUM(win_cpm) FILTER (WHERE won), 0) as total_win_value,
-                        COALESCE(SUM(latency_ms), 0) as total_latency_ms,
-                        COUNT(*) FILTER (WHERE cleared_floor) as floor_clears,
-                        COUNT(*) FILTER (WHERE floor_price IS NOT NULL) as floor_total
-                    FROM bid_events
-                    WHERE time > NOW() - INTERVAL '%s hours'
-                    GROUP BY bidder_code
-                    ORDER BY requests DESC
-                """,
-                    (hours,),
-                )
-
-                results = []
-                for row in cur.fetchall():
-                    results.append(
-                        BidderPerformance(
-                            bidder_code=row[0],
-                            time_bucket=datetime.now(),
-                            requests=row[1],
-                            bids=row[2],
-                            wins=row[3],
-                            timeouts=row[4],
-                            errors=row[5],
-                            total_bid_value=float(row[6]),
-                            total_win_value=float(row[7]),
-                            total_latency_ms=float(row[8]),
-                            floor_clears=row[9],
-                            floor_total=row[10],
-                        )
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                            bidder_code,
+                            COUNT(*) as requests,
+                            COUNT(*) FILTER (WHERE had_bid) as bids,
+                            COUNT(*) FILTER (WHERE won) as wins,
+                            COUNT(*) FILTER (WHERE timed_out) as timeouts,
+                            COUNT(*) FILTER (WHERE had_error) as errors,
+                            COALESCE(SUM(bid_cpm) FILTER (WHERE had_bid), 0) as total_bid_value,
+                            COALESCE(SUM(win_cpm) FILTER (WHERE won), 0) as total_win_value,
+                            COALESCE(SUM(latency_ms), 0) as total_latency_ms,
+                            COUNT(*) FILTER (WHERE cleared_floor) as floor_clears,
+                            COUNT(*) FILTER (WHERE floor_price IS NOT NULL) as floor_total
+                        FROM bid_events
+                        WHERE time > NOW() - INTERVAL '%s hours'
+                        GROUP BY bidder_code
+                        ORDER BY requests DESC
+                    """,
+                        (hours,),
                     )
-                return results
+
+                    results = []
+                    for row in cur.fetchall():
+                        results.append(
+                            BidderPerformance(
+                                bidder_code=row[0],
+                                time_bucket=datetime.now(),
+                                requests=row[1],
+                                bids=row[2],
+                                wins=row[3],
+                                timeouts=row[4],
+                                errors=row[5],
+                                total_bid_value=float(row[6]),
+                                total_win_value=float(row[7]),
+                                total_latency_ms=float(row[8]),
+                                floor_clears=row[9],
+                                floor_total=row[10],
+                            )
+                        )
+                    return results
         except psycopg2.Error as e:
-            print(f"Query failed: {e}")
+            logger.error(f"Query failed: {e}")
             return []
 
 

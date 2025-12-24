@@ -7,19 +7,26 @@ Uses Redis hashes and sorted sets for efficient aggregation.
 Supports sampling to reduce Redis commands for high-traffic deployments.
 With 10% sampling (sample_rate=0.1), you get statistically accurate metrics
 while using 90% fewer Redis commands.
+
+Uses connection pooling for production reliability and performance.
 """
 
+import logging
 import random
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     import redis
+    from redis import ConnectionPool, BlockingConnectionPool
 
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
 
 
 # Default sampling rate (1.0 = 100%, 0.1 = 10%)
@@ -97,6 +104,13 @@ class RedisMetricsClient:
     METRICS_TTL = 3600  # 1 hour
     LATENCY_WINDOW = 300  # 5 minutes for P95 calculation
 
+    # Default pool settings for production
+    DEFAULT_MAX_CONNECTIONS = 20
+    DEFAULT_SOCKET_TIMEOUT = 5.0
+    DEFAULT_SOCKET_CONNECT_TIMEOUT = 2.0
+    DEFAULT_RETRY_ON_TIMEOUT = True
+    DEFAULT_HEALTH_CHECK_INTERVAL = 30
+
     def __init__(
         self,
         host: str = "localhost",
@@ -105,9 +119,17 @@ class RedisMetricsClient:
         password: str | None = None,
         decode_responses: bool = True,
         sample_rate: float = DEFAULT_SAMPLE_RATE,
+        # Connection pool settings
+        max_connections: int = DEFAULT_MAX_CONNECTIONS,
+        socket_timeout: float = DEFAULT_SOCKET_TIMEOUT,
+        socket_connect_timeout: float = DEFAULT_SOCKET_CONNECT_TIMEOUT,
+        retry_on_timeout: bool = DEFAULT_RETRY_ON_TIMEOUT,
+        health_check_interval: int = DEFAULT_HEALTH_CHECK_INTERVAL,
+        # URL-based connection (overrides host/port/password/db)
+        url: str | None = None,
     ):
         """
-        Initialize Redis metrics client.
+        Initialize Redis metrics client with connection pooling.
 
         Args:
             host: Redis host
@@ -118,34 +140,99 @@ class RedisMetricsClient:
             sample_rate: Sampling rate (0.0-1.0). Use 0.1 for 10% sampling
                         to reduce Redis commands by 90% while maintaining
                         statistical accuracy. Reads are automatically scaled.
+            max_connections: Maximum connections in the pool (default: 20)
+            socket_timeout: Timeout for socket operations in seconds (default: 5.0)
+            socket_connect_timeout: Timeout for socket connection in seconds (default: 2.0)
+            retry_on_timeout: Whether to retry on timeout (default: True)
+            health_check_interval: Seconds between health checks (default: 30)
+            url: Redis URL (e.g., redis://user:pass@host:6379/0). Overrides other connection params.
         """
         if not REDIS_AVAILABLE:
             raise ImportError("redis package not installed. Run: pip install redis")
 
-        self.client = redis.Redis(
-            host=host,
-            port=port,
-            db=db,
-            password=password,
+        # Create connection pool for production reliability
+        if url:
+            # Parse URL to extract parameters
+            parsed = urlparse(url)
+            pool_host = parsed.hostname or "localhost"
+            pool_port = parsed.port or 6379
+            pool_password = parsed.password
+            pool_db = int(parsed.path.lstrip("/") or 0)
+        else:
+            pool_host = host
+            pool_port = port
+            pool_password = password
+            pool_db = db
+
+        # Use BlockingConnectionPool for thread safety with blocking on max connections
+        self._pool = BlockingConnectionPool(
+            host=pool_host,
+            port=pool_port,
+            db=pool_db,
+            password=pool_password,
             decode_responses=decode_responses,
+            max_connections=max_connections,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_connect_timeout,
+            retry_on_timeout=retry_on_timeout,
+            health_check_interval=health_check_interval,
+            # Block for up to 5 seconds when pool is exhausted
+            timeout=5,
         )
+
+        self.client = redis.Redis(connection_pool=self._pool)
         self._connected = False
         self._sample_rate = max(0.01, min(1.0, sample_rate))  # Clamp to 1%-100%
         self._sample_multiplier = 1.0 / self._sample_rate
+        self._max_connections = max_connections
+
+        logger.info(
+            f"Redis connection pool initialized: {pool_host}:{pool_port}/{pool_db} "
+            f"(max_connections={max_connections})"
+        )
 
     def connect(self) -> bool:
         """Test connection to Redis."""
         try:
             self.client.ping()
             self._connected = True
+            logger.debug("Redis connection verified successfully")
             return True
-        except redis.ConnectionError:
+        except redis.ConnectionError as e:
             self._connected = False
+            logger.warning(f"Redis connection failed: {e}")
             return False
 
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    def close(self) -> None:
+        """Close all connections in the pool."""
+        if hasattr(self, "_pool"):
+            self._pool.disconnect()
+            self._connected = False
+            logger.info("Redis connection pool closed")
+
+    def get_pool_stats(self) -> dict[str, Any]:
+        """Get connection pool statistics for monitoring."""
+        if not hasattr(self, "_pool"):
+            return {"pool_available": False}
+
+        # Access pool internals safely
+        try:
+            in_use = len(getattr(self._pool, "_in_use_connections", set()))
+            available = len(getattr(self._pool, "_available_connections", []))
+        except AttributeError:
+            in_use = 0
+            available = 0
+
+        return {
+            "pool_available": True,
+            "max_connections": self._max_connections,
+            "in_use_connections": in_use,
+            "available_connections": available,
+        }
 
     @property
     def sample_rate(self) -> float:
@@ -426,13 +513,17 @@ class RedisMetricsClient:
                 self.client.delete(key)
 
     def get_stats(self) -> dict[str, Any]:
-        """Get Redis stats for monitoring."""
+        """Get Redis stats for monitoring (includes pool stats)."""
         info = self.client.info()
-        return {
+        stats = {
             "connected_clients": info.get("connected_clients", 0),
             "used_memory_human": info.get("used_memory_human", "0B"),
             "total_keys": self.client.dbsize(),
+            "sample_rate": self._sample_rate,
         }
+        # Add pool stats
+        stats.update(self.get_pool_stats())
+        return stats
 
 
 class MockRedisClient:
@@ -450,6 +541,17 @@ class MockRedisClient:
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    def close(self) -> None:
+        """Mock close - no-op for mock client."""
+        self._connected = False
+
+    def get_pool_stats(self) -> dict[str, Any]:
+        """Mock pool stats."""
+        return {
+            "pool_available": False,
+            "mock": True,
+        }
 
     @property
     def sample_rate(self) -> float:

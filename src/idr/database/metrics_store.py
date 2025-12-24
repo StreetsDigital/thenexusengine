@@ -119,6 +119,8 @@ class MetricsStore:
         timescale_password: str = "",
         use_mocks: bool = False,
         redis_sample_rate: float | None = None,
+        redis_url: str | None = None,
+        redis_max_connections: int = 20,
     ) -> "MetricsStore":
         """
         Factory method to create a configured MetricsStore.
@@ -127,12 +129,19 @@ class MetricsStore:
             redis_sample_rate: Sampling rate for Redis (0.0-1.0). Default from
                               REDIS_SAMPLE_RATE env var or 1.0. Use 0.1 for 10%
                               sampling to reduce Redis commands by 90%.
+            redis_url: Redis connection URL (overrides host/port). Falls back to
+                      REDIS_URL env var.
+            redis_max_connections: Maximum connections in the Redis pool (default: 20).
         """
         # Get sample rate from env var if not specified
         if redis_sample_rate is None:
             redis_sample_rate = float(
                 os.getenv("REDIS_SAMPLE_RATE", str(DEFAULT_SAMPLE_RATE))
             )
+
+        # Get Redis URL from env var if not specified
+        if redis_url is None:
+            redis_url = os.getenv("REDIS_URL")
 
         if use_mocks:
             return cls(
@@ -143,18 +152,21 @@ class MetricsStore:
         redis_client = None
         timescale_client = None
 
-        # Try to connect to Redis
+        # Try to connect to Redis (prefer URL-based connection for production)
         try:
             redis_client = RedisMetricsClient(
                 host=redis_host,
                 port=redis_port,
                 sample_rate=redis_sample_rate,
+                url=redis_url,
+                max_connections=redis_max_connections,
             )
             if not redis_client.connect():
                 print("Warning: Could not connect to Redis, using mock")
                 redis_client = MockRedisClient()
             else:
-                print(f"Redis connected with {redis_sample_rate:.0%} sampling rate")
+                pool_info = f"pool={redis_max_connections}" if redis_url else f"{redis_host}:{redis_port}"
+                print(f"Redis connected: {pool_info}, sampling={redis_sample_rate:.0%}")
         except ImportError:
             print("Warning: redis package not available, using mock")
             redis_client = MockRedisClient()
