@@ -18,8 +18,8 @@ info:
     name: The Nexus Engine Team
     url: https://github.com/StreetsDigital/thenexusengine
   license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    name: Proprietary
+    url: https://github.com/StreetsDigital/thenexusengine
 
 servers:
   - url: https://api.thenexusengine.com

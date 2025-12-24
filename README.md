@@ -65,7 +65,7 @@ The Nexus Engine combines a high-performance **Go-based Prebid Server** with a *
               ┌────────────────────────┼────────────────────────┐
               ▼                        ▼                        ▼
         ┌──────────┐            ┌──────────┐            ┌──────────┐
-        │ Rubicon  │            │ AppNexus │            │ PubMatic │  ... (22 static)
+        │ Rubicon  │            │ AppNexus │            │ PubMatic │  ... (23 adapters)
         └──────────┘            └──────────┘            └──────────┘
               │                        │                        │
               └────────────────────────┼────────────────────────┘
@@ -80,7 +80,7 @@ The Nexus Engine combines a high-performance **Go-based Prebid Server** with a *
 
 ## Features
 
-- **22 Prebid Bidder Adapters** - Premium SSPs, video/native specialists, regional partners
+- **23 Prebid Bidder Adapters** - Premium SSPs, video/native specialists, regional partners
 - **Dynamic OpenRTB Bidder Integration** - Add custom demand partners without code changes
 - **Intelligent Demand Routing** - ML-powered bidder selection for optimal yield
 - **Privacy Compliance** - GDPR/TCF, CCPA, COPPA filtering with GVL IDs
@@ -141,6 +141,34 @@ docker compose logs -f
 | `IDR_TIMEOUT_MS` | IDR request timeout | `50` |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379` |
 | `REDIS_SAMPLE_RATE` | Sampling rate for Redis (cost optimization) | `0.1` |
+
+### Privacy Enforcement
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PBS_ENFORCE_GDPR` | Enforce GDPR consent validation | `true` |
+| `PBS_ENFORCE_COPPA` | Block COPPA-flagged child-directed requests | `true` |
+| `PBS_ENFORCE_CCPA` | Enforce CCPA opt-out signals | `true` |
+| `PBS_PRIVACY_STRICT_MODE` | Reject requests with invalid/missing consent | `false` |
+
+### Publisher Authentication
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AUTH_ENABLED` | Enable API key authentication | `true` |
+| `API_KEY_DEFAULT` | Default API key for authentication | Required |
+| `PUBLISHER_AUTH_ENABLED` | Enable publisher ID validation | `false` |
+| `PUBLISHER_ALLOW_UNREGISTERED` | Allow requests without publisher ID | `true` |
+| `REGISTERED_PUBLISHERS` | Comma-separated list of allowed publisher IDs | `` |
+
+### Connection Pooling
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `REDIS_POOL_SIZE` | Redis connection pool size | `10` |
+| `REDIS_MIN_IDLE` | Minimum idle connections | `2` |
+| `HTTP_MAX_IDLE_CONNS` | HTTP client max idle connections | `100` |
+| `HTTP_MAX_CONNS_PER_HOST` | HTTP max connections per host | `10` |
 
 ### IDR Configuration
 
@@ -362,7 +390,7 @@ thenexusengine/
 │   │   │   ├── ortb/            # Dynamic OpenRTB adapter
 │   │   │   │   ├── ortb.go      # Generic adapter implementation
 │   │   │   │   └── registry.go  # Dynamic registry with Redis refresh
-│   │   │   └── ...              # 22 static bidder adapters
+│   │   │   └── ...              # 23 static bidder adapters
 │   │   ├── endpoints/           # HTTP handlers
 │   │   ├── middleware/          # Auth, rate limiting, metrics
 │   │   ├── fpd/                 # First-party data
@@ -397,7 +425,7 @@ thenexusengine/
 └── pyproject.toml               # Python project config
 ```
 
-## Supported Bidders (22)
+## Supported Bidders (23)
 
 | Category | Bidders | GVL IDs |
 |----------|---------|---------|
@@ -507,7 +535,7 @@ See [OpenRTB Bidder Integration Guide](docs/ortb-bidder-integration.md) for comp
 
 - [x] Core IDR (classifier, scorer, selector)
 - [x] PBS Core (OpenRTB, auction, exchange)
-- [x] 22 Bidder adapters with GVL IDs
+- [x] 23 Bidder adapters with GVL IDs
 - [x] Dynamic OpenRTB bidder integration (custom demand sources)
 - [x] Supply Chain (SChain) augmentation per bidder
 - [x] Privacy compliance (GDPR/TCF, CCPA, COPPA)
@@ -532,10 +560,16 @@ Proprietary - The Nexus Engine
 
 ## Links
 
+### Internal Documentation
 - [OpenAPI Documentation](docs/api/openapi.yaml)
 - [Docker Setup Guide](docs/docker-setup.md)
+- [Production Setup Guide](fly/PRODUCTION_SETUP.md)
 - [OpenRTB Bidder Integration](docs/ortb-bidder-integration.md)
 - [Publisher Integration Guide](docs/publisher-integration.md)
+- [Lightsail Deployment](docs/lightsail-deployment.md)
+- [Runbook](docs/runbook.md)
+
+### External References
 - [Prebid Server (Go)](https://github.com/prebid/prebid-server)
 - [OpenRTB 2.5 Spec](https://www.iab.com/wp-content/uploads/2016/03/OpenRTB-API-Specification-Version-2-5-FINAL.pdf)
 - [Prebid.js Documentation](https://docs.prebid.org/)

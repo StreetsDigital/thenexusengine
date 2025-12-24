@@ -81,6 +81,16 @@ IDR_ENABLED=true
 IDR_TIMEOUT_MS=50
 REDIS_SAMPLE_RATE=0.1
 
+# Privacy enforcement
+PBS_ENFORCE_GDPR=true
+PBS_ENFORCE_COPPA=true
+PBS_ENFORCE_CCPA=true
+PBS_PRIVACY_STRICT_MODE=false
+
+# Authentication
+AUTH_ENABLED=true
+API_KEY_DEFAULT=$(openssl rand -hex 32)
+
 # Admin authentication (REQUIRED - change these!)
 ADMIN_USERS=admin:$(openssl rand -base64 16),ops:$(openssl rand -base64 16),devops:$(openssl rand -base64 16)
 EOF
@@ -381,6 +391,9 @@ docker compose -f docker-compose.prod.yml logs pbs | grep -i error
 ## Security Checklist
 
 - [ ] Strong POSTGRES_PASSWORD in .env
+- [ ] API_KEY_DEFAULT configured for PBS authentication
+- [ ] Admin users configured (ADMIN_USERS)
+- [ ] Privacy enforcement enabled (GDPR, COPPA, CCPA)
 - [ ] Firewall rules restrict access appropriately
 - [ ] TLS enabled for production traffic
 - [ ] Regular backups configured

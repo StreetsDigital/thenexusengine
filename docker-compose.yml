@@ -20,6 +20,17 @@ services:
       - IDR_TIMEOUT_MS=${IDR_TIMEOUT_MS:-50}
       - EVENT_RECORD_ENABLED=${EVENT_RECORD_ENABLED:-true}
       - EVENT_BUFFER_SIZE=${EVENT_BUFFER_SIZE:-100}
+      # Privacy enforcement
+      - PBS_ENFORCE_GDPR=${PBS_ENFORCE_GDPR:-true}
+      - PBS_ENFORCE_COPPA=${PBS_ENFORCE_COPPA:-true}
+      - PBS_ENFORCE_CCPA=${PBS_ENFORCE_CCPA:-true}
+      - PBS_PRIVACY_STRICT_MODE=${PBS_PRIVACY_STRICT_MODE:-false}
+      # Authentication
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+      - API_KEY_DEFAULT=${API_KEY_DEFAULT:-}
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
     depends_on:
       idr:
         condition: service_healthy
@@ -41,6 +52,10 @@ services:
       - REDIS_URL=redis://redis:6379
       - TIMESCALE_URL=postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@timescaledb:5432/idr
       - USE_MOCK_DB=${USE_MOCK_DB:-false}
+      - REDIS_SAMPLE_RATE=${REDIS_SAMPLE_RATE:-0.1}
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
     volumes:
       - ./config:/app/config:ro
     depends_on:

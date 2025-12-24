@@ -73,6 +73,16 @@ REDIS_SAMPLE_RATE=0.1   # 10% sampling reduces costs by 90%
 EVENT_RECORD_ENABLED=true
 EVENT_BUFFER_SIZE=100
 
+# Privacy Enforcement
+PBS_ENFORCE_GDPR=true       # Enforce GDPR consent validation
+PBS_ENFORCE_COPPA=true      # Block COPPA-flagged requests
+PBS_ENFORCE_CCPA=true       # Enforce CCPA opt-out signals
+PBS_PRIVACY_STRICT_MODE=false  # Reject on invalid/missing consent
+
+# Authentication
+AUTH_ENABLED=true
+API_KEY_DEFAULT=your-secure-api-key-here
+
 # Database
 POSTGRES_PASSWORD=nexusengine
 USE_MOCK_DB=false
@@ -348,7 +358,7 @@ See the main [README.md](../README.md) for more deployment options.
 
 ## Supported Bidders
 
-The Nexus Engine supports **22 bidder adapters** across categories:
+The Nexus Engine supports **23 bidder adapters** across categories:
 
 - **Premium SSPs**: AppNexus, Rubicon, PubMatic, OpenX, Index Exchange
 - **Mid-tier**: TripleLift, Sovrn, Sharethrough, GumGum, 33Across, Criteo

@@ -399,6 +399,36 @@ pbjs.setConfig({
 });
 ```
 
+### COPPA (Child-Directed Content)
+
+If your site or ad unit serves child-directed content, you **must** set the COPPA flag:
+
+```javascript
+pbjs.setConfig({
+  coppa: true  // Set for child-directed ad requests
+});
+```
+
+**Important:** When COPPA is flagged:
+- The Nexus Engine will block the request by default (`PBS_ENFORCE_COPPA=true`)
+- No behavioral targeting or user ID modules will be used
+- Bidders must be COPPA-compliant to participate
+
+For mixed-audience sites, set COPPA per ad unit:
+
+```javascript
+{
+  code: 'kids-section-ad',
+  mediaTypes: { banner: { sizes: [[300, 250]] } },
+  ortb2Imp: {
+    ext: {
+      data: { coppa: 1 }  // COPPA flag for this unit only
+    }
+  },
+  bids: [/* ... */]
+}
+```
+
 ### User ID Modules
 
 Enable user ID modules for better match rates:
