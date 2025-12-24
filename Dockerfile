@@ -4,7 +4,7 @@
 # ====================
 # Stage 1: Build Go PBS Server
 # ====================
-FROM golang:1.25-alpine AS go-builder
+FROM golang:1.23-alpine AS go-builder
 
 WORKDIR /build
 
@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /build/pbs-server ./cm
 # ====================
 # Stage 2: Build Python IDR Service
 # ====================
-FROM python:3.14-slim AS python-builder
+FROM python:3.12-slim AS python-builder
 
 WORKDIR /build
 
@@ -46,7 +46,7 @@ RUN pip wheel --no-cache-dir -w /wheels -e ".[admin,db]"
 # ====================
 # Stage 3: Runtime - PBS Server (default)
 # ====================
-FROM alpine:3.23 AS pbs
+FROM alpine:3.20 AS pbs
 
 WORKDIR /app
 
@@ -80,7 +80,7 @@ CMD ["/app/pbs-server"]
 # ====================
 # Stage 4: Runtime - IDR Service
 # ====================
-FROM python:3.14-slim AS idr
+FROM python:3.12-slim AS idr
 
 WORKDIR /app
 

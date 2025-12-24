@@ -77,12 +77,18 @@ type clientState struct {
 	lastCheck time.Time
 }
 
+// RateLimitMetrics defines the metrics interface for rate limiter
+type RateLimitMetrics interface {
+	IncRateLimitRejected()
+}
+
 // RateLimiter provides rate limiting middleware using token bucket algorithm
 type RateLimiter struct {
 	config  *RateLimitConfig
 	clients map[string]*clientState
 	mu      sync.Mutex
 	stopCh  chan struct{}
+	metrics RateLimitMetrics
 }
 
 // NewRateLimiter creates a new rate limiter
@@ -149,6 +155,10 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 
 		// Check rate limit
 		if !rl.allow(clientID) {
+			// Record metric for rate limit rejection
+			if rl.metrics != nil {
+				rl.metrics.IncRateLimitRejected()
+			}
 			w.Header().Set("Retry-After", "1")
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.config.RequestsPerSecond))
 			w.Header().Set("X-RateLimit-Remaining", "0")
@@ -297,4 +307,11 @@ func (rl *RateLimiter) SetBurstSize(burst int) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	rl.config.BurstSize = burst
+}
+
+// SetMetrics sets the metrics interface for the rate limiter
+func (rl *RateLimiter) SetMetrics(m RateLimitMetrics) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.metrics = m
 }

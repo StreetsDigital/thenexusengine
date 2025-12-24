@@ -359,3 +359,15 @@ func (m *Metrics) RecordConsentSignal(signalType string, hasConsent bool) {
 	}
 	m.ConsentSignals.WithLabelValues(signalType, consent).Inc()
 }
+
+// IncRateLimitRejected increments the rate limit rejected counter
+// Implements middleware.RateLimitMetrics interface
+func (m *Metrics) IncRateLimitRejected() {
+	m.RateLimitRejected.Inc()
+}
+
+// IncAuthFailures increments the auth failures counter
+// Implements middleware.AuthMetrics interface
+func (m *Metrics) IncAuthFailures() {
+	m.AuthFailures.Inc()
+}

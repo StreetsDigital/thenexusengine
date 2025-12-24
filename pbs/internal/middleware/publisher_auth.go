@@ -26,10 +26,20 @@ type PublisherAuthConfig struct {
 }
 
 // DefaultPublisherAuthConfig returns default config
+// SECURITY: Publisher auth is ENABLED by default in production mode
+// Set PUBLISHER_AUTH_ENABLED=false explicitly to disable (development only)
 func DefaultPublisherAuthConfig() *PublisherAuthConfig {
+	// Production-secure default: enabled unless explicitly disabled
+	enabled := os.Getenv("PUBLISHER_AUTH_ENABLED") != "false"
+
+	// In development mode (AUTH_ENABLED=false), also allow unregistered publishers
+	// This maintains backward compatibility while being secure by default
+	devMode := os.Getenv("AUTH_ENABLED") == "false"
+	allowUnregistered := os.Getenv("PUBLISHER_ALLOW_UNREGISTERED") == "true" || devMode
+
 	return &PublisherAuthConfig{
-		Enabled:           os.Getenv("PUBLISHER_AUTH_ENABLED") == "true",
-		AllowUnregistered: os.Getenv("PUBLISHER_ALLOW_UNREGISTERED") == "true",
+		Enabled:           enabled,
+		AllowUnregistered: allowUnregistered,
 		RegisteredPubs:    parsePublishers(os.Getenv("REGISTERED_PUBLISHERS")),
 		ValidateDomain:    os.Getenv("PUBLISHER_VALIDATE_DOMAIN") == "true",
 		RateLimitPerPub:   100, // Default 100 RPS per publisher

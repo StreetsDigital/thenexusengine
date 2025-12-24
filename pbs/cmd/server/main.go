@@ -58,6 +58,10 @@ func main() {
 	sizeLimiter := middleware.NewSizeLimiter(middleware.DefaultSizeLimitConfig())
 	gzipMiddleware := middleware.NewGzip(middleware.DefaultGzipConfig())
 
+	// Wire up metrics to middleware for observability
+	auth.SetMetrics(m)
+	rateLimiter.SetMetrics(m)
+
 	log.Info().
 		Bool("cors_enabled", true).
 		Bool("security_headers_enabled", security.GetConfig().Enabled).
@@ -66,6 +70,8 @@ func main() {
 		Msg("Middleware initialized")
 
 	// Configure exchange
+	// P0: Currency conversion ENABLED by default for proper multi-currency support
+	currencyConvEnabled := os.Getenv("CURRENCY_CONVERSION_ENABLED") != "false"
 	config := &exchange.Config{
 		DefaultTimeout:     *timeout,
 		MaxBidders:         50,
@@ -73,7 +79,7 @@ func main() {
 		IDRServiceURL:      *idrURL,
 		EventRecordEnabled: true,
 		EventBufferSize:    100,
-		CurrencyConv:       false,
+		CurrencyConv:       currencyConvEnabled,
 		DefaultCurrency:    "USD",
 	}
 

@@ -69,10 +69,16 @@ func parseAPIKeys(envValue string) map[string]string {
 	return keys
 }
 
+// AuthMetrics defines the metrics interface for auth middleware
+type AuthMetrics interface {
+	IncAuthFailures()
+}
+
 // Auth provides API key authentication middleware
 type Auth struct {
 	config      *AuthConfig
 	redisClient RedisClient
+	metrics     AuthMetrics // P0: Metrics for auth failures
 	mu          sync.RWMutex
 	// Cache for Redis lookups (reduces latency)
 	keyCache     map[string]cachedKey
@@ -146,6 +152,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		}
 
 		if apiKey == "" {
+			a.recordAuthFailure()
 			http.Error(w, `{"error":"missing API key"}`, http.StatusUnauthorized)
 			return
 		}
@@ -153,6 +160,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		// Validate API key
 		publisherID, valid := a.validateKey(r.Context(), apiKey)
 		if !valid {
+			a.recordAuthFailure()
 			http.Error(w, `{"error":"invalid API key"}`, http.StatusForbidden)
 			return
 		}
@@ -302,4 +310,21 @@ func (a *Auth) IsEnabled() bool {
 // GetPublisherID returns the publisher ID for a given API key
 func (a *Auth) GetPublisherID(ctx context.Context, key string) (string, bool) {
 	return a.validateKey(ctx, key)
+}
+
+// SetMetrics sets the metrics interface for auth middleware
+func (a *Auth) SetMetrics(m AuthMetrics) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.metrics = m
+}
+
+// recordAuthFailure increments the auth failures metric if available
+func (a *Auth) recordAuthFailure() {
+	a.mu.RLock()
+	m := a.metrics
+	a.mu.RUnlock()
+	if m != nil {
+		m.IncAuthFailures()
+	}
 }
