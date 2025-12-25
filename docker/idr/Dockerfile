@@ -39,4 +39,4 @@ EXPOSE 5050
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5050/health')" || exit 1
 
-CMD ["python", "run_admin.py", "--host", "0.0.0.0", "--port", "5050"]
+CMD ["python", "run_admin.py", "--host", "0.0.0.0", "--port", "5050", "--no-debug"]
