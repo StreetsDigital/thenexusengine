@@ -1,60 +1,45 @@
 // Package teads implements the Teads bidder adapter (native/video specialist)
+// P2-5: Refactored to use SimpleAdapter base to reduce duplication
 package teads
 
 import (
-	"encoding/json"
-	"net/http"
-
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters"
-	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 )
 
-const defaultEndpoint = "https://a.teads.tv/prebid-server/bid-request"
+const (
+	bidderCode      = "teads"
+	defaultEndpoint = "https://a.teads.tv/prebid-server/bid-request"
+	gvlVendorID     = 132
+)
 
-type Adapter struct{ endpoint string }
+// Adapter wraps SimpleAdapter for Teads
+type Adapter struct {
+	*adapters.SimpleAdapter
+}
 
+// New creates a new Teads adapter
 func New(endpoint string) *Adapter {
 	if endpoint == "" {
 		endpoint = defaultEndpoint
 	}
-	return &Adapter{endpoint: endpoint}
+	return &Adapter{
+		SimpleAdapter: adapters.NewSimpleAdapter(bidderCode, endpoint, adapters.BidTypeVideo),
+	}
 }
 
-func (a *Adapter) MakeRequests(request *openrtb.BidRequest, extraInfo *adapters.ExtraRequestInfo) ([]*adapters.RequestData, []error) {
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, []error{err}
-	}
-	headers := http.Header{}
-	headers.Set("Content-Type", "application/json")
-	return []*adapters.RequestData{{Method: "POST", URI: a.endpoint, Body: body, Headers: headers}}, nil
-}
-
-func (a *Adapter) MakeBids(request *openrtb.BidRequest, responseData *adapters.ResponseData) (*adapters.BidderResponse, []error) {
-	if responseData.StatusCode != http.StatusOK {
-		return nil, nil
-	}
-	var bidResp openrtb.BidResponse
-	if err := json.Unmarshal(responseData.Body, &bidResp); err != nil {
-		return nil, []error{err}
-	}
-	response := &adapters.BidderResponse{Currency: bidResp.Cur, ResponseID: bidResp.ID, Bids: make([]*adapters.TypedBid, 0)}
-	for _, sb := range bidResp.SeatBid {
-		for i := range sb.Bid {
-			response.Bids = append(response.Bids, &adapters.TypedBid{Bid: &sb.Bid[i], BidType: adapters.BidTypeVideo})
-		}
-	}
-	return response, nil
-}
-
+// Info returns Teads bidder information
 func Info() adapters.BidderInfo {
 	return adapters.BidderInfo{
-		Enabled: true, GVLVendorID: 132, Endpoint: defaultEndpoint,
-		Maintainer: &adapters.MaintainerInfo{Email: "prebid-support@teads.com"},
+		Enabled:     true,
+		GVLVendorID: gvlVendorID,
+		Endpoint:    defaultEndpoint,
+		Maintainer:  &adapters.MaintainerInfo{Email: "prebid-support@teads.com"},
 		Capabilities: &adapters.CapabilitiesInfo{
 			Site: &adapters.PlatformInfo{MediaTypes: []adapters.BidType{adapters.BidTypeBanner, adapters.BidTypeVideo}},
 		},
 	}
 }
 
-func init() { adapters.RegisterAdapter("teads", New(""), Info()) }
+func init() {
+	adapters.RegisterAdapter(bidderCode, New(""), Info())
+}

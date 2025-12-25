@@ -2,7 +2,9 @@
 package adapters
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 )
@@ -125,4 +127,90 @@ func GetBidType(bid *openrtb.Bid, request *openrtb.BidRequest) BidType {
 		}
 	}
 	return BidTypeBanner
+}
+
+// P2-5: SimpleAdapter provides common OpenRTB adapter functionality
+// Simple bidders can embed this to reduce boilerplate code.
+// This handles the common pattern of: POST JSON -> Parse JSON response -> Extract bids
+type SimpleAdapter struct {
+	BidderCode    string  // Bidder code for error messages
+	Endpoint      string  // Bidder endpoint URL
+	DefaultBidType BidType // Default bid type if can't be determined from impression
+}
+
+// NewSimpleAdapter creates a new SimpleAdapter with the given configuration
+func NewSimpleAdapter(bidderCode, endpoint string, defaultBidType BidType) *SimpleAdapter {
+	return &SimpleAdapter{
+		BidderCode:    bidderCode,
+		Endpoint:      endpoint,
+		DefaultBidType: defaultBidType,
+	}
+}
+
+// MakeRequests implements the standard ORTB JSON POST pattern
+func (a *SimpleAdapter) MakeRequests(request *openrtb.BidRequest, extraInfo *ExtraRequestInfo) ([]*RequestData, []error) {
+	body, err := json.Marshal(request)
+	if err != nil {
+		return nil, []error{NewMarshalError(a.BidderCode, err)}
+	}
+
+	headers := http.Header{}
+	headers.Set("Content-Type", "application/json")
+	headers.Set("Accept", "application/json")
+
+	return []*RequestData{{
+		Method:  "POST",
+		URI:     a.Endpoint,
+		Body:    body,
+		Headers: headers,
+	}}, nil
+}
+
+// MakeBids implements the standard ORTB response parsing pattern
+func (a *SimpleAdapter) MakeBids(request *openrtb.BidRequest, responseData *ResponseData) (*BidderResponse, []error) {
+	if responseData.StatusCode == http.StatusNoContent {
+		return nil, nil // No bids
+	}
+	if responseData.StatusCode != http.StatusOK {
+		return nil, []error{NewBadStatusError(a.BidderCode, responseData.StatusCode)}
+	}
+
+	var bidResp openrtb.BidResponse
+	if err := json.Unmarshal(responseData.Body, &bidResp); err != nil {
+		return nil, []error{NewParseError(a.BidderCode, err)}
+	}
+
+	// Build impression map for O(1) bid type lookup
+	impMap := BuildImpMap(request.Imp)
+
+	response := &BidderResponse{
+		Currency:   bidResp.Cur,
+		ResponseID: bidResp.ID,
+		Bids:       make([]*TypedBid, 0, len(bidResp.SeatBid)),
+	}
+
+	for _, seatBid := range bidResp.SeatBid {
+		for i := range seatBid.Bid {
+			bid := &seatBid.Bid[i]
+			bidType := a.DefaultBidType
+			if bidType == "" {
+				bidType = GetBidTypeFromMap(bid, impMap)
+			}
+			response.Bids = append(response.Bids, &TypedBid{
+				Bid:     bid,
+				BidType: bidType,
+			})
+		}
+	}
+
+	return response, nil
+}
+
+// MakeBidsWithType is a convenience wrapper that always uses the default bid type
+func (a *SimpleAdapter) MakeBidsWithType(request *openrtb.BidRequest, responseData *ResponseData, bidType BidType) (*BidderResponse, []error) {
+	orig := a.DefaultBidType
+	a.DefaultBidType = bidType
+	result, errs := a.MakeBids(request, responseData)
+	a.DefaultBidType = orig
+	return result, errs
 }

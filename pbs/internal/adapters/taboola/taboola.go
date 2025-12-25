@@ -1,60 +1,45 @@
 // Package taboola implements the Taboola bidder adapter (native specialist)
+// P2-5: Refactored to use SimpleAdapter base to reduce duplication
 package taboola
 
 import (
-	"encoding/json"
-	"net/http"
-
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters"
-	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 )
 
-const defaultEndpoint = "https://prebid-server.production.taboolasyndication.com/openrtb/2.5"
+const (
+	bidderCode      = "taboola"
+	defaultEndpoint = "https://prebid-server.production.taboolasyndication.com/openrtb/2.5"
+	gvlVendorID     = 42
+)
 
-type Adapter struct{ endpoint string }
+// Adapter wraps SimpleAdapter for Taboola
+type Adapter struct {
+	*adapters.SimpleAdapter
+}
 
+// New creates a new Taboola adapter
 func New(endpoint string) *Adapter {
 	if endpoint == "" {
 		endpoint = defaultEndpoint
 	}
-	return &Adapter{endpoint: endpoint}
+	return &Adapter{
+		SimpleAdapter: adapters.NewSimpleAdapter(bidderCode, endpoint, adapters.BidTypeNative),
+	}
 }
 
-func (a *Adapter) MakeRequests(request *openrtb.BidRequest, extraInfo *adapters.ExtraRequestInfo) ([]*adapters.RequestData, []error) {
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, []error{err}
-	}
-	headers := http.Header{}
-	headers.Set("Content-Type", "application/json")
-	return []*adapters.RequestData{{Method: "POST", URI: a.endpoint, Body: body, Headers: headers}}, nil
-}
-
-func (a *Adapter) MakeBids(request *openrtb.BidRequest, responseData *adapters.ResponseData) (*adapters.BidderResponse, []error) {
-	if responseData.StatusCode != http.StatusOK {
-		return nil, nil
-	}
-	var bidResp openrtb.BidResponse
-	if err := json.Unmarshal(responseData.Body, &bidResp); err != nil {
-		return nil, []error{err}
-	}
-	response := &adapters.BidderResponse{Currency: bidResp.Cur, ResponseID: bidResp.ID, Bids: make([]*adapters.TypedBid, 0)}
-	for _, sb := range bidResp.SeatBid {
-		for i := range sb.Bid {
-			response.Bids = append(response.Bids, &adapters.TypedBid{Bid: &sb.Bid[i], BidType: adapters.BidTypeNative})
-		}
-	}
-	return response, nil
-}
-
+// Info returns Taboola bidder information
 func Info() adapters.BidderInfo {
 	return adapters.BidderInfo{
-		Enabled: true, GVLVendorID: 42, Endpoint: defaultEndpoint,
-		Maintainer: &adapters.MaintainerInfo{Email: "prebid.prebid@taboola.com"},
+		Enabled:     true,
+		GVLVendorID: gvlVendorID,
+		Endpoint:    defaultEndpoint,
+		Maintainer:  &adapters.MaintainerInfo{Email: "prebid.prebid@taboola.com"},
 		Capabilities: &adapters.CapabilitiesInfo{
 			Site: &adapters.PlatformInfo{MediaTypes: []adapters.BidType{adapters.BidTypeBanner, adapters.BidTypeNative}},
 		},
 	}
 }
 
-func init() { adapters.RegisterAdapter("taboola", New(""), Info()) }
+func init() {
+	adapters.RegisterAdapter(bidderCode, New(""), Info())
+}

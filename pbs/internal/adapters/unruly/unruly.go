@@ -1,60 +1,45 @@
 // Package unruly implements the Unruly bidder adapter (video specialist)
+// P2-5: Refactored to use SimpleAdapter base to reduce duplication
 package unruly
 
 import (
-	"encoding/json"
-	"net/http"
-
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters"
-	"github.com/StreetsDigital/thenexusengine/pbs/internal/openrtb"
 )
 
-const defaultEndpoint = "https://targeting.unrulymedia.com/openrtb/2.2"
+const (
+	bidderCode      = "unruly"
+	defaultEndpoint = "https://targeting.unrulymedia.com/openrtb/2.2"
+	gvlVendorID     = 36
+)
 
-type Adapter struct{ endpoint string }
+// Adapter wraps SimpleAdapter for Unruly
+type Adapter struct {
+	*adapters.SimpleAdapter
+}
 
+// New creates a new Unruly adapter
 func New(endpoint string) *Adapter {
 	if endpoint == "" {
 		endpoint = defaultEndpoint
 	}
-	return &Adapter{endpoint: endpoint}
+	return &Adapter{
+		SimpleAdapter: adapters.NewSimpleAdapter(bidderCode, endpoint, adapters.BidTypeVideo),
+	}
 }
 
-func (a *Adapter) MakeRequests(request *openrtb.BidRequest, extraInfo *adapters.ExtraRequestInfo) ([]*adapters.RequestData, []error) {
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, []error{err}
-	}
-	headers := http.Header{}
-	headers.Set("Content-Type", "application/json")
-	return []*adapters.RequestData{{Method: "POST", URI: a.endpoint, Body: body, Headers: headers}}, nil
-}
-
-func (a *Adapter) MakeBids(request *openrtb.BidRequest, responseData *adapters.ResponseData) (*adapters.BidderResponse, []error) {
-	if responseData.StatusCode != http.StatusOK {
-		return nil, nil
-	}
-	var bidResp openrtb.BidResponse
-	if err := json.Unmarshal(responseData.Body, &bidResp); err != nil {
-		return nil, []error{err}
-	}
-	response := &adapters.BidderResponse{Currency: bidResp.Cur, ResponseID: bidResp.ID, Bids: make([]*adapters.TypedBid, 0)}
-	for _, sb := range bidResp.SeatBid {
-		for i := range sb.Bid {
-			response.Bids = append(response.Bids, &adapters.TypedBid{Bid: &sb.Bid[i], BidType: adapters.BidTypeVideo})
-		}
-	}
-	return response, nil
-}
-
+// Info returns Unruly bidder information
 func Info() adapters.BidderInfo {
 	return adapters.BidderInfo{
-		Enabled: true, GVLVendorID: 36, Endpoint: defaultEndpoint,
-		Maintainer: &adapters.MaintainerInfo{Email: "prebid@unruly.co"},
+		Enabled:     true,
+		GVLVendorID: gvlVendorID,
+		Endpoint:    defaultEndpoint,
+		Maintainer:  &adapters.MaintainerInfo{Email: "prebid@unruly.co"},
 		Capabilities: &adapters.CapabilitiesInfo{
 			Site: &adapters.PlatformInfo{MediaTypes: []adapters.BidType{adapters.BidTypeBanner, adapters.BidTypeVideo}},
 		},
 	}
 }
 
-func init() { adapters.RegisterAdapter("unruly", New(""), Info()) }
+func init() {
+	adapters.RegisterAdapter(bidderCode, New(""), Info())
+}
