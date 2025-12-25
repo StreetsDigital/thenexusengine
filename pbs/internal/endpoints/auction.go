@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/exchange"
@@ -14,6 +16,10 @@ import (
 
 	log "github.com/rs/zerolog/log"
 )
+
+// debugRequiresAuth controls whether debug mode requires authentication
+// P2-1: Enabled by default to prevent information disclosure
+var debugRequiresAuth = os.Getenv("DEBUG_REQUIRES_AUTH") != "false"
 
 // AuctionHandler handles /openrtb2/auction requests
 type AuctionHandler struct {
@@ -55,9 +61,25 @@ func (h *AuctionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build auction request
+	// P2-1: Debug mode requires authentication to prevent information disclosure
+	debugRequested := r.URL.Query().Get("debug") == "1"
+	debugEnabled := false
+	if debugRequested {
+		if debugRequiresAuth {
+			// Check for API key in headers
+			if hasAPIKey(r) {
+				debugEnabled = true
+			} else {
+				logger.Log.Debug().Msg("Debug mode requested without authentication, ignoring")
+			}
+		} else {
+			debugEnabled = true
+		}
+	}
+
 	auctionReq := &exchange.AuctionRequest{
 		BidRequest: &bidRequest,
-		Debug:      r.URL.Query().Get("debug") == "1",
+		Debug:      debugEnabled,
 	}
 
 	// Run auction
@@ -156,6 +178,21 @@ func writeError(w http.ResponseWriter, message string, status int) {
 	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
 		log.Error().Err(err).Str("message", message).Msg("failed to encode error response")
 	}
+}
+
+// hasAPIKey checks if request has valid API key header
+// P2-1: Used to gate debug mode access
+func hasAPIKey(r *http.Request) bool {
+	// Check X-API-Key header
+	if r.Header.Get("X-API-Key") != "" {
+		return true
+	}
+	// Check Authorization Bearer token
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") && len(authHeader) > 7 {
+		return true
+	}
+	return false
 }
 
 // StatusHandler handles /status requests

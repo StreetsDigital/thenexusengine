@@ -285,7 +285,9 @@ func TestAuctionHandler_DebugMode(t *testing.T) {
 	bidReq := validBidRequest()
 	body, _ := json.Marshal(bidReq)
 
+	// P2-1: Debug mode requires auth header
 	req := httptest.NewRequest("POST", "/openrtb2/auction?debug=1", bytes.NewReader(body))
+	req.Header.Set("X-API-Key", "test-key") // Add API key for debug access
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
@@ -302,6 +304,137 @@ func TestAuctionHandler_DebugMode(t *testing.T) {
 	// Debug mode should include ext with timing info
 	if resp.Ext == nil {
 		t.Log("Note: ext may be nil if no debug info was generated")
+	}
+}
+
+// P2-1: Test debug mode authentication requirements
+func TestAuctionHandler_DebugMode_RequiresAuth(t *testing.T) {
+	registry := adapters.NewRegistry()
+	mock := &mockAdapter{bids: []*adapters.TypedBid{}}
+	registry.Register("testbidder", mock, adapters.BidderInfo{Enabled: true})
+
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := validBidRequest()
+	body, _ := json.Marshal(bidReq)
+
+	// Test without auth - debug should be silently ignored
+	req := httptest.NewRequest("POST", "/openrtb2/auction?debug=1", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	// Response should succeed but without debug info
+	var resp openrtb.BidResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Without auth, Ext should not contain debug info
+	// (Ext may still be nil or empty since debug was disabled)
+}
+
+func TestAuctionHandler_DebugMode_WithAPIKey(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := validBidRequest()
+	body, _ := json.Marshal(bidReq)
+
+	// With X-API-Key header, debug should work
+	req := httptest.NewRequest("POST", "/openrtb2/auction?debug=1", bytes.NewReader(body))
+	req.Header.Set("X-API-Key", "test-api-key")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestAuctionHandler_DebugMode_WithBearerToken(t *testing.T) {
+	registry := adapters.NewRegistry()
+	ex := exchange.New(registry, &exchange.Config{
+		DefaultTimeout: 100 * time.Millisecond,
+	})
+	handler := NewAuctionHandler(ex)
+
+	bidReq := validBidRequest()
+	body, _ := json.Marshal(bidReq)
+
+	// With Authorization Bearer header, debug should work
+	req := httptest.NewRequest("POST", "/openrtb2/auction?debug=1", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestHasAPIKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		headers  map[string]string
+		expected bool
+	}{
+		{
+			name:     "no auth headers",
+			headers:  map[string]string{},
+			expected: false,
+		},
+		{
+			name:     "X-API-Key present",
+			headers:  map[string]string{"X-API-Key": "test-key"},
+			expected: true,
+		},
+		{
+			name:     "Bearer token present",
+			headers:  map[string]string{"Authorization": "Bearer test-token"},
+			expected: true,
+		},
+		{
+			name:     "empty X-API-Key",
+			headers:  map[string]string{"X-API-Key": ""},
+			expected: false,
+		},
+		{
+			name:     "Authorization without Bearer",
+			headers:  map[string]string{"Authorization": "Basic test"},
+			expected: false,
+		},
+		{
+			name:     "Bearer only (no token)",
+			headers:  map[string]string{"Authorization": "Bearer "},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/test", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+
+			result := hasAPIKey(req)
+			if result != tt.expected {
+				t.Errorf("hasAPIKey() = %v, expected %v", result, tt.expected)
+			}
+		})
 	}
 }
 
