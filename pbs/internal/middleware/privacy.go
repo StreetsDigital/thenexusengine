@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -46,6 +47,8 @@ type PrivacyConfig struct {
 	RequiredPurposes []int
 	// StrictMode - if true, reject invalid consent strings; if false, strip PII
 	StrictMode bool
+	// AnonymizeIP - P2-2: if true, anonymize IP addresses when GDPR applies
+	AnonymizeIP bool
 }
 
 // DefaultPrivacyConfig returns a sensible default config
@@ -54,6 +57,7 @@ type PrivacyConfig struct {
 //   - PBS_ENFORCE_COPPA: "true" or "false" (default: true)
 //   - PBS_ENFORCE_CCPA: "true" or "false" (default: true)
 //   - PBS_PRIVACY_STRICT_MODE: "true" or "false" (default: true)
+//   - PBS_ANONYMIZE_IP: "true" or "false" (default: true)
 func DefaultPrivacyConfig() PrivacyConfig {
 	return PrivacyConfig{
 		EnforceGDPR:      getEnvBool("PBS_ENFORCE_GDPR", true),
@@ -61,6 +65,7 @@ func DefaultPrivacyConfig() PrivacyConfig {
 		EnforceCCPA:      getEnvBool("PBS_ENFORCE_CCPA", true),
 		RequiredPurposes: RequiredPurposes,
 		StrictMode:       getEnvBool("PBS_PRIVACY_STRICT_MODE", true),
+		AnonymizeIP:      getEnvBool("PBS_ANONYMIZE_IP", true),
 	}
 }
 
@@ -133,8 +138,27 @@ func (m *PrivacyMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// P2-2: Anonymize IP addresses when GDPR applies and anonymization is enabled
+	requestModified := false
+	if m.config.AnonymizeIP && m.isGDPRApplicable(&bidRequest) {
+		m.anonymizeRequestIPs(&bidRequest)
+		requestModified = true
+	}
+
 	// Re-create request body for downstream handler
-	r.Body = io.NopCloser(strings.NewReader(string(body)))
+	if requestModified {
+		// Re-marshal the modified request
+		modifiedBody, err := json.Marshal(&bidRequest)
+		if err != nil {
+			logger.Log.Error().Err(err).Msg("Failed to marshal modified request after IP anonymization")
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+		} else {
+			r.Body = io.NopCloser(strings.NewReader(string(modifiedBody)))
+			r.ContentLength = int64(len(modifiedBody))
+		}
+	} else {
+		r.Body = io.NopCloser(strings.NewReader(string(body)))
+	}
 	m.next.ServeHTTP(w, r)
 }
 
@@ -491,4 +515,87 @@ func (m *PrivacyMiddleware) checkCCPACompliance(requestID, usPrivacy string) *Pr
 	}
 
 	return nil
+}
+
+// P2-2: IP Anonymization for GDPR Compliance
+// These functions implement privacy-preserving IP address masking as recommended
+// by GDPR guidelines and the German DPA (Datenschutzkonferenz).
+
+// AnonymizeIPv4 masks the last octet of an IPv4 address
+// Example: "192.168.1.100" -> "192.168.1.0"
+func AnonymizeIPv4(ip net.IP) string {
+	if ip == nil {
+		return ""
+	}
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		return ip.String()
+	}
+	// Zero out the last octet
+	ipv4[3] = 0
+	return ipv4.String()
+}
+
+// AnonymizeIPv6 masks the last 80 bits of an IPv6 address, keeping only the first 48 bits
+// This follows the recommendation to mask at minimum /48 for IPv6
+// Example: "2001:0db8:85a3:0000:0000:8a2e:0370:7334" -> "2001:db8:85a3::"
+func AnonymizeIPv6(ip net.IP) string {
+	if ip == nil {
+		return ""
+	}
+	ipv6 := ip.To16()
+	if ipv6 == nil {
+		return ip.String()
+	}
+	// Keep first 48 bits (6 bytes), zero out the rest
+	for i := 6; i < 16; i++ {
+		ipv6[i] = 0
+	}
+	return ipv6.String()
+}
+
+// AnonymizeIP detects IP version and applies appropriate anonymization
+// Returns the anonymized IP string, or empty string if input is invalid
+func AnonymizeIP(ipStr string) string {
+	if ipStr == "" {
+		return ""
+	}
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return "" // Invalid IP, remove entirely
+	}
+	// Check if it's IPv4 (can be represented as 4 bytes)
+	if ip.To4() != nil {
+		return AnonymizeIPv4(ip)
+	}
+	// Otherwise treat as IPv6
+	return AnonymizeIPv6(ip)
+}
+
+// anonymizeRequestIPs modifies the bid request to anonymize IP addresses
+// This is called when GDPR applies and IP anonymization is enabled
+func (m *PrivacyMiddleware) anonymizeRequestIPs(req *openrtb.BidRequest) {
+	if req.Device == nil {
+		return
+	}
+
+	if req.Device.IP != "" {
+		originalIP := req.Device.IP
+		req.Device.IP = AnonymizeIP(originalIP)
+		logger.Log.Debug().
+			Str("request_id", req.ID).
+			Str("original_ip", originalIP).
+			Str("anonymized_ip", req.Device.IP).
+			Msg("P2-2: Anonymized IPv4 for GDPR compliance")
+	}
+
+	if req.Device.IPv6 != "" {
+		originalIPv6 := req.Device.IPv6
+		req.Device.IPv6 = AnonymizeIP(originalIPv6)
+		logger.Log.Debug().
+			Str("request_id", req.ID).
+			Str("original_ipv6", originalIPv6).
+			Str("anonymized_ipv6", req.Device.IPv6).
+			Msg("P2-2: Anonymized IPv6 for GDPR compliance")
+	}
 }
