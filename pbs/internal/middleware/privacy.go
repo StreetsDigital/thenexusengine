@@ -140,26 +140,10 @@ func (m *PrivacyMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // PrivacyViolation describes a privacy compliance failure
 type PrivacyViolation struct {
-	Regulation  string // "GDPR", "COPPA", "CCPA"
-	Reason      string // Human-readable reason
-	NoBidReason int    // OpenRTB no-bid reason code
+	Regulation  string              // "GDPR", "COPPA", "CCPA"
+	Reason      string              // Human-readable reason
+	NoBidReason openrtb.NoBidReason // P2-7: Using consolidated type from openrtb
 }
-
-// OpenRTB No-Bid Reason Codes (Section 5.24)
-const (
-	NoBidUnknown           = 0
-	NoBidTechError         = 1
-	NoBidInvalidRequest    = 2
-	NoBidKnownWebSpider    = 3
-	NoBidSuspectedNonHuman = 4
-	NoBidCloudDataCenter   = 5
-	NoBidUnsupportedDevice = 6
-	NoBidBlockedPublisher  = 7
-	NoBidUnmatchedUser     = 8
-	NoBidDailyReaderCap    = 9
-	NoBidDailyDomainCap    = 10
-	NoBidAdsNotAllowed     = 11 // Used for privacy violations
-)
 
 // checkPrivacyCompliance verifies the request meets privacy requirements
 func (m *PrivacyMiddleware) checkPrivacyCompliance(req *openrtb.BidRequest) *PrivacyViolation {
@@ -170,7 +154,7 @@ func (m *PrivacyMiddleware) checkPrivacyCompliance(req *openrtb.BidRequest) *Pri
 		return &PrivacyViolation{
 			Regulation:  "COPPA",
 			Reason:      "Child-directed content requires COPPA-compliant handling",
-			NoBidReason: NoBidAdsNotAllowed,
+			NoBidReason: openrtb.NoBidAdsNotAllowed,
 		}
 	}
 
@@ -215,7 +199,7 @@ func (m *PrivacyMiddleware) validateGDPRConsent(req *openrtb.BidRequest) *Privac
 		return &PrivacyViolation{
 			Regulation:  "GDPR",
 			Reason:      "Missing consent string when GDPR applies (regs.gdpr=1)",
-			NoBidReason: NoBidAdsNotAllowed,
+			NoBidReason: openrtb.NoBidAdsNotAllowed,
 		}
 	}
 
@@ -225,7 +209,7 @@ func (m *PrivacyMiddleware) validateGDPRConsent(req *openrtb.BidRequest) *Privac
 		return &PrivacyViolation{
 			Regulation:  "GDPR",
 			Reason:      "Invalid TCF v2 consent string: " + err.Error(),
-			NoBidReason: NoBidInvalidRequest,
+			NoBidReason: openrtb.NoBidInvalidRequest,
 		}
 	}
 
@@ -240,7 +224,7 @@ func (m *PrivacyMiddleware) validateGDPRConsent(req *openrtb.BidRequest) *Privac
 			return &PrivacyViolation{
 				Regulation:  "GDPR",
 				Reason:      "Missing consent for required purposes",
-				NoBidReason: NoBidAdsNotAllowed,
+				NoBidReason: openrtb.NoBidAdsNotAllowed,
 			}
 		}
 	}
@@ -492,7 +476,7 @@ func (m *PrivacyMiddleware) checkCCPACompliance(requestID, usPrivacy string) *Pr
 			return &PrivacyViolation{
 				Regulation:  "CCPA",
 				Reason:      "User has opted out of data sale under CCPA",
-				NoBidReason: NoBidAdsNotAllowed,
+				NoBidReason: openrtb.NoBidAdsNotAllowed,
 			}
 		}
 	}

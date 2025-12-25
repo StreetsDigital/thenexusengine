@@ -59,22 +59,8 @@ const (
 	maxBidderTimeout = 5 * time.Second        // Maximum to prevent resource exhaustion
 )
 
-// P2-NEW-2: OpenRTB 2.5 No-Bid Reason (NBR) codes per Section 5.24
-// These explain why an exchange returned no bid for a request
-const (
-	NBRUnknownError     = 0  // Unknown Error
-	NBRTechnicalError   = 1  // Technical Error
-	NBRInvalidRequest   = 2  // Invalid Request
-	NBRKnownWebSpider   = 3  // Known Web Spider
-	NBRNonHumanTraffic  = 4  // Suspected Non-Human Traffic
-	NBRProxyIP          = 5  // Cloud, Data Center, or Proxy IP
-	NBRUnsupportedDevice = 6 // Unsupported Device
-	NBRBlockedPublisher = 7  // Blocked Publisher or Site
-	NBRUnmatchedUser    = 8  // Unmatched User
-	// 500+ reserved for exchange-specific reasons
-	NBRNoBiddersAvailable = 500 // Exchange-specific: No bidders configured/available
-	NBRTimeout            = 501 // Exchange-specific: Request processing timed out
-)
+// P2-7: NBR codes consolidated in openrtb/response.go
+// Use openrtb.NoBidXxx constants for all no-bid reasons
 
 // CloneLimits holds configurable limits for request cloning (P3-1)
 type CloneLimits struct {
@@ -707,7 +693,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	}
 
 	if len(availableBidders) == 0 {
-		response.BidResponse = e.buildEmptyResponse(req.BidRequest, NBRNoBiddersAvailable)
+		response.BidResponse = e.buildEmptyResponse(req.BidRequest, openrtb.NoBidNoBiddersAvailable)
 		return response, nil
 	}
 
@@ -797,7 +783,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	select {
 	case <-ctx.Done():
 		response.DebugInfo.TotalLatency = time.Since(startTime)
-		response.BidResponse = e.buildEmptyResponse(req.BidRequest, NBRTimeout)
+		response.BidResponse = e.buildEmptyResponse(req.BidRequest, openrtb.NoBidTimeout)
 		return response, nil // Return empty response rather than error on timeout
 	default:
 		// Context still valid, proceed with validation
@@ -1423,13 +1409,13 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 }
 
 // buildEmptyResponse creates an empty bid response with optional NBR code
-// P2-NEW-2: Include NBR (No-Bid Reason) for debugging per OpenRTB 2.5
-func (e *Exchange) buildEmptyResponse(req *openrtb.BidRequest, nbr int) *openrtb.BidResponse {
+// P2-7: Using consolidated NoBidReason type from openrtb package
+func (e *Exchange) buildEmptyResponse(req *openrtb.BidRequest, nbr openrtb.NoBidReason) *openrtb.BidResponse {
 	return &openrtb.BidResponse{
 		ID:      req.ID,
 		SeatBid: []openrtb.SeatBid{},
 		Cur:     e.config.DefaultCurrency,
-		NBR:     nbr,
+		NBR:     int(nbr),
 	}
 }
 

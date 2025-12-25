@@ -52,21 +52,30 @@ type Bid struct {
 	Ext            json.RawMessage `json:"ext,omitempty"`
 }
 
-// NoBidReason represents no-bid reason codes (NBR)
+// NoBidReason represents no-bid reason codes (NBR) per OpenRTB 2.5 Section 5.24
+// P2-7: Consolidated to single source of truth
 type NoBidReason int
 
 const (
-	NoBidUnknown              NoBidReason = 0
-	NoBidTechnicalError       NoBidReason = 1
-	NoBidInvalidRequest       NoBidReason = 2
-	NoBidKnownWebSpider       NoBidReason = 3
-	NoBidSuspectedNonHuman    NoBidReason = 4
-	NoBidCloudDataCenter      NoBidReason = 5
-	NoBidUnsupportedDevice    NoBidReason = 6
-	NoBidBlockedPublisher     NoBidReason = 7
-	NoBidUnmatchedUser        NoBidReason = 8
-	NoBidDailyReaderCapMet    NoBidReason = 9
-	NoBidDailyDomainCapMet    NoBidReason = 10
+	// Standard OpenRTB 2.5 NBR codes (0-10)
+	NoBidUnknown           NoBidReason = 0  // Unknown Error
+	NoBidTechnicalError    NoBidReason = 1  // Technical Error
+	NoBidInvalidRequest    NoBidReason = 2  // Invalid Request
+	NoBidKnownWebSpider    NoBidReason = 3  // Known Web Spider
+	NoBidSuspectedNonHuman NoBidReason = 4  // Suspected Non-Human Traffic
+	NoBidCloudDataCenter   NoBidReason = 5  // Cloud, Data Center, or Proxy IP
+	NoBidUnsupportedDevice NoBidReason = 6  // Unsupported Device
+	NoBidBlockedPublisher  NoBidReason = 7  // Blocked Publisher or Site
+	NoBidUnmatchedUser     NoBidReason = 8  // Unmatched User
+	NoBidDailyReaderCapMet NoBidReason = 9  // Daily Reader Frequency Cap Met
+	NoBidDailyDomainCapMet NoBidReason = 10 // Daily Domain Frequency Cap Met
+
+	// Extended codes (11+) - commonly used extensions
+	NoBidAdsNotAllowed NoBidReason = 11 // Ads Not Allowed (privacy violations)
+
+	// Exchange-specific codes (500+)
+	NoBidNoBiddersAvailable NoBidReason = 500 // No bidders configured or available
+	NoBidTimeout            NoBidReason = 501 // Request processing timed out
 )
 
 // BidResponseExt represents PBS-specific response extensions

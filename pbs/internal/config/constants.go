@@ -111,12 +111,5 @@ const (
 	HSTSMaxAgeSeconds = 31536000
 )
 
-// P2-6: Exchange-specific NBR codes (500+)
-// Standard OpenRTB 2.5 NBR codes are in exchange/exchange.go
-const (
-	// NBRNoBiddersAvailable indicates no bidders were configured or available
-	NBRNoBiddersAvailable = 500
-
-	// NBRTimeout indicates the request timed out
-	NBRTimeout = 501
-)
+// P2-7: NBR codes consolidated in openrtb/response.go
+// Use openrtb.NoBidXxx constants for all no-bid reasons
