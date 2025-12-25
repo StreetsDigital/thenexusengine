@@ -18,6 +18,7 @@ import hmac
 import os
 import re
 import secrets
+import sys
 import time
 from datetime import datetime, timedelta
 from functools import wraps
@@ -293,13 +294,128 @@ def create_app(config_path: Path | None = None) -> Flask:
     app.config["CONFIG_PATH"] = config_path or DEFAULT_CONFIG_PATH
 
     # Security configuration
-    app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+    # P1-9: Require SECRET_KEY in production to prevent session invalidation on restart
+    secret_key = os.environ.get("SECRET_KEY")
+    if not secret_key:
+        if os.environ.get("FLASK_ENV") == "development" or os.environ.get("IDR_DEV_MODE") == "true":
+            secret_key = secrets.token_hex(32)
+            print("WARNING: Using auto-generated SECRET_KEY (development mode)")
+        else:
+            print("ERROR: SECRET_KEY environment variable is required in production")
+            print("Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\"")
+            sys.exit(1)
+    app.secret_key = secret_key
+
+    # P1-5: Session cookies secure by default (HTTPS required in production)
+    # Set SESSION_COOKIE_SECURE=false for development without HTTPS
     app.config["SESSION_COOKIE_SECURE"] = (
-        os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true"
+        os.environ.get("SESSION_COOKIE_SECURE", "true").lower() != "false"
     )
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
+
+    # P1-8: Rate limiting for sensitive endpoints
+    # Simple in-memory rate limiter for the validate-key endpoint
+    _validate_key_requests: dict[str, list[float]] = {}
+    VALIDATE_KEY_RATE_LIMIT = int(os.environ.get("VALIDATE_KEY_RATE_LIMIT", "10"))  # requests per minute
+    VALIDATE_KEY_WINDOW = 60.0  # seconds
+
+    def check_validate_key_rate_limit(client_ip: str) -> bool:
+        """Check if client has exceeded rate limit for validate-key endpoint."""
+        now = time.time()
+        window_start = now - VALIDATE_KEY_WINDOW
+
+        # Clean old entries and get current requests
+        if client_ip in _validate_key_requests:
+            _validate_key_requests[client_ip] = [
+                t for t in _validate_key_requests[client_ip] if t > window_start
+            ]
+        else:
+            _validate_key_requests[client_ip] = []
+
+        # Check if over limit
+        if len(_validate_key_requests[client_ip]) >= VALIDATE_KEY_RATE_LIMIT:
+            return False
+
+        # Record this request
+        _validate_key_requests[client_ip].append(now)
+        return True
+
+    def rate_limit_validate_key(f):
+        """Decorator to rate limit the validate-key endpoint."""
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            client_ip = request.remote_addr or "unknown"
+            if not check_validate_key_rate_limit(client_ip):
+                return jsonify({
+                    "valid": False,
+                    "error": "Rate limit exceeded. Try again later."
+                }), 429
+            return f(*args, **kwargs)
+        return decorated_function
+
+    # P1-4: CSRF Protection for state-changing requests
+    CSRF_ENABLED = os.environ.get("CSRF_ENABLED", "true").lower() != "false"
+    CSRF_EXEMPT_PATHS = {"/health", "/api/status", "/api/validate-key", "/login", "/api/auth/status"}
+
+    def generate_csrf_token():
+        """Generate a CSRF token and store in session."""
+        if "_csrf_token" not in session:
+            session["_csrf_token"] = secrets.token_hex(32)
+        return session["_csrf_token"]
+
+    def validate_csrf_token():
+        """Validate CSRF token for state-changing requests."""
+        if not CSRF_ENABLED:
+            return True
+
+        # Only validate for state-changing methods
+        if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+            return True
+
+        # Skip for exempt paths
+        if request.path in CSRF_EXEMPT_PATHS:
+            return True
+
+        # Skip for requests without a session (not logged in)
+        if "_csrf_token" not in session:
+            return True
+
+        # Get token from header or form
+        token = request.headers.get("X-CSRF-Token") or request.form.get("_csrf_token")
+
+        # Validate using constant-time comparison
+        expected = session.get("_csrf_token", "")
+        if not token or not hmac.compare_digest(token, expected):
+            return False
+
+        return True
+
+    @app.before_request
+    def csrf_protect():
+        """Check CSRF token on state-changing requests."""
+        if not validate_csrf_token():
+            if request.is_json:
+                return jsonify({"error": "CSRF token missing or invalid"}), 403
+            return "CSRF token missing or invalid", 403
+
+    @app.after_request
+    def set_csrf_cookie(response):
+        """Set CSRF token cookie for JavaScript access."""
+        if "user" in session:
+            token = generate_csrf_token()
+            response.set_cookie(
+                "csrf_token",
+                token,
+                httponly=False,  # Must be accessible to JavaScript
+                secure=app.config.get("SESSION_COOKIE_SECURE", False),
+                samesite="Lax",
+            )
+        return response
+
+    # Make CSRF token available in templates
+    app.jinja_env.globals["csrf_token"] = generate_csrf_token
 
     # Load admin users
     admin_users = _parse_admin_users()
@@ -354,6 +470,82 @@ def create_app(config_path: Path | None = None) -> Flask:
             return f(*args, **kwargs)
 
         return decorated_function
+
+    # =================================
+    # P1-2: Audit Logging
+    # =================================
+    AUDIT_LOG_PATH = Path(os.environ.get("AUDIT_LOG_PATH", "/var/log/idr/audit.log"))
+    AUDIT_LOG_ENABLED = os.environ.get("AUDIT_LOG_ENABLED", "true").lower() != "false"
+
+    def audit_log(action: str, resource: str, details: dict | None = None, success: bool = True):
+        """Log an admin action for audit trail.
+
+        Args:
+            action: The action performed (e.g., "CREATE", "UPDATE", "DELETE")
+            resource: The resource being modified (e.g., "bidder:appnexus", "publisher:123")
+            details: Additional details about the action
+            success: Whether the action succeeded
+        """
+        if not AUDIT_LOG_ENABLED:
+            return
+
+        user = getattr(g, "user", None) or "anonymous"
+        timestamp = datetime.utcnow().isoformat() + "Z"
+        client_ip = request.remote_addr or "unknown"
+
+        log_entry = {
+            "timestamp": timestamp,
+            "user": user,
+            "action": action,
+            "resource": resource,
+            "client_ip": client_ip,
+            "success": success,
+            "details": details or {},
+        }
+
+        # Log to stdout (for container/cloud logging)
+        import json
+        print(f"[AUDIT] {json.dumps(log_entry)}", flush=True)
+
+        # Also write to file if path is writable
+        try:
+            AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(AUDIT_LOG_PATH, "a") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except (OSError, PermissionError):
+            # File logging failed, but stdout logging succeeded
+            pass
+
+    def audit_action(action: str, resource_key: str | None = None):
+        """Decorator to automatically audit admin actions.
+
+        Args:
+            action: The action type (e.g., "UPDATE_CONFIG", "DELETE_BIDDER")
+            resource_key: URL parameter key to extract resource ID from (e.g., "bidder_code")
+        """
+        def decorator(f):
+            @wraps(f)
+            def decorated_function(*args, **kwargs):
+                resource = "unknown"
+                if resource_key and resource_key in kwargs:
+                    resource = f"{resource_key}:{kwargs[resource_key]}"
+                elif request.view_args and resource_key in request.view_args:
+                    resource = f"{resource_key}:{request.view_args[resource_key]}"
+
+                try:
+                    result = f(*args, **kwargs)
+                    # Log success (check if response indicates error)
+                    status_code = getattr(result, "status_code", 200) if hasattr(result, "status_code") else 200
+                    if isinstance(result, tuple) and len(result) >= 2:
+                        status_code = result[1]
+                    success = status_code < 400
+                    audit_log(action, resource, success=success)
+                    return result
+                except Exception as e:
+                    audit_log(action, resource, details={"error": str(e)}, success=False)
+                    raise
+            return decorated_function
+        return decorator
 
     # =================================
     # Authentication Routes
@@ -457,6 +649,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     @app.route("/api/config", methods=["POST"])
     @login_required
+    @audit_action("UPDATE_CONFIG", "config")
     def update_config():
         """Update configuration."""
         try:
@@ -1180,6 +1373,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     @app.route("/api/publishers/<publisher_id>", methods=["PUT"])
     @login_required
+    @audit_action("UPDATE_PUBLISHER", "publisher_id")
     def save_publisher(publisher_id: str):
         """Save/update a publisher configuration."""
         if not PUBLISHER_CONFIG_AVAILABLE:
@@ -1275,6 +1469,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     @app.route("/api/publishers/<publisher_id>", methods=["DELETE"])
     @login_required
+    @audit_action("DELETE_PUBLISHER", "publisher_id")
     def delete_publisher(publisher_id: str):
         """Delete a publisher configuration."""
         if not PUBLISHER_CONFIG_AVAILABLE:
@@ -1430,6 +1625,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     @app.route("/api/keys", methods=["POST"])
     @login_required
+    @audit_action("CREATE_API_KEY", "api_key")
     def generate_api_key():
         """Generate a new API key for a publisher."""
         if not API_KEY_MANAGER_AVAILABLE:
@@ -1495,6 +1691,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     @app.route("/api/keys/<api_key>", methods=["DELETE"])
     @login_required
+    @audit_action("REVOKE_API_KEY", "api_key")
     def revoke_api_key(api_key: str):
         """Revoke an API key."""
         if not API_KEY_MANAGER_AVAILABLE:
@@ -1662,6 +1859,7 @@ def create_app(config_path: Path | None = None) -> Flask:
     # =========================================
 
     @app.route("/api/validate-key", methods=["POST"])
+    @rate_limit_validate_key
     def validate_api_key():
         """
         Validate an API key (called by PBS).
@@ -1780,6 +1978,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     @app.route("/api/bidders", methods=["POST"])
     @login_required
+    @audit_action("CREATE_BIDDER", "bidder")
     def create_bidder():
         """
         Create a new OpenRTB bidder.
@@ -1902,6 +2101,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     @app.route("/api/bidders/<bidder_code>", methods=["PUT", "PATCH"])
     @login_required
+    @audit_action("UPDATE_BIDDER", "bidder_code")
     def update_bidder(bidder_code: str):
         """
         Update a bidder configuration.
@@ -1958,6 +2158,7 @@ def create_app(config_path: Path | None = None) -> Flask:
 
     @app.route("/api/bidders/<bidder_code>", methods=["DELETE"])
     @login_required
+    @audit_action("DELETE_BIDDER", "bidder_code")
     def delete_bidder(bidder_code: str):
         """Delete a bidder."""
         if not BIDDER_MANAGER_AVAILABLE:
@@ -2658,6 +2859,31 @@ def run_admin(host: str = "0.0.0.0", port: int = 5050, debug: bool = False):
         ADMIN_USER_3: Third admin user (format: "username:password")
         SECRET_KEY: Flask secret key for sessions (auto-generated if not set)
     """
+    # P1-7: Debug mode requires authentication to be configured
+    # Flask debug mode exposes an interactive debugger that can execute arbitrary code
+    if debug or os.environ.get("FLASK_DEBUG", "").lower() == "true":
+        # Check if any admin users are configured
+        has_auth = bool(os.environ.get("ADMIN_USERS"))
+        for i in range(1, 4):
+            if os.environ.get(f"ADMIN_USER_{i}"):
+                has_auth = True
+                break
+
+        if not has_auth:
+            print("ERROR: Debug mode requires authentication to be configured")
+            print("Set ADMIN_USERS or ADMIN_USER_1 environment variable before enabling debug")
+            print("Debug mode exposes an interactive debugger that can execute arbitrary code")
+            sys.exit(1)
+
+        # Also require explicit opt-in for debug in non-development environments
+        if os.environ.get("FLASK_ENV") != "development" and os.environ.get("IDR_DEV_MODE") != "true":
+            if os.environ.get("ALLOW_DEBUG_IN_PRODUCTION") != "true":
+                print("ERROR: Debug mode is not allowed outside development environment")
+                print("Set FLASK_ENV=development or ALLOW_DEBUG_IN_PRODUCTION=true to override")
+                sys.exit(1)
+
+        debug = True  # Ensure debug is enabled if FLASK_DEBUG=true
+
     app = create_app()
     print(f"\n{'=' * 60}")
     print("  IDR Admin Dashboard")

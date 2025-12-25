@@ -60,8 +60,10 @@ func DefaultRateLimitConfig() *RateLimitConfig {
 	// Only trust XFF header if trusted proxies are configured
 	trustXFF := len(trustedProxies) > 0
 
+	// P1-1: Rate limiting ENABLED by default for DoS protection
+	// Set RATE_LIMIT_ENABLED=false to disable (development only)
 	return &RateLimitConfig{
-		Enabled:           os.Getenv("RATE_LIMIT_ENABLED") == "true",
+		Enabled:           os.Getenv("RATE_LIMIT_ENABLED") != "false",
 		RequestsPerSecond: rps,
 		BurstSize:         burst,
 		CleanupInterval:   time.Minute,

@@ -9,7 +9,7 @@ import (
 func TestCORSMiddleware_PreflightRequest(t *testing.T) {
 	cors := NewCORS(&CORSConfig{
 		Enabled:        true,
-		AllowedOrigins: []string{},
+		AllowedOrigins: []string{"*"}, // Explicit wildcard (P1-3: empty means reject)
 		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders: []string{"Content-Type", "X-API-Key"},
 		MaxAge:         86400,
@@ -49,7 +49,7 @@ func TestCORSMiddleware_PreflightRequest(t *testing.T) {
 func TestCORSMiddleware_ActualRequest(t *testing.T) {
 	cors := NewCORS(&CORSConfig{
 		Enabled:        true,
-		AllowedOrigins: []string{},
+		AllowedOrigins: []string{"*"}, // Explicit wildcard (P1-3: empty means reject)
 		AllowedMethods: []string{"GET", "POST"},
 		ExposedHeaders: []string{"X-Request-ID"},
 	})
@@ -155,7 +155,7 @@ func TestCORSMiddleware_OriginRestriction(t *testing.T) {
 func TestCORSMiddleware_Credentials(t *testing.T) {
 	cors := NewCORS(&CORSConfig{
 		Enabled:          true,
-		AllowedOrigins:   []string{},
+		AllowedOrigins:   []string{"*"}, // Explicit wildcard (P1-3: empty means reject)
 		AllowCredentials: true,
 	})
 

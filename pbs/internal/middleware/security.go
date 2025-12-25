@@ -59,9 +59,10 @@ func DefaultSecurityConfig() *SecurityConfig {
 		// Don't leak referrer data
 		ReferrerPolicy: envOrDefault("SECURITY_REFERRER_POLICY", "strict-origin-when-cross-origin"),
 
-		// HSTS - only enable if you're certain TLS is always used
-		// Default empty - set via env var when deploying behind TLS
-		StrictTransportSecurity: os.Getenv("SECURITY_HSTS"),
+		// P1-6: HSTS enabled by default for HTTPS enforcement
+		// Set SECURITY_HSTS="" to disable if not using TLS (development only)
+		StrictTransportSecurity: envOrDefault("SECURITY_HSTS",
+			"max-age=31536000; includeSubDomains"),
 
 		// Disable unnecessary browser features for API
 		PermissionsPolicy: envOrDefault("SECURITY_PERMISSIONS_POLICY",

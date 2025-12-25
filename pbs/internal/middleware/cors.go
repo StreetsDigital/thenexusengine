@@ -24,6 +24,16 @@ type CORSConfig struct {
 func DefaultCORSConfig() *CORSConfig {
 	allowedOrigins := parseCommaSeparated(os.Getenv("CORS_ALLOWED_ORIGINS"))
 
+	// P1-3: In production, require explicit origins for security
+	// Only allow wildcard in development mode
+	isDevMode := os.Getenv("PBS_DEV_MODE") == "true" || os.Getenv("CORS_ALLOW_ALL") == "true"
+	if len(allowedOrigins) == 0 && isDevMode {
+		// Development mode: allow all origins for easy testing
+		allowedOrigins = []string{"*"}
+	}
+	// In production with no origins configured: allowedOrigins stays empty,
+	// which will reject cross-origin requests (secure by default)
+
 	return &CORSConfig{
 		Enabled:        os.Getenv("CORS_ENABLED") != "false", // Enabled by default
 		AllowedOrigins: allowedOrigins,
@@ -100,10 +110,8 @@ func (c *CORS) Middleware(next http.Handler) http.Handler {
 		if c.isOriginAllowedWithList(origin, allowedOrigins) {
 			if origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-			} else if len(allowedOrigins) == 0 {
-				// No specific origins configured - allow all
-				w.Header().Set("Access-Control-Allow-Origin", "*")
 			}
+			// P1-3: Removed wildcard fallback - explicit origins required in production
 		}
 
 		// Set Vary header to ensure proper caching
@@ -157,9 +165,10 @@ func (c *CORS) handlePreflightWithConfig(w http.ResponseWriter, r *http.Request,
 
 // isOriginAllowedWithList checks if the origin is in the provided allowed list
 func (c *CORS) isOriginAllowedWithList(origin string, allowedOrigins []string) bool {
-	// If no specific origins configured, allow all
+	// P1-3: If no specific origins configured, reject (secure by default)
+	// Use CORS_ALLOW_ALL=true or PBS_DEV_MODE=true for development
 	if len(allowedOrigins) == 0 {
-		return true
+		return false
 	}
 
 	// Check against allowed origins
