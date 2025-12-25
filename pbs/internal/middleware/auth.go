@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	pbsconfig "github.com/StreetsDigital/thenexusengine/pbs/internal/config"
 	"github.com/rs/zerolog/log"
 )
 
@@ -99,7 +100,7 @@ func NewAuth(config *AuthConfig) *Auth {
 	return &Auth{
 		config:       config,
 		keyCache:     make(map[string]cachedKey),
-		cacheTimeout: 60 * time.Second, // Cache keys for 60 seconds
+		cacheTimeout: pbsconfig.AuthCacheTimeout, // P2-6: use named constant
 	}
 }
 
@@ -245,10 +246,10 @@ func (a *Auth) updateCache(key, publisherID string) {
 	a.cacheMu.Lock()
 	defer a.cacheMu.Unlock()
 
-	// Use shorter timeout for negative results
+	// Use shorter timeout for negative results (P2-6: use named constant)
 	timeout := a.cacheTimeout
 	if publisherID == "" {
-		timeout = 10 * time.Second
+		timeout = pbsconfig.AuthNegativeCacheTimeout
 	}
 
 	a.keyCache[key] = cachedKey{

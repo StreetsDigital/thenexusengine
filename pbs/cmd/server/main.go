@@ -18,6 +18,7 @@ import (
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/ortb"
 	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/pubmatic"
 	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/rubicon"
+	pbsconfig "github.com/StreetsDigital/thenexusengine/pbs/internal/config"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/endpoints"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/exchange"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/metrics"
@@ -211,13 +212,13 @@ func main() {
 	handler = security.Middleware(handler)
 	handler = cors.Middleware(handler)
 
-	// Create server
+	// Create server (P2-6: use named constants for timeouts)
 	server := &http.Server{
 		Addr:         ":" + *port,
 		Handler:      handler,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		ReadTimeout:  pbsconfig.ServerReadTimeout,
+		WriteTimeout: pbsconfig.ServerWriteTimeout,
+		IdleTimeout:  pbsconfig.ServerIdleTimeout,
 	}
 
 	// Start server in goroutine
@@ -251,7 +252,7 @@ func main() {
 		log.Info().Msg("Event recorder flushed")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), pbsconfig.ShutdownTimeout)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {

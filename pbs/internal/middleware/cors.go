@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/StreetsDigital/thenexusengine/pbs/internal/config"
 )
 
 // CORSConfig holds CORS configuration
@@ -52,7 +54,7 @@ func DefaultCORSConfig() *CORSConfig {
 			"X-Prebid-Server-Version",
 		},
 		AllowCredentials: os.Getenv("CORS_ALLOW_CREDENTIALS") == "true",
-		MaxAge:           86400, // 24 hours preflight cache
+		MaxAge:           config.CORSMaxAge, // P2-6: use named constant
 	}
 }
 
