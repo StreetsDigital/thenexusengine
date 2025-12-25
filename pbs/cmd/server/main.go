@@ -28,10 +28,10 @@ import (
 )
 
 func main() {
-	// Parse flags
-	port := flag.String("port", "8000", "Server port")
-	idrURL := flag.String("idr-url", "http://localhost:5050", "IDR service URL")
-	idrEnabled := flag.Bool("idr-enabled", true, "Enable IDR integration")
+	// Parse flags with environment variable fallbacks
+	port := flag.String("port", getEnvOrDefault("PBS_PORT", "8000"), "Server port")
+	idrURL := flag.String("idr-url", getEnvOrDefault("IDR_URL", "http://localhost:5050"), "IDR service URL")
+	idrEnabled := flag.Bool("idr-enabled", getEnvBoolOrDefault("IDR_ENABLED", true), "Enable IDR integration")
 	timeout := flag.Duration("timeout", 1000*time.Millisecond, "Default auction timeout")
 	flag.Parse()
 
@@ -341,4 +341,21 @@ func generateRequestID() string {
 		return time.Now().Format("20060102150405.000000000")
 	}
 	return hex.EncodeToString(b)
+}
+
+// getEnvOrDefault returns the environment variable value or a default
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// getEnvBoolOrDefault returns the environment variable as bool or a default
+func getEnvBoolOrDefault(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value == "true" || value == "1" || value == "yes"
 }
