@@ -10,13 +10,17 @@ import (
 )
 
 func TestNewClient(t *testing.T) {
-	client := NewClient("http://localhost:5050", 0)
+	client := NewClient("http://localhost:5050", 0, "test-api-key")
 	if client == nil {
 		t.Fatal("expected non-nil client")
 	}
 
 	if client.timeout != 150*time.Millisecond {
 		t.Errorf("expected default 150ms timeout, got %v", client.timeout)
+	}
+
+	if client.apiKey != "test-api-key" {
+		t.Errorf("expected api key 'test-api-key', got %s", client.apiKey)
 	}
 }
 
@@ -27,7 +31,7 @@ func TestNewClientWithCircuitBreaker(t *testing.T) {
 		Timeout:          time.Second,
 	}
 
-	client := NewClientWithCircuitBreaker("http://localhost:5050", 100*time.Millisecond, cbConfig)
+	client := NewClientWithCircuitBreaker("http://localhost:5050", 100*time.Millisecond, "", cbConfig)
 	if client == nil {
 		t.Fatal("expected non-nil client")
 	}
@@ -45,11 +49,16 @@ func TestNewClientWithCircuitBreaker(t *testing.T) {
 func TestSelectPartnersSuccess(t *testing.T) {
 	// Create mock IDR server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/select" {
+		if r.URL.Path != "/internal/select" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
+		}
+
+		// Verify API key header
+		if r.Header.Get("X-Internal-API-Key") != "test-key" {
+			t.Errorf("expected X-Internal-API-Key header, got %s", r.Header.Get("X-Internal-API-Key"))
 		}
 
 		var req SelectPartnersRequest
@@ -73,7 +82,7 @@ func TestSelectPartnersSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 100*time.Millisecond)
+	client := NewClient(server.URL, 100*time.Millisecond, "test-key")
 
 	req := json.RawMessage(`{"id":"test-1"}`)
 	bidders := []string{"appnexus", "rubicon", "pubmatic"}
@@ -107,7 +116,7 @@ func TestSelectPartnersServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 100*time.Millisecond)
+	client := NewClient(server.URL, 100*time.Millisecond, "")
 
 	req := json.RawMessage(`{"id":"test-1"}`)
 	bidders := []string{"appnexus"}
@@ -125,7 +134,7 @@ func TestSelectPartnersCircuitOpen(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithCircuitBreaker(server.URL, 100*time.Millisecond, &CircuitBreakerConfig{
+	client := NewClientWithCircuitBreaker(server.URL, 100*time.Millisecond, "", &CircuitBreakerConfig{
 		FailureThreshold: 2, // Open after 2 failures
 		SuccessThreshold: 1,
 		Timeout:          time.Second,
@@ -164,7 +173,7 @@ func TestHealthCheck(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 100*time.Millisecond)
+	client := NewClient(server.URL, 100*time.Millisecond, "")
 
 	err := client.HealthCheck(context.Background())
 	if err != nil {
@@ -178,7 +187,7 @@ func TestHealthCheckFail(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 100*time.Millisecond)
+	client := NewClient(server.URL, 100*time.Millisecond, "")
 
 	err := client.HealthCheck(context.Background())
 	if err == nil {
@@ -205,7 +214,7 @@ func TestGetConfig(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 100*time.Millisecond)
+	client := NewClient(server.URL, 100*time.Millisecond, "")
 
 	config, err := client.GetConfig(context.Background())
 	if err != nil {
@@ -232,7 +241,7 @@ func TestGetFPDConfig(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 100*time.Millisecond)
+	client := NewClient(server.URL, 100*time.Millisecond, "")
 
 	fpdConfig, err := client.GetFPDConfig(context.Background())
 	if err != nil {
@@ -260,7 +269,7 @@ func TestGetFPDConfigNoFPDSection(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 100*time.Millisecond)
+	client := NewClient(server.URL, 100*time.Millisecond, "")
 
 	fpdConfig, err := client.GetFPDConfig(context.Background())
 	if err != nil {
@@ -287,7 +296,7 @@ func TestSetBypassMode(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 100*time.Millisecond)
+	client := NewClient(server.URL, 100*time.Millisecond, "")
 
 	err := client.SetBypassMode(context.Background(), true)
 	if err != nil {
@@ -313,7 +322,7 @@ func TestSetShadowMode(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 100*time.Millisecond)
+	client := NewClient(server.URL, 100*time.Millisecond, "")
 
 	err := client.SetShadowMode(context.Background(), true)
 	if err != nil {
@@ -326,7 +335,7 @@ func TestSetShadowMode(t *testing.T) {
 }
 
 func TestResetCircuitBreaker(t *testing.T) {
-	client := NewClient("http://localhost:5050", 100*time.Millisecond)
+	client := NewClient("http://localhost:5050", 100*time.Millisecond, "")
 
 	// Force open the circuit
 	client.circuitBreaker.ForceOpen()
@@ -351,7 +360,7 @@ func TestContextCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 1*time.Second)
+	client := NewClient(server.URL, 1*time.Second, "")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()

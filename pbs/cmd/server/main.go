@@ -73,11 +73,13 @@ func main() {
 	// Configure exchange
 	// P0: Currency conversion ENABLED by default for proper multi-currency support
 	currencyConvEnabled := os.Getenv("CURRENCY_CONVERSION_ENABLED") != "false"
+	idrAPIKey := os.Getenv("IDR_API_KEY")
 	config := &exchange.Config{
 		DefaultTimeout:     *timeout,
 		MaxBidders:         50,
 		IDREnabled:         *idrEnabled,
 		IDRServiceURL:      *idrURL,
+		IDRAPIKey:          idrAPIKey,
 		EventRecordEnabled: true,
 		EventBufferSize:    100,
 		CurrencyConv:       currencyConvEnabled,

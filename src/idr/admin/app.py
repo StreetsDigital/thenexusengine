@@ -425,6 +425,16 @@ def create_app(config_path: Path | None = None) -> Flask:
     # Only allow unprotected access if explicitly opted in via environment variable
     allow_unprotected = os.environ.get("ADMIN_ALLOW_UNPROTECTED", "false").lower() == "true"
 
+    # Internal API key for service-to-service calls (e.g., PBS -> IDR)
+    # This bypasses session auth for internal endpoints
+    internal_api_key = os.environ.get("INTERNAL_API_KEY", "")
+    if not internal_api_key:
+        # Generate a temporary key for development (not for production)
+        internal_api_key = secrets.token_hex(32)
+        print(f"\n  [IDR] No INTERNAL_API_KEY set. Generated temporary key for dev: {internal_api_key[:16]}...")
+    else:
+        print("  [IDR] INTERNAL_API_KEY configured for service-to-service calls")
+
     if not auth_enabled:
         if allow_unprotected:
             print("\n" + "=" * 60)
@@ -467,6 +477,35 @@ def create_app(config_path: Path | None = None) -> Flask:
                 return redirect(url_for("login"))
 
             g.user = session["user"]
+            return f(*args, **kwargs)
+
+        return decorated_function
+
+    def internal_api_required(f):
+        """Decorator for internal service-to-service API calls.
+
+        Validates requests using the INTERNAL_API_KEY header.
+        Used for PBS -> IDR calls that don't use session auth.
+        """
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            # Check for internal API key in header
+            provided_key = request.headers.get("X-Internal-API-Key", "")
+
+            if not provided_key:
+                return jsonify({
+                    "error": "Internal API key required",
+                    "message": "Provide X-Internal-API-Key header for service-to-service calls"
+                }), 401
+
+            # Use constant-time comparison to prevent timing attacks
+            if not hmac.compare_digest(provided_key, internal_api_key):
+                return jsonify({
+                    "error": "Invalid internal API key",
+                    "message": "The provided API key is not valid"
+                }), 403
+
+            g.user = "internal_service"
             return f(*args, **kwargs)
 
         return decorated_function
@@ -1053,6 +1092,122 @@ def create_app(config_path: Path | None = None) -> Flask:
             scores = []
             for bidder in available_bidders:
                 # In production, metrics would come from database
+                score = scorer.score_bidder(bidder, classified)
+                scores.append(score)
+
+            # Select partners
+            result = selector.select_partners(scores, classified)
+
+            # Build response
+            selected = [
+                {
+                    "bidder_code": s.bidder_code,
+                    "score": s.score,
+                    "confidence": s.confidence,
+                    "reason": s.reason.name if hasattr(s, "reason") else "SELECTED",
+                    "category": s.category,
+                }
+                for s in result.selected
+            ]
+
+            excluded = []
+            if result.shadow_log:
+                excluded = [
+                    {
+                        "bidder_code": e.bidder_code,
+                        "score": e.score,
+                        "reason": "EXCLUDED",
+                    }
+                    for e in result.shadow_log
+                ]
+
+            mode = "shadow" if sel_cfg.shadow_mode else "normal"
+
+            return jsonify(
+                {
+                    "selected_bidders": selected,
+                    "excluded_bidders": excluded,
+                    "mode": mode,
+                    "processing_time_ms": (time.time() - start_time) * 1000,
+                }
+            )
+
+        except Exception as e:
+            return jsonify(_safe_error_response(e, "Partner selection failed", 500))
+
+    @app.route("/internal/select", methods=["POST"])
+    @internal_api_required
+    def internal_select_partners():
+        """
+        Internal endpoint for PBS service-to-service partner selection calls.
+
+        This endpoint is identical to /api/select but uses API key auth
+        instead of session auth, making it suitable for service-to-service calls.
+
+        Headers:
+            X-Internal-API-Key: <INTERNAL_API_KEY>
+
+        Request body: Same as /api/select
+        Response: Same as /api/select
+        """
+        start_time = time.time()
+
+        if not IDR_AVAILABLE:
+            return jsonify(
+                {"status": "error", "message": "IDR components not available"}
+            ), 500
+
+        try:
+            data = request.json
+            ortb_request = data.get("request", {})
+            available_bidders = data.get("available_bidders", [])
+
+            if not available_bidders:
+                return jsonify(
+                    {"status": "error", "message": "No available bidders provided"}
+                ), 400
+
+            # Load current config
+            config = load_config(app.config["CONFIG_PATH"])
+            selector_config = config.get("selector", {})
+            scoring_config = config.get("scoring", {})
+
+            # Check for bypass mode
+            if selector_config.get("bypass_enabled", False):
+                return jsonify(
+                    {
+                        "selected_bidders": [
+                            {"bidder_code": b, "score": 0.0, "reason": "BYPASS"}
+                            for b in available_bidders
+                        ],
+                        "excluded_bidders": [],
+                        "mode": "bypass",
+                        "processing_time_ms": (time.time() - start_time) * 1000,
+                    }
+                )
+
+            # Initialize components
+            classifier = RequestClassifier()
+            scorer = BidderScorer(weights=scoring_config.get("weights"))
+
+            sel_cfg = SelectorConfig(
+                bypass_enabled=selector_config.get("bypass_enabled", False),
+                shadow_mode=selector_config.get("shadow_mode", False),
+                max_bidders=selector_config.get("max_bidders", 15),
+                min_score_threshold=selector_config.get("min_score_threshold", 25),
+                exploration_rate=selector_config.get("exploration_rate", 0.1),
+                exploration_slots=selector_config.get("exploration_slots", 2),
+                anchor_bidder_count=selector_config.get("anchor_bidder_count", 3),
+                diversity_enabled=selector_config.get("diversity_enabled", True),
+            )
+            selector = PartnerSelector(config=sel_cfg)
+
+            # Classify request
+            classified = classifier.classify(ortb_request)
+
+            # Score all available bidders
+            scores = []
+            for bidder in available_bidders:
                 score = scorer.score_bidder(bidder, classified)
                 scores.append(score)
 

@@ -53,7 +53,7 @@ func TestIDRClientSelectPartners(t *testing.T) {
 	defer mockIDR.Close()
 
 	// Create client
-	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond)
+	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond, "")
 
 	// Test request
 	ortbReq := openrtb.BidRequest{
@@ -100,7 +100,7 @@ func TestIDRClientHealthCheck(t *testing.T) {
 	}))
 	defer mockIDR.Close()
 
-	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond)
+	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond, "")
 
 	err := client.HealthCheck(context.Background())
 	if err != nil {
@@ -139,7 +139,7 @@ func TestIDRClientCircuitBreaker(t *testing.T) {
 		SuccessThreshold: 1,
 		Timeout:          100 * time.Millisecond,
 	}
-	client := idr.NewClientWithCircuitBreaker(mockIDR.URL, 100*time.Millisecond, config)
+	client := idr.NewClientWithCircuitBreaker(mockIDR.URL, 100*time.Millisecond, "", config)
 
 	ortbJSON := []byte(`{"id":"test-1"}`)
 	bidders := []string{"appnexus"}
@@ -182,7 +182,7 @@ func TestIDRClientBypassMode(t *testing.T) {
 	}))
 	defer mockIDR.Close()
 
-	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond)
+	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond, "")
 
 	// Enable bypass mode
 	err := client.SetBypassMode(context.Background(), true)
@@ -221,7 +221,7 @@ func TestIDRClientShadowMode(t *testing.T) {
 	}))
 	defer mockIDR.Close()
 
-	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond)
+	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond, "")
 
 	err := client.SetShadowMode(context.Background(), true)
 	if err != nil {
@@ -255,7 +255,7 @@ func TestIDRClientGetConfig(t *testing.T) {
 	}))
 	defer mockIDR.Close()
 
-	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond)
+	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond, "")
 
 	config, err := client.GetConfig(context.Background())
 	if err != nil {
@@ -289,7 +289,7 @@ func TestIDRClientGetFPDConfig(t *testing.T) {
 	}))
 	defer mockIDR.Close()
 
-	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond)
+	client := idr.NewClient(mockIDR.URL, 100*time.Millisecond, "")
 
 	fpdConfig, err := client.GetFPDConfig(context.Background())
 	if err != nil {
@@ -324,7 +324,7 @@ func TestIDRClientTimeout(t *testing.T) {
 	defer mockIDR.Close()
 
 	// Create client with very short timeout
-	client := idr.NewClient(mockIDR.URL, 50*time.Millisecond)
+	client := idr.NewClient(mockIDR.URL, 50*time.Millisecond, "")
 
 	ctx := context.Background()
 	_, err := client.SelectPartners(ctx, []byte(`{"id":"test"}`), []string{"appnexus"})
@@ -343,7 +343,7 @@ func TestIDRClientContextCancellation(t *testing.T) {
 	}))
 	defer mockIDR.Close()
 
-	client := idr.NewClient(mockIDR.URL, 1*time.Second)
+	client := idr.NewClient(mockIDR.URL, 1*time.Second, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -380,7 +380,7 @@ func TestIDRResponseSizeLimit(t *testing.T) {
 	}))
 	defer mockIDR.Close()
 
-	client := idr.NewClient(mockIDR.URL, 5*time.Second)
+	client := idr.NewClient(mockIDR.URL, 5*time.Second, "")
 
 	_, err := client.SelectPartners(context.Background(), []byte(`{"id":"test"}`), []string{"appnexus"})
 

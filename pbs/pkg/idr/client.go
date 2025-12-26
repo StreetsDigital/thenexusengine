@@ -17,6 +17,7 @@ const maxIDRResponseSize = 1024 * 1024 // 1MB - plenty for partner selection
 // Client communicates with the Python IDR service
 type Client struct {
 	baseURL        string
+	apiKey         string // Internal API key for service-to-service auth
 	httpClient     *http.Client
 	timeout        time.Duration
 	circuitBreaker *CircuitBreaker
@@ -45,12 +46,13 @@ func newIDRTransport(timeout time.Duration) *http.Transport {
 }
 
 // NewClient creates a new IDR client with connection pooling
-func NewClient(baseURL string, timeout time.Duration) *Client {
+func NewClient(baseURL string, timeout time.Duration, apiKey string) *Client {
 	if timeout == 0 {
 		timeout = 150 * time.Millisecond // IDR timeout - allows for Python processing
 	}
 	return &Client{
 		baseURL: baseURL,
+		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout:   timeout,
 			Transport: newIDRTransport(timeout),
@@ -61,12 +63,13 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 }
 
 // NewClientWithCircuitBreaker creates a new IDR client with custom circuit breaker config
-func NewClientWithCircuitBreaker(baseURL string, timeout time.Duration, cbConfig *CircuitBreakerConfig) *Client {
+func NewClientWithCircuitBreaker(baseURL string, timeout time.Duration, apiKey string, cbConfig *CircuitBreakerConfig) *Client {
 	if timeout == 0 {
 		timeout = 150 * time.Millisecond // IDR timeout - allows for Python processing
 	}
 	return &Client{
 		baseURL: baseURL,
+		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout:   timeout,
 			Transport: newIDRTransport(timeout),
@@ -161,12 +164,15 @@ func (c *Client) SelectPartners(ctx context.Context, ortbRequest json.RawMessage
 			return fmt.Errorf("failed to marshal request: %w", err)
 		}
 
-		url := c.baseURL + "/api/select"
+		url := c.baseURL + "/internal/select"
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if c.apiKey != "" {
+			req.Header.Set("X-Internal-API-Key", c.apiKey)
+		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -228,12 +234,15 @@ func (c *Client) SelectPartnersMinimal(ctx context.Context, minReq *MinimalReque
 			return fmt.Errorf("failed to marshal request: %w", err)
 		}
 
-		url := c.baseURL + "/api/select"
+		url := c.baseURL + "/internal/select"
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if c.apiKey != "" {
+			req.Header.Set("X-Internal-API-Key", c.apiKey)
+		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {

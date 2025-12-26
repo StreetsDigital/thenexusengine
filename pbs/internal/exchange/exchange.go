@@ -89,6 +89,7 @@ type Config struct {
 	MaxConcurrentBidders int // P0-4: Limit concurrent bidder goroutines (0 = unlimited)
 	IDREnabled           bool
 	IDRServiceURL        string
+	IDRAPIKey            string // Internal API key for IDR service-to-service calls
 	EventRecordEnabled   bool
 	EventBufferSize      int
 	CurrencyConv         bool
@@ -215,7 +216,7 @@ func New(registry *adapters.Registry, config *Config) *Exchange {
 	}
 
 	if config.IDREnabled && config.IDRServiceURL != "" {
-		ex.idrClient = idr.NewClient(config.IDRServiceURL, 50*time.Millisecond)
+		ex.idrClient = idr.NewClient(config.IDRServiceURL, 50*time.Millisecond, config.IDRAPIKey)
 	}
 
 	if config.EventRecordEnabled && config.IDRServiceURL != "" {
