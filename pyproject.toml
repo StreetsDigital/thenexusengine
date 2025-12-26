@@ -45,6 +45,7 @@ admin = [
     "flask>=3.0.0",
     "pyyaml>=6.0.0",
     "requests>=2.31.0",
+    "gunicorn>=21.0.0",  # Production WSGI server with IPv6 support
 ]
 # P0-1: GDPR compliance - iab-tcf now in core dependencies
 privacy = [

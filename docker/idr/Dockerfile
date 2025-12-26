@@ -39,4 +39,6 @@ EXPOSE 5050
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5050/health')" || exit 1
 
-CMD ["python", "run_admin.py", "--host", "0.0.0.0", "--port", "5050", "--no-debug"]
+# Use gunicorn for production with IPv6 support (Fly.io uses IPv6 for internal networking)
+# --bind [::]:5050 binds to all IPv4 and IPv6 interfaces
+CMD ["gunicorn", "--bind", "[::]:5050", "--workers", "2", "--timeout", "30", "src.idr.admin.app:create_app()"]
