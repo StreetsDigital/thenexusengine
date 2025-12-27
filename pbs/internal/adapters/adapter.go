@@ -87,14 +87,14 @@ const (
 type DemandType string
 
 const (
-	// DemandTypePlatform indicates TNE platform demand (obfuscated as "nexus")
+	// DemandTypePlatform indicates TNE platform demand (obfuscated as "thenexusengine")
 	DemandTypePlatform DemandType = "platform"
 	// DemandTypePublisher indicates publisher's own demand partners (shown transparently)
 	DemandTypePublisher DemandType = "publisher"
 )
 
 // PlatformSeatName is the obfuscated seat name for platform demand
-const PlatformSeatName = "nexus"
+const PlatformSeatName = "thenexusengine"
 
 // BidVideo contains video-specific bid info
 type BidVideo struct {

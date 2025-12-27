@@ -179,7 +179,7 @@ func Info() adapters.BidderInfo {
 			App:  &adapters.PlatformInfo{MediaTypes: []adapters.BidType{adapters.BidTypeBanner, adapters.BidTypeVideo}},
 			Site: &adapters.PlatformInfo{MediaTypes: []adapters.BidType{adapters.BidTypeBanner, adapters.BidTypeVideo}},
 		},
-		DemandType: adapters.DemandTypePlatform, // Platform demand (obfuscated as "nexus")
+		DemandType: adapters.DemandTypePlatform, // Platform demand (obfuscated as "thenexusengine")
 	}
 }
 

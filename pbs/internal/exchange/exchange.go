@@ -905,7 +905,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	auctionedBids := e.runAuctionLogic(validBids, impFloors)
 
 	// Build seat bids with demand type obfuscation:
-	// - Platform demand: aggregated into single "nexus" seat (highest bid per impression)
+	// - Platform demand: aggregated into single "thenexusengine" seat (highest bid per impression)
 	// - Publisher demand: shown transparently with original bidder codes
 	seatBidMap := make(map[string]*openrtb.SeatBid)
 
@@ -923,7 +923,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			}
 		}
 
-		// Add highest platform bid to "nexus" seat (obfuscated)
+		// Add highest platform bid to "thenexusengine" seat (obfuscated)
 		if len(platformBids) > 0 {
 			// Find highest CPM platform bid for this impression
 			highestPlatformBid := platformBids[0]
@@ -933,7 +933,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 				}
 			}
 
-			// Get or create the nexus seat
+			// Get or create the thenexusengine seat
 			nexusSeat, ok := seatBidMap[adapters.PlatformSeatName]
 			if !ok {
 				nexusSeat = &openrtb.SeatBid{
@@ -943,7 +943,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 				seatBidMap[adapters.PlatformSeatName] = nexusSeat
 			}
 
-			// Create obfuscated bid with "nexus" branding in targeting
+			// Create obfuscated bid with "thenexusengine" branding in targeting
 			bid := *highestPlatformBid.Bid.Bid
 			bidExt := e.buildBidExtension(highestPlatformBid)
 			if extBytes, err := json.Marshal(bidExt); err == nil {
@@ -1497,11 +1497,11 @@ func (e *Exchange) buildBidExtension(vb ValidatedBid) *openrtb.BidExt {
 	priceBucket := formatPriceBucket(bid.Price)
 
 	// Determine display bidder code based on demand type:
-	// - Platform demand: use "nexus" (obfuscated)
+	// - Platform demand: use "thenexusengine" (obfuscated)
 	// - Publisher demand: use original bidder code (transparent)
 	displayBidderCode := vb.BidderCode
 	if vb.DemandType != adapters.DemandTypePublisher {
-		displayBidderCode = adapters.PlatformSeatName // "nexus"
+		displayBidderCode = adapters.PlatformSeatName // "thenexusengine"
 	}
 
 	// Build targeting keys that Prebid.js expects
@@ -1692,7 +1692,7 @@ func (e *Exchange) GetIDRClient() *idr.Client {
 }
 
 // getDemandType returns the demand type for a bidder (platform or publisher)
-// Platform demand is obfuscated under "nexus" seat, publisher demand is transparent
+// Platform demand is obfuscated under "thenexusengine" seat, publisher demand is transparent
 // Checks static registry first, then dynamic registry, defaults to platform
 func (e *Exchange) getDemandType(bidderCode string, dynamicRegistry *ortb.DynamicRegistry) adapters.DemandType {
 	// Check static registry first

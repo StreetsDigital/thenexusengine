@@ -150,7 +150,7 @@ func (a *GenericAdapter) GetConfig() *BidderConfig {
 }
 
 // GetDemandType returns the demand type for this adapter (platform or publisher)
-// Platform demand is obfuscated under "nexus" seat, publisher demand is transparent
+// Platform demand is obfuscated under "thenexusengine" seat, publisher demand is transparent
 func (a *GenericAdapter) GetDemandType() adapters.DemandType {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

@@ -173,7 +173,7 @@
 
             <div class="config-section" style="background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border-left: 4px solid #4CAF50;">
                 <h4>Unified Demand Branding</h4>
-                <p style="margin: 10px 0;">All platform demand from The Nexus Engine appears under the unified <code>nexus</code> brand:</p>
+                <p style="margin: 10px 0;">All platform demand from The Nexus Engine appears under the unified <code>thenexusengine</code> brand:</p>
                 <table>
                     <tr>
                         <th>Response Field</th>
@@ -181,19 +181,19 @@
                     </tr>
                     <tr>
                         <td>Seat ID</td>
-                        <td><code>"seat": "nexus"</code></td>
+                        <td><code>"seat": "thenexusengine"</code></td>
                     </tr>
                     <tr>
                         <td>Bidder Targeting</td>
-                        <td><code>hb_bidder: "nexus"</code></td>
+                        <td><code>hb_bidder: "thenexusengine"</code></td>
                     </tr>
                     <tr>
                         <td>All Targeting Keys</td>
-                        <td><code>hb_pb_nexus</code>, <code>hb_size_nexus</code>, etc.</td>
+                        <td><code>hb_pb_thenexusengine</code>, <code>hb_size_thenexusengine</code>, etc.</td>
                     </tr>
                 </table>
                 <p style="margin: 10px 0; font-size: 13px; color: #555;">
-                    This simplifies your GAM setup - configure one set of line items for <code>nexus</code>
+                    This simplifies your GAM setup - configure one set of line items for <code>thenexusengine</code>
                     to capture all platform demand, regardless of underlying SSP.
                 </p>
             </div>
@@ -414,8 +414,8 @@
                     hasBids = true;
                     const winningBid = bids[0];  // Highest bid
 
-                    // Note: Platform demand appears as "nexus" (unified branding)
-                    const displayBidder = winningBid.bidder === 'nexus' ? 'nexus (TNE Platform)' : winningBid.bidder;
+                    // Note: Platform demand appears as "thenexusengine" (unified branding)
+                    const displayBidder = winningBid.bidder === 'thenexusengine' ? 'thenexusengine (TNE Platform)' : winningBid.bidder;
                     log(`${adUnitCode}: $${winningBid.cpm.toFixed(2)} from ${displayBidder}`, 'success');
 
                     bidInfo += `<strong>${adUnitCode}</strong><br>`;
