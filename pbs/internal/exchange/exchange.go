@@ -490,6 +490,7 @@ func buildImpFloorMap(req *openrtb.BidRequest) map[string]float64 {
 type ValidatedBid struct {
 	Bid        *adapters.TypedBid
 	BidderCode string
+	DemandType adapters.DemandType // platform (obfuscated) or publisher (transparent)
 }
 
 // runAuctionLogic applies auction rules (first-price or second-price) to validated bids
@@ -891,10 +892,11 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			}
 			seenBidIDs[tb.Bid.ID] = struct{}{}
 
-			// Add to valid bids
+			// Add to valid bids with demand type
 			validBids = append(validBids, ValidatedBid{
 				Bid:        tb,
 				BidderCode: bidderCode,
+				DemandType: e.getDemandType(bidderCode, dynamicRegistry),
 			})
 		}
 	}
@@ -902,10 +904,56 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	// Apply auction logic (first-price or second-price)
 	auctionedBids := e.runAuctionLogic(validBids, impFloors)
 
-	// Build seat bids from auctioned results with Prebid targeting
+	// Build seat bids with demand type obfuscation:
+	// - Platform demand: aggregated into single "nexus" seat (highest bid per impression)
+	// - Publisher demand: shown transparently with original bidder codes
 	seatBidMap := make(map[string]*openrtb.SeatBid)
+
 	for _, impBids := range auctionedBids {
+		// Separate platform and publisher bids for this impression
+		var platformBids []ValidatedBid
+		var publisherBids []ValidatedBid
+
 		for _, vb := range impBids {
+			if vb.DemandType == adapters.DemandTypePublisher {
+				publisherBids = append(publisherBids, vb)
+			} else {
+				// Default to platform for obfuscation
+				platformBids = append(platformBids, vb)
+			}
+		}
+
+		// Add highest platform bid to "nexus" seat (obfuscated)
+		if len(platformBids) > 0 {
+			// Find highest CPM platform bid for this impression
+			highestPlatformBid := platformBids[0]
+			for _, vb := range platformBids[1:] {
+				if vb.Bid.Bid.Price > highestPlatformBid.Bid.Bid.Price {
+					highestPlatformBid = vb
+				}
+			}
+
+			// Get or create the nexus seat
+			nexusSeat, ok := seatBidMap[adapters.PlatformSeatName]
+			if !ok {
+				nexusSeat = &openrtb.SeatBid{
+					Seat: adapters.PlatformSeatName,
+					Bid:  []openrtb.Bid{},
+				}
+				seatBidMap[adapters.PlatformSeatName] = nexusSeat
+			}
+
+			// Create obfuscated bid with "nexus" branding in targeting
+			bid := *highestPlatformBid.Bid.Bid
+			bidExt := e.buildBidExtension(highestPlatformBid)
+			if extBytes, err := json.Marshal(bidExt); err == nil {
+				bid.Ext = extBytes
+			}
+			nexusSeat.Bid = append(nexusSeat.Bid, bid)
+		}
+
+		// Add all publisher bids transparently
+		for _, vb := range publisherBids {
 			sb, ok := seatBidMap[vb.BidderCode]
 			if !ok {
 				sb = &openrtb.SeatBid{
@@ -921,7 +969,6 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 			if extBytes, err := json.Marshal(bidExt); err == nil {
 				bid.Ext = extBytes
 			}
-
 			sb.Bid = append(sb.Bid, bid)
 		}
 	}
@@ -1449,20 +1496,28 @@ func (e *Exchange) buildBidExtension(vb ValidatedBid) *openrtb.BidExt {
 	// Generate price bucket using medium granularity
 	priceBucket := formatPriceBucket(bid.Price)
 
+	// Determine display bidder code based on demand type:
+	// - Platform demand: use "nexus" (obfuscated)
+	// - Publisher demand: use original bidder code (transparent)
+	displayBidderCode := vb.BidderCode
+	if vb.DemandType != adapters.DemandTypePublisher {
+		displayBidderCode = adapters.PlatformSeatName // "nexus"
+	}
+
 	// Build targeting keys that Prebid.js expects
 	targeting := map[string]string{
-		"hb_pb":            priceBucket,
-		"hb_bidder":        vb.BidderCode,
-		"hb_size":          fmt.Sprintf("%dx%d", bid.W, bid.H),
-		"hb_pb_" + vb.BidderCode:     priceBucket,
-		"hb_bidder_" + vb.BidderCode: vb.BidderCode,
-		"hb_size_" + vb.BidderCode:   fmt.Sprintf("%dx%d", bid.W, bid.H),
+		"hb_pb":     priceBucket,
+		"hb_bidder": displayBidderCode,
+		"hb_size":   fmt.Sprintf("%dx%d", bid.W, bid.H),
+		"hb_pb_" + displayBidderCode:     priceBucket,
+		"hb_bidder_" + displayBidderCode: displayBidderCode,
+		"hb_size_" + displayBidderCode:   fmt.Sprintf("%dx%d", bid.W, bid.H),
 	}
 
 	// Add deal ID if present
 	if bid.DealID != "" {
 		targeting["hb_deal"] = bid.DealID
-		targeting["hb_deal_"+vb.BidderCode] = bid.DealID
+		targeting["hb_deal_"+displayBidderCode] = bid.DealID
 	}
 
 	return &openrtb.BidExt{
@@ -1634,4 +1689,24 @@ func (e *Exchange) GetFPDConfig() *fpd.Config {
 // GetIDRClient returns the IDR client (for metrics/admin)
 func (e *Exchange) GetIDRClient() *idr.Client {
 	return e.idrClient
+}
+
+// getDemandType returns the demand type for a bidder (platform or publisher)
+// Platform demand is obfuscated under "nexus" seat, publisher demand is transparent
+// Checks static registry first, then dynamic registry, defaults to platform
+func (e *Exchange) getDemandType(bidderCode string, dynamicRegistry *ortb.DynamicRegistry) adapters.DemandType {
+	// Check static registry first
+	if awi, ok := e.registry.Get(bidderCode); ok {
+		return awi.Info.DemandType
+	}
+
+	// Check dynamic registry
+	if dynamicRegistry != nil {
+		if adapter, ok := dynamicRegistry.Get(bidderCode); ok {
+			return adapter.GetDemandType()
+		}
+	}
+
+	// Default to platform (obfuscated) for unknown bidders
+	return adapters.DemandTypePlatform
 }

@@ -37,6 +37,7 @@ type BidderConfig struct {
 	BlockedPublishers []string                `json:"blocked_publishers"`
 	AllowedCountries  []string                `json:"allowed_countries"`
 	BlockedCountries  []string                `json:"blocked_countries"`
+	DemandType        string                  `json:"demand_type"` // "platform" or "publisher"
 }
 
 // EndpointConfig holds endpoint configuration
@@ -146,6 +147,22 @@ func (a *GenericAdapter) GetConfig() *BidderConfig {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.config
+}
+
+// GetDemandType returns the demand type for this adapter (platform or publisher)
+// Platform demand is obfuscated under "nexus" seat, publisher demand is transparent
+func (a *GenericAdapter) GetDemandType() adapters.DemandType {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.config == nil {
+		return adapters.DemandTypePlatform // Default to platform (obfuscated)
+	}
+	switch a.config.DemandType {
+	case "publisher":
+		return adapters.DemandTypePublisher
+	default:
+		return adapters.DemandTypePlatform
+	}
 }
 
 // MakeRequests builds HTTP requests for the bidder

@@ -124,6 +124,7 @@ func Info() adapters.BidderInfo {
 		},
 		GVLVendorID: 52,
 		Endpoint:    defaultEndpoint,
+		DemandType:  adapters.DemandTypePlatform, // Platform demand (obfuscated as "nexus")
 	}
 }
 
