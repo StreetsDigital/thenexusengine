@@ -253,7 +253,7 @@
                 debug: true,  // Enable for development
                 s2sConfig: {
                     accountId: 'demo-publisher',
-                    bidders: ['appnexus', 'rubicon', 'pubmatic'],  // Only these 3 are registered
+                    bidders: ['demo', 'appnexus', 'rubicon', 'pubmatic'],  // demo returns test bids
                     defaultVendor: 'pbs',
                     timeout: 1000,
                     endpoint: {
@@ -286,6 +286,10 @@
                     },
                     bids: [
                         {
+                            bidder: 'demo',
+                            params: {}  // Demo bidder - returns mock bids for testing
+                        },
+                        {
                             bidder: 'appnexus',
                             params: { placementId: 00000001 }  // Demo - replace with your placement ID
                         },
@@ -307,6 +311,10 @@
                         }
                     },
                     bids: [
+                        {
+                            bidder: 'demo',
+                            params: {}  // Demo bidder - returns mock bids for testing
+                        },
                         {
                             bidder: 'appnexus',
                             params: { placementId: 00000002 }  // Demo - replace with your placement ID

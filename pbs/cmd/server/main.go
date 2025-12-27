@@ -15,6 +15,7 @@ import (
 
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters"
 	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/appnexus"
+	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/demo"
 	"github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/ortb"
 	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/pubmatic"
 	_ "github.com/StreetsDigital/thenexusengine/pbs/internal/adapters/rubicon"

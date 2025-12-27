@@ -3,6 +3,7 @@ package exchange
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -901,7 +902,7 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 	// Apply auction logic (first-price or second-price)
 	auctionedBids := e.runAuctionLogic(validBids, impFloors)
 
-	// Build seat bids from auctioned results
+	// Build seat bids from auctioned results with Prebid targeting
 	seatBidMap := make(map[string]*openrtb.SeatBid)
 	for _, impBids := range auctionedBids {
 		for _, vb := range impBids {
@@ -913,7 +914,15 @@ func (e *Exchange) RunAuction(ctx context.Context, req *AuctionRequest) (*Auctio
 				}
 				seatBidMap[vb.BidderCode] = sb
 			}
-			sb.Bid = append(sb.Bid, *vb.Bid.Bid)
+
+			// Create bid copy with Prebid extension for targeting
+			bid := *vb.Bid.Bid
+			bidExt := e.buildBidExtension(vb)
+			if extBytes, err := json.Marshal(bidExt); err == nil {
+				bid.Ext = extBytes
+			}
+
+			sb.Bid = append(sb.Bid, bid)
 		}
 	}
 
@@ -1342,23 +1351,34 @@ func (e *Exchange) callBidder(ctx context.Context, req *openrtb.BidRequest, bidd
 			// Context still valid, proceed with request
 		}
 
-		resp, err := e.httpClient.Do(ctx, reqData, timeout)
-		if err != nil {
-			// P3-1: Log HTTP request failures with context
-			isTimeout := err == context.DeadlineExceeded || err == context.Canceled
-			logger.Log.Debug().
-				Str("bidder", bidderCode).
-				Str("uri", reqData.URI).
-				Dur("elapsed", time.Since(start)).
-				Bool("timeout", isTimeout).
-				Err(err).
-				Msg("bidder HTTP request failed")
-			result.Errors = append(result.Errors, err)
-			// P2-2: Check if this was a timeout error
-			if isTimeout {
-				result.TimedOut = true
+		// Handle mock requests (e.g., demo adapter) - use request body as response
+		var resp *adapters.ResponseData
+		if reqData.Method == "MOCK" {
+			resp = &adapters.ResponseData{
+				StatusCode: 200,
+				Body:       reqData.Body,
+				Headers:    reqData.Headers,
 			}
-			continue
+		} else {
+			var err error
+			resp, err = e.httpClient.Do(ctx, reqData, timeout)
+			if err != nil {
+				// P3-1: Log HTTP request failures with context
+				isTimeout := err == context.DeadlineExceeded || err == context.Canceled
+				logger.Log.Debug().
+					Str("bidder", bidderCode).
+					Str("uri", reqData.URI).
+					Dur("elapsed", time.Since(start)).
+					Bool("timeout", isTimeout).
+					Err(err).
+					Msg("bidder HTTP request failed")
+				result.Errors = append(result.Errors, err)
+				// P2-2: Check if this was a timeout error
+				if isTimeout {
+					result.TimedOut = true
+				}
+				continue
+			}
 		}
 
 		bidderResp, errs := adapter.MakeBids(req, resp)
@@ -1418,6 +1438,69 @@ func (e *Exchange) buildEmptyResponse(req *openrtb.BidRequest, nbr openrtb.NoBid
 		Cur:     e.config.DefaultCurrency,
 		NBR:     int(nbr),
 	}
+}
+
+// buildBidExtension creates the Prebid extension for a bid including targeting keys
+// This is required for Prebid.js integration to work correctly
+func (e *Exchange) buildBidExtension(vb ValidatedBid) *openrtb.BidExt {
+	bid := vb.Bid.Bid
+	bidType := string(vb.Bid.BidType)
+
+	// Generate price bucket using medium granularity
+	priceBucket := formatPriceBucket(bid.Price)
+
+	// Build targeting keys that Prebid.js expects
+	targeting := map[string]string{
+		"hb_pb":            priceBucket,
+		"hb_bidder":        vb.BidderCode,
+		"hb_size":          fmt.Sprintf("%dx%d", bid.W, bid.H),
+		"hb_pb_" + vb.BidderCode:     priceBucket,
+		"hb_bidder_" + vb.BidderCode: vb.BidderCode,
+		"hb_size_" + vb.BidderCode:   fmt.Sprintf("%dx%d", bid.W, bid.H),
+	}
+
+	// Add deal ID if present
+	if bid.DealID != "" {
+		targeting["hb_deal"] = bid.DealID
+		targeting["hb_deal_"+vb.BidderCode] = bid.DealID
+	}
+
+	return &openrtb.BidExt{
+		Prebid: &openrtb.ExtBidPrebid{
+			Type:      bidType,
+			Targeting: targeting,
+			Meta: &openrtb.ExtBidPrebidMeta{
+				MediaType: bidType,
+			},
+		},
+	}
+}
+
+// formatPriceBucket formats price using medium granularity (per Prebid.js spec)
+// - $0.01 increments up to $5
+// - $0.05 increments from $5-$10
+// - $0.50 increments from $10-$20
+// - Caps at $20
+func formatPriceBucket(price float64) string {
+	if price <= 0 {
+		return "0.00"
+	}
+	if price > 20 {
+		price = 20
+	}
+
+	var bucket float64
+	switch {
+	case price <= 5:
+		bucket = float64(int(price*100)) / 100 // $0.01 increments
+	case price <= 10:
+		bucket = float64(int(price*20)) / 20 // $0.05 increments
+	case price <= 20:
+		bucket = float64(int(price*2)) / 2 // $0.50 increments
+	default:
+		bucket = 20
+	}
+	return fmt.Sprintf("%.2f", bucket)
 }
 
 // buildMinimalIDRRequest extracts only essential fields for IDR partner selection
